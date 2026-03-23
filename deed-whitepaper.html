@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEED White Paper v1.0</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --black:#080808;--dark:#0f0f0f;--white:#f4efe6;
+  --gold:#c8a44a;--gold-l:#e6c96e;--gd:rgba(200,164,74,0.08);--gb:rgba(200,164,74,0.2);
+  --t:#f4efe6;--td:rgba(244,239,230,0.6);--tdd:rgba(244,239,230,0.3);
+  --br:rgba(200,164,74,0.15);--br2:rgba(244,239,230,0.07);
+  --green:#5aad6e;--red:#c44a30;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--black);color:var(--t);font-family:'Outfit',sans-serif;
+line-height:1.7;font-size:15px;font-weight:300}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9000;opacity:0.02;
+background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* COVER */
+.cover{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
+align-items:center;text-align:center;padding:60px 40px;position:relative;overflow:hidden;
+border-bottom:1px solid var(--br)}
+.cover-grid{position:absolute;inset:0;
+background-image:linear-gradient(var(--br) 1px,transparent 1px),linear-gradient(90deg,var(--br) 1px,transparent 1px);
+background-size:60px 60px;opacity:0.25;
+mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 30%,transparent 80%)}
+.cover-glow{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+width:600px;height:600px;pointer-events:none;
+background:radial-gradient(ellipse,rgba(200,164,74,0.06) 0%,transparent 70%)}
+.cover-inner{position:relative;z-index:1;max-width:680px}
+.cover-logo{font-family:'Cormorant Garamond',serif;font-size:80px;font-weight:700;
+color:var(--gold);letter-spacing:4px;line-height:1;margin-bottom:16px}
+.cover-sub{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:5px;
+text-transform:uppercase;color:var(--tdd);margin-bottom:48px}
+.cover-title{font-family:'Cormorant Garamond',serif;font-size:clamp(24px,4vw,40px);
+font-weight:400;font-style:italic;color:var(--td);line-height:1.4;margin-bottom:40px}
+.cover-meta{display:flex;gap:32px;justify-content:center;flex-wrap:wrap}
+.cover-meta-item{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:2px;
+color:var(--tdd);text-transform:uppercase}
+.cover-meta-item span{color:var(--gold);opacity:0.8}
+.cover-principle{margin-top:60px;border-top:1px solid var(--br);padding-top:32px;
+font-family:'Cormorant Garamond',serif;font-size:20px;font-style:italic;color:var(--td)}
+
+/* DOCUMENT */
+.doc{max-width:760px;margin:0 auto;padding:80px 40px}
+
+/* SECTIONS */
+.section{margin-bottom:72px;padding-bottom:72px;border-bottom:1px solid var(--br2)}
+.section:last-child{border-bottom:none}
+.section-num{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:4px;
+text-transform:uppercase;color:var(--gold);opacity:0.6;margin-bottom:12px}
+.section-title{font-family:'Cormorant Garamond',serif;font-size:clamp(28px,4vw,44px);
+font-weight:700;line-height:1.1;margin-bottom:24px}
+.section-title em{font-style:italic;color:var(--gold)}
+
+/* PREFACE BOX */
+.preface-box{background:var(--gd);border:1px solid var(--gb);padding:28px 32px;margin-bottom:32px}
+.preface-label{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:3px;
+text-transform:uppercase;color:var(--gold);opacity:0.7;margin-bottom:12px}
+.preface-text{font-size:14px;color:var(--td);line-height:1.8}
+
+/* BODY TEXT */
+p{color:var(--td);margin-bottom:16px}
+strong{color:var(--t);font-weight:500}
+
+/* SUBSECTIONS */
+h3{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;
+margin-top:36px;margin-bottom:12px;color:var(--t)}
+h4{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;
+color:var(--gold);opacity:0.7;margin-top:28px;margin-bottom:10px}
+
+/* HIGHLIGHT BOX */
+.highlight{background:rgba(200,164,74,0.05);border-left:2px solid var(--gold);
+padding:16px 20px;margin:20px 0;font-size:14px;color:var(--td);line-height:1.7}
+.highlight strong{color:var(--gold)}
+
+/* WARNING BOX */
+.warning{background:rgba(196,74,48,0.06);border-left:2px solid var(--red);
+padding:16px 20px;margin:20px 0;font-size:14px;color:var(--td);line-height:1.7}
+
+/* CODE BLOCK */
+.code-block{background:var(--dark);border:1px solid var(--br2);padding:20px 24px;
+margin:20px 0;font-family:'DM Mono',monospace;font-size:12px;color:var(--td);
+line-height:1.9;white-space:pre}
+.code-block .arrow{color:var(--gold)}
+.code-block .comment{color:var(--tdd)}
+
+/* TABLES */
+table{width:100%;border-collapse:collapse;margin:20px 0;font-size:13px}
+th{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;
+color:var(--tdd);padding:10px 14px;text-align:left;border-bottom:1px solid var(--br)}
+td{padding:10px 14px;border-bottom:1px solid var(--br2);color:var(--td)}
+td:first-child{color:var(--t)}
+td.yes{color:var(--green)}
+td.no{color:var(--red);opacity:0.6}
+td.gold{color:var(--gold)}
+tr:hover td{background:rgba(200,164,74,0.03)}
+
+/* STATUS INDICATORS */
+.status-built{color:var(--green)}
+.status-building{color:var(--gold)}
+.status-planned{color:var(--tdd)}
+
+/* PRINCIPLE BLOCK */
+.principle{border:1px solid var(--br);padding:32px 36px;margin:32px 0;text-align:center}
+.principle-label{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:3px;
+text-transform:uppercase;color:var(--gold);opacity:0.6;margin-bottom:12px}
+.principle-text{font-family:'Cormorant Garamond',serif;font-size:clamp(20px,3vw,30px);
+font-style:italic;line-height:1.4;color:var(--t)}
+
+/* DISCLAIMER */
+.disclaimer{background:var(--dark);border:1px solid var(--br2);padding:24px 28px;
+margin-top:60px;font-size:11px;color:var(--tdd);line-height:1.8}
+.disclaimer-label{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:3px;
+text-transform:uppercase;color:var(--tdd);opacity:0.5;margin-bottom:10px}
+
+/* FOOTER */
+footer{border-top:1px solid var(--br);padding:32px 40px;
+display:flex;justify-content:space-between;align-items:center;
+max-width:760px;margin:0 auto}
+.footer-logo{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--gold)}
+.footer-right{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:2px;
+color:var(--tdd);text-align:right}
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="cover-grid"></div>
+  <div class="cover-glow"></div>
+  <div class="cover-inner">
+    <div class="cover-logo">DEED</div>
+    <div class="cover-sub">White Paper · Version 1.0</div>
+    <div class="cover-title">
+      Real-Time Real Estate Intelligence for the Future.<br>
+      The data Zillow has no incentive to show you.
+    </div>
+    <div class="cover-meta">
+      <div class="cover-meta-item">Network <span>Base</span></div>
+      <div class="cover-meta-item">Token <span>$DEED</span></div>
+      <div class="cover-meta-item">Supply <span>210,000,000</span></div>
+      <div class="cover-meta-item">Fee <span>1%</span></div>
+      <div class="cover-meta-item">Published <span>March 2026</span></div>
+    </div>
+    <div class="cover-principle">"The data. Not the pitch."</div>
+  </div>
+</div>
+
+<!-- DOCUMENT -->
+<div class="doc">
+
+  <!-- PREFACE -->
+  <div class="section">
+    <div class="section-num">Preface</div>
+    <h2 class="section-title">Why We're Being <em>This Honest</em></h2>
+
+    <div class="preface-box">
+      <div class="preface-label">A note before you read</div>
+      <div class="preface-text">Most crypto white papers describe a fully built system that doesn't exist. They use present tense for future features. They show architecture diagrams for infrastructure not yet written. They list team credentials to substitute for working code.<br><br>This white paper is different. DEED has a working prototype and a genuine product insight. It does not yet have real data, a deployed token, or a complete technical stack. This document describes what exists today, what is being built, what it will cost to build it, and what the honest risks are.<br><br>The Base and Farcaster communities have seen enough projects that overpromised and underdelivered. DEED is not one of them — not because we're exceptional, but because we're telling you exactly where we are.</div>
+    </div>
+  </div>
+
+  <!-- ABSTRACT -->
+  <div class="section">
+    <div class="section-num">Abstract</div>
+    <h2 class="section-title">The Most Important Data Point in Real Estate <em>Nobody Is Showing You</em></h2>
+
+    <p>The United States residential real estate market contains 158 million properties worth approximately $47 trillion. Every transaction in this market is made with incomplete information.</p>
+
+    <p>The Multiple Listing Service — the foundational data infrastructure of American real estate — was built for a world of stable insurance markets and predictable climate risk. That world is changing faster than the MLS can track.</p>
+
+    <p>DEED is a real-time property intelligence platform being built around one specific insight that no existing platform has acted on:</p>
+
+    <div class="highlight">
+      <strong>When insurance carriers withdraw from a county they send the most accurate signal available about that property market's future value — months before any map, model, or Zestimate reflects it.</strong> That data is publicly available in state insurance commissioner filings across all 50 states. Nobody is aggregating it in real time into a property-level intelligence score. DEED does.
+    </div>
+
+    <p>DEED scores every property in America — listed or not — and shows buyers the true monthly payment their bank will actually collect, not the standard estimate that can be $1,000 or more per month wrong.</p>
+
+    <p>The $DEED token on Base funds the data infrastructure that makes this possible through a 1% transaction fee that pays for API costs at $0.01 per property search, with surplus invested into yield-bearing assets on Base to compound the treasury over time.</p>
+  </div>
+
+  <!-- SECTION 1: THE PROBLEM -->
+  <div class="section">
+    <div class="section-num">Section 01</div>
+    <h2 class="section-title">The Problem</h2>
+
+    <h3>1.1 The Insurance Withdrawal Crisis</h3>
+    <p>35.6 million US properties currently face escalating insurance costs and reduced coverage due to climate risk. Major carriers — State Farm, Allstate, Farmers, Nationwide — have withdrawn from entire counties across Florida, California, Louisiana, Texas, and North Carolina.</p>
+    <p>The Florida FAIR Plan — the state's insurer of last resort — tripled in enrollment from 140,000 policies in 2018 to over 610,000 by mid-2025. Average Florida home insurance rates reached $7,562 per year — the highest in the nation.</p>
+    <p>This information exists in public records. Every state insurance commissioner publishes carrier withdrawal filings. The data is available to anyone willing to aggregate it across all 50 states. Nobody is doing this in real time at the property level. That is the gap DEED is built to fill.</p>
+
+    <h3>1.2 The True PITI Problem</h3>
+    <p>When a buyer finances a home purchase the lender requires insurance and collects it through escrow. Insurance is baked into the monthly payment. The total payment — Principal, Interest, Taxes, and Insurance — is called PITI.</p>
+    <p>Zillow's payment calculator uses a standard insurance estimate regardless of local market conditions. In insurance-stressed markets this estimate can be $1,000 or more per month below the actual market rate.</p>
+
+    <div class="highlight">
+      <strong>A real example from Q1 2026 — Collier County, Florida:</strong><br><br>
+      Zillow standard insurance estimate: $153/month<br>
+      Actual FAIR Plan premium: $1,533/month<br>
+      Difference: $1,380/month<br><br>
+      Zillow estimated PITI: $4,967/month<br>
+      Real PITI: $6,347/month<br><br>
+      Result: Buyer disqualified from mortgage based on debt-to-income ratio — discovered at closing, not before making the offer.
+    </div>
+
+    <p>This is not an edge case. It is the current reality in dozens of counties across America and the number is growing every month. DEED shows the real number before the offer is made.</p>
+
+    <h3>1.3 The Valuation Gap</h3>
+    <p>Zillow's Zestimate is calculated from recent comparable sales. It is backward-looking — it reflects what properties sold for, not what they are worth given current insurance market conditions.</p>
+    <p>A property in a county where two major carriers withdrew in the past six months is not worth what a comparable property sold for before those withdrawals. The Zestimate has no mechanism to price insurance market deterioration. DEED does.</p>
+
+    <h3>1.4 The Off-Market Gap</h3>
+    <p>Active MLS listings represent approximately 1-2 million properties at any given time. There are 158 million residential properties in America. Every homeowner — not just those currently selling — has a stake in understanding their property's insurance situation.</p>
+    <p>DEED scores every property in America whether it is listed for sale or not. A homeowner in a county where carriers are quietly withdrawing deserves to know before their renewal notice arrives with a 300% premium increase.</p>
+  </div>
+
+  <!-- SECTION 2: WHAT EXISTS TODAY -->
+  <div class="section">
+    <div class="section-num">Section 02</div>
+    <h2 class="section-title">What Exists <em>Today</em></h2>
+
+    <h3>2.1 The Working Prototype</h3>
+    <p>DEED has a working prototype live at <strong>deedcoinindex.netlify.app</strong>.</p>
+
+    <table>
+      <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
+      <tr><td>Property search interface</td><td class="status-built">✓ Live</td><td>Demo data — six sample properties</td></tr>
+      <tr><td>DEED Score display</td><td class="status-built">✓ Live</td><td>Methodology accurate — data simulated</td></tr>
+      <tr><td>True PITI calculator</td><td class="status-built">✓ Live</td><td>Real formula — demo insurance figures</td></tr>
+      <tr><td>DEED Estimate vs Zestimate</td><td class="status-built">✓ Live</td><td>Real methodology — demo values</td></tr>
+      <tr><td>AI advisor</td><td class="status-built">✓ Live</td><td>Pre-written responses — Claude API not yet connected</td></tr>
+      <tr><td>Agent data portal</td><td class="status-built">✓ Live</td><td>UI complete — database not yet connected</td></tr>
+      <tr><td>Zillow comparison panel</td><td class="status-built">✓ Live</td><td>Accurate and verifiable</td></tr>
+      <tr><td>Off-market property support</td><td class="status-built">✓ Live</td><td>Demo data only</td></tr>
+      <tr><td>Real property records</td><td class="status-planned">○ Planned</td><td>BatchData API — Phase 2</td></tr>
+      <tr><td>Real insurance withdrawal data</td><td class="status-planned">○ Planned</td><td>Manual build — Phase 2-3</td></tr>
+      <tr><td>Real climate scores</td><td class="status-planned">○ Planned</td><td>First Street Foundation API — Phase 2</td></tr>
+      <tr><td>$DEED token</td><td class="status-building">◐ Deploying</td><td>Base network — see Section 4</td></tr>
+    </table>
+
+    <div class="warning">
+      <strong>Stated clearly because it is true:</strong> The prototype demonstrates the product vision accurately. The data behind it is simulated. Real API integrations, real insurance withdrawal data, and real property records become available as the technical build progresses. This document does not pretend otherwise.
+    </div>
+
+    <h3>2.2 The Genuine Insight</h3>
+    <p>The core product insight is real and documented regardless of prototype status. State insurance commissioner filings are public records in all 50 states. First Street Foundation provides climate risk scores via API for every US address. BatchData provides property records for 158 million US properties at $0.01 per API call. FEMA flood maps are a free public API.</p>
+    <p>The data sources that make DEED's scores real exist today. Connecting them into a live platform is the technical build this white paper is asking the community to support.</p>
+  </div>
+
+  <!-- SECTION 3: WHAT IS BEING BUILT -->
+  <div class="section">
+    <div class="section-num">Section 03</div>
+    <h2 class="section-title">What Is <em>Being Built</em></h2>
+
+    <h3>3.1 The DEED Score</h3>
+    <p>Every US property receives a DEED Score from 0 to 100 calculated across four dimensions:</p>
+
+    <table>
+      <tr><th>Dimension</th><th>Points</th><th>Data Source</th></tr>
+      <tr><td>Climate Resilience</td><td class="gold">0–25</td><td>First Street Foundation + NOAA</td></tr>
+      <tr><td>Insurance Viability</td><td class="gold">0–25</td><td>State commissioner filings + agent network</td></tr>
+      <tr><td>Geographic Resilience</td><td class="gold">0–25</td><td>Census + infrastructure data</td></tr>
+      <tr><td>Market Accuracy</td><td class="gold">0–25</td><td>Comparable sales + insurance adjustment</td></tr>
+    </table>
+
+    <h3>3.2 The Data Pipeline — Build Order</h3>
+
+    <h4>Phase 1 — Property Records</h4>
+    <p>BatchData API integration. 158 million US properties. Tax assessor records, ownership history, transaction data. Cost: <strong>$0.01 per API call</strong>. Free developer tier available for initial testing and development.</p>
+
+    <h4>Phase 2 — Climate Risk</h4>
+    <p>First Street Foundation API. Flood, fire, heat, wind, and air quality risk scores for every US address. Free developer tier available. Production tier approximately $200/month at scale.</p>
+
+    <h4>Phase 3 — Insurance Withdrawal Database</h4>
+    <p>This is the most important and most labor-intensive component. State insurance commissioner filings across all 50 states are public but fragmented — each state uses different formats, different filing systems, and different update schedules.</p>
+    <p>Built in two stages. Stage 1: manual aggregation of the five highest-priority states — Florida, California, Texas, Louisiana, North Carolina. Stage 2: automated scrapers for all 50 states normalized into a standardized format that feeds the DEED score engine automatically.</p>
+    <p>This database is DEED's primary competitive moat. It grows more accurate and comprehensive over time and cannot be quickly replicated by a well-funded competitor — because the data must be accumulated over time, verified against agent ground truth, and maintained continuously.</p>
+
+    <h4>Phase 4 — Agent Verification Layer</h4>
+    <p>Licensed real estate agents submit hyperlocal insurance intelligence through the agent portal — informal carrier tightening before any filing appears, actual quote availability, local market conditions the data cannot capture. This ground truth layer makes DEED's insurance scores more accurate than any data source alone.</p>
+
+    <h3>3.3 What The Build Requires</h3>
+    <div class="highlight">
+      <strong>One full-stack developer</strong> comfortable with Base network and ethers.js, REST API integrations, Supabase or similar database, and basic web scraping for commissioner filings.<br><br>
+      Compensation: $DEED tokens from the development fund — 21,000,000 tokens locked for 1 year, released as milestones are reached.<br><br>
+      If this is you or you know this person — reply on Farcaster @deedbase.
+    </div>
+  </div>
+
+  <!-- SECTION 4: THE TOKEN -->
+  <div class="section">
+    <div class="section-num">Section 04</div>
+    <h2 class="section-title">The $DEED <em>Token</em></h2>
+
+    <h3>4.1 Token Overview</h3>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Name</td><td class="gold">DEED</td></tr>
+      <tr><td>Symbol</td><td class="gold">$DEED</td></tr>
+      <tr><td>Network</td><td>Base (Coinbase L2)</td></tr>
+      <tr><td>Total Supply</td><td>210,000,000</td></tr>
+      <tr><td>Transaction Fee</td><td>1% — protocol treasury</td></tr>
+      <tr><td>Deployment</td><td>Announced when live — not before</td></tr>
+      <tr><td>Deployment Method</td><td>Smithii.io — audited contract generator</td></tr>
+    </table>
+
+    <h3>4.2 Token Distribution</h3>
+    <table>
+      <tr><th>Allocation</th><th>Amount</th><th>%</th><th>Vesting</th></tr>
+      <tr><td>Founder</td><td>42,000,000</td><td class="gold">20%</td><td>2 year on-chain lock</td></tr>
+      <tr><td>Data Rewards</td><td>84,000,000</td><td class="gold">40%</td><td>Earned by agents over time</td></tr>
+      <tr><td>Community</td><td>42,000,000</td><td class="gold">20%</td><td>Farcaster launch airdrop</td></tr>
+      <tr><td>Liquidity</td><td>21,000,000</td><td class="gold">10%</td><td>Immediate — Aerodrome on Base</td></tr>
+      <tr><td>Development</td><td>21,000,000</td><td class="gold">10%</td><td>1 year lock — developer compensation</td></tr>
+    </table>
+
+    <h3>4.3 Token Utility</h3>
+
+    <h4>Data Access</h4>
+    <p>Premium DEED platform features require $DEED: unlimited AI advisor queries, full insurance intelligence reports, agent-verified local data access, and insurance withdrawal alerts for monitored counties. Basic property search and DEED score display are free to everyone. The token adds premium access on top of something already useful.</p>
+
+    <h4>Agent Rewards</h4>
+    <p>Licensed real estate agents earn $DEED for submitting verified local insurance and climate data through the agent portal. <strong>No purchase required.</strong> Agents earn tokens by doing what they already do — knowing their local market. Tokens vest upon data verification against public filings.</p>
+
+    <h4>Governance</h4>
+    <p>$DEED holders vote on protocol decisions: data source additions, scoring methodology updates, fee structure changes, treasury allocation decisions, and development fund deployment.</p>
+
+    <h3>4.4 The 1% Fee — How It Funds The Data Infrastructure</h3>
+    <p>Every $DEED transaction on Base generates a 1% fee automatically through the smart contract. This fee flows directly to the DEED protocol treasury wallet on every buy and sell — permanently and automatically — without human involvement after deployment.</p>
+
+    <div class="highlight">
+      <strong>The specific cost the fee covers:</strong><br><br>
+      Every time a user searches a property on DEED the platform makes one API call to BatchData. BatchData charges <strong>$0.01 per call</strong> — one cent per property search. The treasury pays this cost automatically from the 1% fee pool.
+    </div>
+
+    <div class="code-block"><span class="comment">The funding relationship — plainly stated:</span>
+
+User searches any US property
+<span class="arrow">         ↓</span>
+DEED calls BatchData API
+Cost: $0.01 per search
+<span class="arrow">         ↓</span>
+Someone buys $100 of $DEED
+1% fee = $1.00 to treasury
+<span class="arrow">         ↓</span>
+That $1.00 pays for 100 property searches
+<span class="arrow">         ↓</span>
+$1,000 daily $DEED trading volume
+pays for 1,000 searches per day</div>
+
+    <h4>Complete Operational Cost Structure</h4>
+    <table>
+      <tr><th>Cost Item</th><th>Provider</th><th>Unit Cost</th><th>Monthly at 1K searches/day</th></tr>
+      <tr><td>Property records</td><td>BatchData</td><td class="gold">$0.01/search</td><td>$300</td></tr>
+      <tr><td>Climate scores</td><td>First Street Foundation</td><td>API tier</td><td>$0–200</td></tr>
+      <tr><td>Flood maps</td><td>FEMA</td><td>Free</td><td>$0</td></tr>
+      <tr><td>AI advisor</td><td>Claude API</td><td>~$0.05/query</td><td>$10–50</td></tr>
+      <tr><td>Insurance scraper</td><td>Built internally</td><td>$0</td><td>$0</td></tr>
+      <tr><td>Hosting</td><td>Netlify free tier</td><td>$0</td><td>$0</td></tr>
+      <tr><td><strong>Total</strong></td><td></td><td></td><td class="gold"><strong>$310–550/month</strong></td></tr>
+    </table>
+
+    <h4>Fee to Coverage Relationship</h4>
+    <table>
+      <tr><th>Daily $DEED Volume</th><th>Monthly Treasury</th><th>Covers</th></tr>
+      <tr><td>$1,000/day</td><td class="gold">$300/month</td><td>~1,000 searches/day</td></tr>
+      <tr><td>$10,000/day</td><td class="gold">$3,000/month</td><td>~10,000 searches/day</td></tr>
+      <tr><td>$100,000/day</td><td class="gold">$30,000/month</td><td>~100,000 searches/day</td></tr>
+    </table>
+
+    <h3>4.5 The Treasury Yield Model</h3>
+    <p>Every dollar that accumulates in the DEED protocol treasury above the immediate operational requirement is deployed into yield-bearing assets on Base — earning passive income that compounds back into the treasury automatically.</p>
+
+    <div class="code-block"><span class="comment">How the yield works:</span>
+
+1% fee collected from every $DEED transaction
+<span class="arrow">         ↓</span>
+Operational costs paid first
+$0.01 per property search · other API costs
+<span class="arrow">         ↓</span>
+Surplus converted to USDC stablecoin
+<span class="arrow">         ↓</span>
+Deposited into yield protocol on Base:
+Moonwell — 4-6% APY
+or Aave on Base — 4-8% APY
+<span class="arrow">         ↓</span>
+Interest earned compounds back into treasury
+<span class="arrow">         ↓</span>
+Larger treasury · more searches funded
+More interest · less need for token sales
+<span class="arrow">         ↓</span>
+Surplus accumulates toward burn events</div>
+
+    <h4>Why Moonwell and Aave on Base</h4>
+    <p>Both are established DeFi lending protocols with billions in total value locked and years of operation. Both are non-custodial — the treasury wallet retains control at all times. Both allow instant withdrawal if operational costs require it. DEED uses only established protocols. Higher-yield opportunities that carry meaningful smart contract risk are not used. Principal protection is the priority. Yield is secondary.</p>
+
+    <h4>Treasury Yield at Scale</h4>
+    <table>
+      <tr><th>Treasury Balance</th><th>APY</th><th>Monthly Yield</th><th>Annual Yield</th></tr>
+      <tr><td>$1,000</td><td>5%</td><td>$4</td><td>$50</td></tr>
+      <tr><td>$5,000</td><td>5%</td><td>$21</td><td>$250</td></tr>
+      <tr><td>$10,000</td><td>6%</td><td>$50</td><td>$600</td></tr>
+      <tr><td>$50,000</td><td>6%</td><td class="gold">$250</td><td class="gold">$3,000</td></tr>
+      <tr><td>$100,000</td><td>7%</td><td class="gold">$583</td><td class="gold">$7,000</td></tr>
+    </table>
+
+    <h4>Treasury Allocation Framework</h4>
+    <table>
+      <tr><th>Allocation</th><th>Purpose</th><th>Target</th></tr>
+      <tr><td>Operational reserve</td><td>30 days of API costs — liquid</td><td>20%</td></tr>
+      <tr><td>Yield position</td><td>Moonwell or Aave USDC</td><td>60%</td></tr>
+      <tr><td>Development reserve</td><td>Developer bounties and costs</td><td>15%</td></tr>
+      <tr><td>Burn reserve</td><td>Accumulated for burn events</td><td>5%</td></tr>
+    </table>
+
+    <h3>4.6 The Deflationary Burn Mechanism</h3>
+
+    <div class="highlight">
+      <strong>We considered not including the burn mechanism because it sounds almost too good.</strong> We're including it because it's honest and because it creates the most direct possible alignment between platform accuracy and token value. Supply only decreases when the platform earns it.
+    </div>
+
+    <p>As the treasury grows through fees and yield, surplus funds are used to buy $DEED on the open market and burn permanently. Every burn is announced publicly, executed on-chain, and verifiable by anyone on BaseScan.</p>
+
+    <p>Burns are triggered when:</p>
+    <p>— Treasury surplus exceeds 90 days of operational reserves<br>
+    — A significant platform milestone is reached<br>
+    — $DEED holders vote to trigger a burn event</p>
+
+    <p>Every burn reduces total supply permanently. The 210,000,000 cap only decreases. Never increases.</p>
+
+    <div class="code-block"><span class="comment">The compounding cycle:</span>
+
+More $DEED trading
+<span class="arrow">         ↓</span>
+More 1% fees collected
+<span class="arrow">         ↓</span>
+More surplus above operational costs
+<span class="arrow">         ↓</span>
+More deployed into yield on Base (4-8% APY)
+<span class="arrow">         ↓</span>
+More interest earned
+<span class="arrow">         ↓</span>
+More operational costs covered by yield
+<span class="arrow">         ↓</span>
+More surplus available for burns
+<span class="arrow">         ↓</span>
+More $DEED burned permanently
+<span class="arrow">         ↓</span>
+Scarcer supply · each token worth more
+<span class="arrow">         ↓</span>
+More $DEED trading</div>
+
+    <h3>4.7 Treasury Transparency</h3>
+    <p>The treasury wallet address is public. Every deposit from the 1% fee is visible on BaseScan. Every withdrawal to pay API costs is visible. Every yield deposit and withdrawal is visible. Monthly treasury reports are published showing total fees collected, total API costs paid at $0.01 per search, surplus deployed into yield, interest earned, current balance, and next burn threshold.</p>
+    <p>Anyone can verify at any time that the 1% fee is funding data infrastructure — not enriching the founding team.</p>
+
+    <h3>4.8 The No-Rug Commitment</h3>
+    <p>The founder allocation of 42,000,000 $DEED is locked on-chain for 2 years from deployment date. The lock contract address is public. Anyone can verify the tokens cannot be sold before the lock expires.</p>
+
+    <div class="principle">
+      <div class="principle-label">On Trust</div>
+      <div class="principle-text">"This is not a promise.<br>It is a smart contract.<br>Promises can be broken.<br>Smart contracts cannot."</div>
+    </div>
+  </div>
+
+  <!-- SECTION 5: BUSINESS MODEL -->
+  <div class="section">
+    <div class="section-num">Section 05</div>
+    <h2 class="section-title">The Business <em>Model</em></h2>
+
+    <h3>5.1 Advertising — Launch Day</h3>
+    <p>The DEED platform is free to use. Ad placements throughout the platform serve contextually relevant advertisers to the most motivated real estate audience on the internet — buyers actively researching purchase decisions informed by urgency nobody else is showing them.</p>
+    <p>Insurance companies entering new markets. Mortgage lenders offering pre-approval with real PITI calculations. Climate-resilient home builders. Moving and relocation services. Solar and home energy companies. Real estate attorneys.</p>
+
+    <h3>5.2 Premium Token Access — Phase 2</h3>
+    <p>$DEED token required for unlimited AI advisor queries, full insurance intelligence reports, agent-verified local data, and county-level insurance withdrawal alerts. Basic search remains free forever. Premium access scales with platform value.</p>
+
+    <h3>5.3 Institutional Data Licensing — Phase 3</h3>
+    <p>The insurance withdrawal database DEED builds is worth significantly more to institutional buyers than to individual consumers. Hedge funds pricing climate risk. Insurance companies monitoring competitor withdrawal patterns. Mortgage lenders assessing portfolio exposure. Climate funds identifying resilient markets. Municipal governments planning infrastructure investment.</p>
+    <p>Annual licensing contracts in the $50,000–500,000 range. The database that costs DEED pennies per data point to collect is worth thousands of dollars per month to institutions that need it aggregated, maintained, and delivered reliably.</p>
+  </div>
+
+  <!-- SECTION 6: COMPETITIVE LANDSCAPE -->
+  <div class="section">
+    <div class="section-num">Section 06</div>
+    <h2 class="section-title">The Competitive <em>Landscape</em></h2>
+
+    <table>
+      <tr><th>Platform</th><th>Real-Time Insurance</th><th>True PITI</th><th>Off-Market</th><th>Climate</th><th>Token</th></tr>
+      <tr><td>Zillow</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td>Basic</td><td class="no">✗</td></tr>
+      <tr><td>Redfin</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td>Basic</td><td class="no">✗</td></tr>
+      <tr><td>Realtor.com</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td>Basic</td><td class="no">✗</td></tr>
+      <tr><td>Propy</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td>✓</td></tr>
+      <tr><td><strong>DEED</strong></td><td class="yes">✓ Real-time</td><td class="yes">✓ Real</td><td class="yes">✓ 158M</td><td class="yes">✓ Full</td><td class="yes">✓ $DEED</td></tr>
+    </table>
+
+    <p>No existing platform combines real-time insurance intelligence with true PITI calculation, off-market property coverage, full climate risk scoring, and a self-funding token economy. DEED occupies a genuine and unoccupied position in the market.</p>
+  </div>
+
+  <!-- SECTION 7: ROADMAP -->
+  <div class="section">
+    <div class="section-num">Section 07</div>
+    <h2 class="section-title">The <em>Roadmap</em></h2>
+
+    <table>
+      <tr><th>Phase</th><th>Timeline</th><th>Deliverables</th></tr>
+      <tr><td><strong>Phase 1 — Foundation</strong></td><td class="gold">Now</td><td>Prototype live · $DEED deployed · Farcaster community · Developer recruited</td></tr>
+      <tr><td><strong>Phase 2 — Real Data</strong></td><td>Month 1–3</td><td>BatchData integration · First Street Foundation · Manual insurance DB for 5 states · Real DEED scores in 3 pilot markets</td></tr>
+      <tr><td><strong>Phase 3 — Agent Network</strong></td><td>Month 3–6</td><td>100 licensed agents · Insurance DB automated · $DEED earn model live · First ad revenue</td></tr>
+      <tr><td><strong>Phase 4 — Scale</strong></td><td>Month 6–12</td><td>10,000+ monthly users · All 50 states covered · DEED Estimate accuracy documented · Full Stack publication launches</td></tr>
+      <tr><td><strong>Phase 5 — Infrastructure</strong></td><td>Year 2+</td><td>Lender citations · On-chain property pilot · Series A · Strategic acquisition conversations</td></tr>
+    </table>
+
+    <div class="highlight">
+      <strong>The exit target:</strong> $1 billion acquisition by CoStar Group, Zillow, a major insurance company, or Coinbase. The platform that becomes the standard for insurance-adjusted property valuation in an era of accelerating climate risk is worth acquiring. The roadmap builds toward that standard — one honest data point at a time.
+    </div>
+  </div>
+
+  <!-- SECTION 8: RISKS -->
+  <div class="section">
+    <div class="section-num">Section 08</div>
+    <h2 class="section-title">The Honest <em>Risks</em></h2>
+
+    <div class="warning">
+      <strong>Data Pipeline Risk:</strong> The insurance withdrawal database does not exist yet. Building it requires developer time, ongoing maintenance, and manual effort in early stages. Coverage will be incomplete at launch and improve over time.
+    </div>
+
+    <div class="warning">
+      <strong>Developer Risk:</strong> DEED currently has no developer. The technical build depends on finding the right person willing to work for $DEED tokens in the early stage. This is the most critical dependency in the entire project.
+    </div>
+
+    <div class="warning">
+      <strong>Token Liquidity Risk:</strong> $DEED will launch with limited initial liquidity — approximately $50–100 of ETH paired with $DEED on Aerodrome. Early token price will be volatile. Thin liquidity means large buys and sells move the price significantly.
+    </div>
+
+    <div class="warning">
+      <strong>Regulatory Risk:</strong> Real estate data, token offerings, and AI-generated analysis operate in a rapidly evolving regulatory environment. DEED is not a licensed real estate broker, financial advisor, or investment advisor. DEED presents data. Users make their own decisions.
+    </div>
+
+    <div class="warning">
+      <strong>Competition Risk:</strong> Zillow, CoStar, or a well-funded PropTech startup could build similar features. DEED's moat is the insurance withdrawal database accumulated over time and the agent network that verifies hyperlocal data. Both take time to build but neither is impossible to replicate given sufficient resources.
+    </div>
+
+    <div class="warning">
+      <strong>Founder Risk:</strong> DEED is currently a one-person founding team. This is both a strength — complete clarity of vision and principle — and a risk. The developer and early community members who join reduce this risk substantially.
+    </div>
+  </div>
+
+  <!-- SECTION 9: WHAT WE'RE ASKING FOR -->
+  <div class="section">
+    <div class="section-num">Section 09</div>
+    <h2 class="section-title">What We're <em>Asking For</em></h2>
+
+    <p>DEED is asking for three things from the Base and Farcaster community:</p>
+
+    <h3>A Developer</h3>
+    <p>One full-stack developer comfortable with Base, API integrations, and web scraping. Compensated in $DEED from the development fund. This is the most critical need. If you are this person or know this person — reply on Farcaster @deedbase.</p>
+
+    <h3>Licensed Real Estate Agents</h3>
+    <p>Agents in any US market willing to submit local insurance and climate data through the agent portal. No purchase required. Earn $DEED for what you already know. The first agents in are the most valuable — they build the database that makes everything else real.</p>
+
+    <h3>Honest Feedback</h3>
+    <p>The prototype is live. The idea is documented. If you see a flaw in the reasoning, a gap in the data, a competitive threat we've missed, or a better way to build any of this — say so. DEED is built on honesty. Honest criticism from the community makes it better.</p>
+  </div>
+
+  <!-- THE PRINCIPLE -->
+  <div class="section">
+    <div class="section-num">Section 10</div>
+    <h2 class="section-title">The <em>Principle</em></h2>
+
+    <p>DEED never tells you to buy or sell a property.<br>
+    DEED never tells you to buy or sell $DEED.<br>
+    DEED never overstates what exists today to sell you on what might exist tomorrow.</p>
+
+    <p>DEED tells you what the data says. The decision is always yours.</p>
+
+    <p>That honesty is what drives $DEED token value. Not hype. Not promises. Accuracy you can stake on.</p>
+
+    <div class="principle">
+      <div class="principle-label">The DEED Principle</div>
+      <div class="principle-text">"The data. Not the pitch."</div>
+    </div>
+  </div>
+
+  <!-- CONTACT -->
+  <div class="section">
+    <div class="section-num">Contact</div>
+    <h2 class="section-title">Find <em>DEED</em></h2>
+
+    <table>
+      <tr><th>Channel</th><th>Address</th></tr>
+      <tr><td>Platform</td><td class="gold">deedcoinindex.netlify.app</td></tr>
+      <tr><td>Farcaster</td><td class="gold">@deedbase</td></tr>
+      <tr><td>GitHub</td><td class="gold">github.com/deedbase</td></tr>
+      <tr><td>Base Contract</td><td>Announced when deployed — not before</td></tr>
+    </table>
+  </div>
+
+  <!-- DISCLAIMER -->
+  <div class="disclaimer">
+    <div class="disclaimer-label">Legal Disclaimer</div>
+    This white paper is for informational purposes only. It does not constitute investment advice, financial advice, real estate advice, or legal advice. $DEED is a utility token with no guaranteed value. The platform described is partially built — specific components are live and specific components are under development as disclosed in Section 2. All risks described in Section 8 are real and should be read carefully before any decision. Past performance of any referenced asset does not predict future results. DEED is not a licensed real estate broker, financial advisor, or investment advisor. Everything stated in this document is true to the best of our knowledge as of March 2026. Updates will be published as the platform develops.
+  </div>
+
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div>
+    <div class="footer-logo">DEED</div>
+    <div style="font-family:'DM Mono',monospace;font-size:7px;letter-spacing:2px;color:var(--tdd);margin-top:3px">White Paper v1.0 · March 2026</div>
+  </div>
+  <div class="footer-right">
+    deedcoinindex.netlify.app<br>
+    The data. Not the pitch.
+  </div>
+</footer>
+
+</body>
+</html>
