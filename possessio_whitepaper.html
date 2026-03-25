@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POSSESSIO — White Paper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400;1,700&family=Montserrat:wght@300;400;500;600&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root {
+  --crimson: #8B0000;
+  --crimson-pale: rgba(139,0,0,0.07);
+  --navy: #000080;
+  --parchment: #f5ecd7;
+  --ink: #2c1a0e;
+  --ink-light: #4a3728;
+  --gold-seal: #b8860b;
+  --wax: #8B0000;
+  --border: rgba(139,0,0,0.25);
+  --border-light: rgba(139,0,0,0.12);
+  --green: #2d6a2d;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background-color:var(--parchment);color:var(--ink);font-family:'Montserrat',sans-serif;position:relative;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23p)' opacity='0.06'/%3E%3C/svg%3E"),
+  linear-gradient(135deg,#f8f0dd 0%,#f2e4c4 25%,#f7edd5 50%,#ede0c0 75%,#f5ecd7 100%)}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 120% 80% at 50% 0%,rgba(248,240,221,.6) 0%,transparent 70%),
+  radial-gradient(ellipse 80% 60% at 20% 80%,rgba(210,180,140,.3) 0%,transparent 60%),
+  radial-gradient(ellipse 60% 80% at 80% 50%,rgba(200,170,130,.2) 0%,transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:980px;margin:0 auto;padding:0 32px 80px}
+
+/* corners */
+.corners{position:fixed;inset:0;pointer-events:none;z-index:2}
+.corners::before,.corners::after{content:'';position:absolute;width:60px;height:60px;border-color:var(--crimson);border-style:solid;opacity:.15}
+.corners::before{top:20px;left:20px;border-width:2px 0 0 2px}
+.corners::after{bottom:20px;right:20px;border-width:0 2px 2px 0}
+
+/* masthead */
+.mast{text-align:center;padding:64px 0 52px;border-bottom:1.5px solid var(--border);position:relative;animation:fu .8s ease both}
+.mast::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:60%;height:1px;background:linear-gradient(90deg,transparent,var(--crimson),transparent);opacity:.4}
+.seal-wrap{display:inline-block;position:relative;margin-bottom:36px}
+.seal{width:120px;height:120px;background:radial-gradient(circle at 35% 35%,#c00 0%,var(--wax) 45%,#5a0000 100%);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;box-shadow:0 4px 24px rgba(139,0,0,.45),inset 0 2px 6px rgba(255,255,255,.15),inset 0 -3px 8px rgba(0,0,0,.3)}
+.seal::before{content:'';position:absolute;inset:8px;border:1.5px solid rgba(255,200,150,.3);border-radius:50%}
+.seal-txt{font-family:'Playfair Display',serif;color:rgba(255,220,180,.9);font-size:13px;font-weight:700;letter-spacing:2px;text-align:center;line-height:1.3;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.cord-l,.cord-r{position:absolute;bottom:-28px;width:2px;height:30px;background:linear-gradient(180deg,var(--crimson) 0%,var(--gold-seal) 50%,var(--crimson) 100%);opacity:.7}
+.cord-l{left:30px;transform:rotate(-8deg)}.cord-r{right:30px;transform:rotate(8deg)}
+.cord-l::after,.cord-r::after{content:'';position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:8px;height:8px;border-radius:50%;background:var(--gold-seal);opacity:.8}
+.eye{font-size:9px;letter-spacing:6px;text-transform:uppercase;color:var(--crimson);opacity:.7;margin-bottom:16px}
+.m-title{font-family:'Playfair Display',serif;font-size:clamp(52px,8vw,96px);font-weight:900;color:var(--crimson);line-height:.9;letter-spacing:-1px;margin-bottom:12px}
+.m-sub{font-family:'IM Fell English',serif;font-style:italic;font-size:18px;color:var(--ink-light);margin-bottom:8px}
+.m-tag{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--crimson);opacity:.65;margin-bottom:28px}
+.m-rule{width:180px;height:1px;background:linear-gradient(90deg,transparent,var(--crimson),transparent);margin:0 auto 22px;opacity:.5}
+.m-meta{font-size:10px;color:var(--ink-light);letter-spacing:1px;opacity:.7}
+
+/* toc */
+.toc{padding:52px 0 40px;border-bottom:1px solid var(--border-light)}
+.toc-head{display:flex;align-items:center;gap:16px;margin-bottom:36px}
+.toc-title{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--crimson)}
+.toc-rule{flex:1;height:1px;background:linear-gradient(90deg,var(--crimson),transparent);opacity:.3}
+.toc-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border-light);background:var(--border-light)}
+.toc-col{background:rgba(245,236,215,.5);padding:28px 32px;display:flex;flex-direction:column;gap:10px}
+.toc-col:first-child{border-right:1px solid var(--border-light)}
+.toc-grp{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson);margin-top:8px;margin-bottom:4px}
+.toc-a{display:flex;align-items:baseline;gap:10px;font-size:12px;color:var(--ink-light);text-decoration:none;transition:color .2s}
+.toc-a:hover{color:var(--crimson)}
+.toc-n{font-family:'Playfair Display',serif;font-size:10px;font-weight:700;color:var(--crimson);opacity:.7;min-width:28px}
+
+/* section */
+.sec{padding:60px 0 48px;border-bottom:1px solid var(--border-light);position:relative}
+.sec::before{content:'';position:absolute;top:0;left:-32px;right:-32px;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent)}
+.badge{display:inline-flex;align-items:center;gap:10px;margin-bottom:12px}
+.badge-n{font-family:'Playfair Display',serif;font-size:11px;font-weight:700;color:var(--crimson);opacity:.6;letter-spacing:2px;border:1px solid var(--border);padding:2px 8px}
+.badge-c{font-size:9px;letter-spacing:4px;text-transform:uppercase;color:var(--ink-light);opacity:.5}
+.sec-title{font-family:'Playfair Display',serif;font-size:clamp(28px,4vw,44px);font-weight:700;color:var(--crimson);line-height:1.1;margin-bottom:8px}
+.sec-title em{font-style:italic}
+.sec-sub{font-family:'IM Fell English',serif;font-style:italic;font-size:16px;color:var(--ink-light);margin-bottom:28px}
+.p{font-size:14px;line-height:1.85;color:var(--ink);margin-bottom:20px}
+.p strong{color:var(--crimson);font-weight:600}
+.p code{font-family:'Montserrat',monospace;font-size:12px;background:rgba(139,0,0,.06);border:1px solid var(--border-light);padding:1px 6px;color:var(--navy)}
+
+/* pullquote */
+.pq{border-left:3px solid var(--crimson);padding:16px 24px;margin:28px 0;background:var(--crimson-pale,rgba(139,0,0,.07));position:relative}
+.pq::before{content:'\201C';font-family:'Playfair Display',serif;font-size:72px;color:var(--crimson);opacity:.15;position:absolute;top:-16px;left:16px;line-height:1}
+.pq-t{font-family:'IM Fell English',serif;font-style:italic;font-size:17px;color:var(--crimson);line-height:1.6}
+
+/* stat boxes */
+.stats{display:flex;gap:16px;margin:32px 0;flex-wrap:wrap}
+.stat{flex:1;min-width:140px;border:1px solid var(--border);background:linear-gradient(135deg,rgba(245,236,215,.8),rgba(237,224,196,.9));padding:20px 18px;text-align:center;position:relative}
+.stat::before{content:'';position:absolute;top:4px;left:4px;right:4px;bottom:4px;border:1px solid var(--border-light);pointer-events:none}
+.stat-n{font-family:'Playfair Display',serif;font-size:36px;font-weight:900;color:var(--crimson);line-height:1;margin-bottom:6px}
+.stat-l{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink-light);opacity:.7}
+.stat-s{font-size:10px;color:var(--ink-light);margin-top:6px;font-style:italic;font-family:'IM Fell English',serif}
+
+/* rows */
+.rows{margin:24px 0;display:flex;flex-direction:column;border:1px solid var(--border-light)}
+.row{display:flex;gap:16px;padding:14px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.4);transition:background .2s}
+.row:last-child{border-bottom:none}
+.row:hover{background:rgba(139,0,0,.04)}
+.row-tag{font-family:'Playfair Display',serif;font-size:12px;font-weight:700;color:var(--crimson);min-width:110px;flex-shrink:0;padding-top:1px}
+.row-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.row-txt strong{color:var(--crimson);font-weight:600}
+.row-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* late table — the centerpiece */
+.late-wrap{margin:28px 0}
+.late-header{background:var(--crimson);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.late-header-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;color:rgba(255,220,180,.95);letter-spacing:2px}
+.late-header-sub{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:rgba(255,220,180,.55)}
+.late-tbl{width:100%;border-collapse:collapse}
+.late-tbl th{font-family:'Montserrat',sans-serif;font-size:8px;font-weight:600;letter-spacing:2px;text-transform:uppercase;padding:10px 20px;border:1px solid var(--border);background:rgba(139,0,0,.08);color:var(--crimson);text-align:left}
+.late-tbl td{padding:14px 20px;border:1px solid var(--border-light);vertical-align:top;font-size:12px;color:var(--ink)}
+.late-tbl tr:nth-child(odd) td{background:rgba(245,236,215,.5)}
+.late-tbl tr:nth-child(even) td{background:rgba(237,224,196,.4)}
+.late-pillar{font-family:'Playfair Display',serif;font-size:20px;font-weight:900;color:var(--crimson);line-height:1;display:flex;flex-direction:column;gap:3px}
+.late-pillar span{font-size:9px;letter-spacing:2px;color:var(--ink-light);opacity:.6;font-family:'Montserrat',sans-serif;font-weight:600}
+.late-mech{font-weight:600;color:var(--navy);margin-bottom:5px;font-family:'Playfair Display',serif;font-size:13px}
+.late-logic{font-size:11px;color:var(--ink-light);line-height:1.65}
+.late-logic strong{color:var(--crimson)}
+.pct-badge{display:inline-block;font-family:'Playfair Display',serif;font-size:22px;font-weight:900;color:var(--navy);border:1px solid var(--border);padding:4px 12px;background:rgba(0,0,128,.04);margin-bottom:6px}
+
+/* comparison table */
+.ctbl{width:100%;border-collapse:collapse;margin:28px 0;font-size:12px}
+.ctbl th{font-family:'Playfair Display',serif;font-size:11px;font-weight:700;padding:10px 16px;border:1px solid var(--border);text-align:left;letter-spacing:1px}
+.ctbl th.old{color:var(--ink-light);background:rgba(0,0,0,.04)}
+.ctbl th.nw{color:var(--crimson);background:rgba(139,0,0,.06)}
+.ctbl td{padding:10px 16px;border:1px solid var(--border-light);background:rgba(245,236,215,.3)}
+.ctbl tr:nth-child(even) td{background:rgba(237,224,196,.4)}
+.c-g{color:var(--green);font-weight:600}
+.c-r{color:var(--crimson);font-weight:600}
+.c-b{color:var(--navy);font-weight:600}
+.c-x{color:#999;text-decoration:line-through;opacity:.5}
+
+/* security requirements */
+.reqs{display:flex;flex-direction:column;margin:24px 0;border:1px solid var(--border-light)}
+.req{display:grid;grid-template-columns:40px 1fr;gap:16px;padding:16px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3);align-items:start}
+.req:last-child{border-bottom:none}
+.req-num{font-family:'Playfair Display',serif;font-size:24px;font-weight:900;color:var(--crimson);opacity:.25;line-height:1}
+.req-title{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson);margin-bottom:5px}
+.req-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.req-txt strong{color:var(--navy);font-weight:600}
+.req-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* metrics strip */
+.mstrip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);background:var(--border-light);margin:24px 0}
+.mcell{background:rgba(245,236,215,.6);padding:20px 18px;text-align:center}
+.mcell+.mcell{border-left:1px solid var(--border-light)}
+.mv{font-family:'Playfair Display',serif;font-size:28px;font-weight:900;color:var(--navy);line-height:1;margin-bottom:6px}
+.ml{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink-light);opacity:.6}
+.mn{font-size:10px;color:var(--green);margin-top:4px;font-family:'IM Fell English',serif;font-style:italic}
+
+/* audit table */
+.audit-wrap{margin:32px 0}
+.audit-hd{background:rgba(139,0,0,.08);border:1px solid var(--border);border-bottom:none;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+.audit-hd-t{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson)}
+.audit-hd-l{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--navy)}
+.ldot{width:6px;height:6px;border-radius:50%;background:var(--navy);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.atbl{width:100%;border-collapse:collapse;font-size:11px}
+.atbl th{font-size:8px;font-weight:600;letter-spacing:2px;text-transform:uppercase;padding:8px 14px;border:1px solid var(--border-light);background:rgba(237,224,196,.6);color:var(--ink-light);text-align:left}
+.atbl td{padding:9px 14px;border:1px solid var(--border-light);background:rgba(245,236,215,.3);font-family:'Montserrat',sans-serif}
+.atbl tr:nth-child(even) td{background:rgba(237,224,196,.35)}
+.sv{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-weight:600;font-size:10px}
+.sv::before{content:'✓'}
+.sr{display:inline-flex;align-items:center;gap:5px;color:var(--crimson);font-weight:600;font-size:10px}
+.sr::before{content:'⚠'}
+
+/* formula */
+.fbox{border:1px solid var(--border);background:linear-gradient(135deg,rgba(0,0,128,.04),rgba(245,236,215,.6));padding:28px 32px;margin:28px 0}
+.fbox-title{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--navy);margin-bottom:16px;letter-spacing:1px}
+.fl{font-size:12px;color:var(--ink-light);line-height:2}
+.fl strong{color:var(--navy);font-weight:600}
+.fl .hl{color:var(--crimson);font-weight:600}
+.fdiv{border:none;border-top:1px solid var(--border-light);margin:14px 0}
+
+/* box */
+.box{border:1px solid var(--border);background:rgba(245,236,215,.5);padding:28px 32px;margin:28px 0;position:relative}
+.box::after{content:'';position:absolute;inset:5px;border:1px solid var(--border-light);pointer-events:none}
+.box-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.box-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+/* disclaimer */
+.disc{border:1px solid var(--border);background:rgba(139,0,0,.04);padding:18px 24px;margin:24px 0}
+.disc-title{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--crimson);font-weight:600;margin-bottom:8px}
+.disc-txt{font-size:11px;color:var(--ink-light);line-height:1.7}
+
+/* alloc */
+.alloc{display:flex;flex-direction:column;border:1px solid var(--border-light);margin:24px 0}
+.alloc-row{display:grid;grid-template-columns:58px 1fr;gap:16px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3)}
+.alloc-row:last-child{border-bottom:none}
+.ap{font-family:'Playfair Display',serif;font-size:20px;font-weight:900;color:var(--crimson)}
+.an{font-size:11px;color:var(--ink-light);margin-bottom:3px;font-weight:500}
+.as2{font-size:9px;color:var(--ink-light);opacity:.5;font-style:italic}
+.abar{height:4px;background:rgba(0,0,0,.06);margin-top:6px}
+.abar-f{height:4px;background:linear-gradient(90deg,var(--crimson),var(--navy))}
+
+/* syslogic */
+.slog{border:1px solid var(--border);background:rgba(0,0,128,.04);padding:16px 24px;margin:24px 0}
+.slog-hd{font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--navy);font-weight:600;margin-bottom:10px;opacity:.7}
+.slog-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--ink-light);padding:6px 0;border-bottom:1px solid var(--border-light)}
+.slog-row:last-child{border-bottom:none}
+.sk{opacity:.7}
+.sv2{font-weight:600;color:var(--navy);text-align:right;font-family:'Montserrat',monospace;font-size:10px}
+
+/* roadmap */
+.rmap{position:relative;padding-left:32px;margin:28px 0}
+.rmap::before{content:'';position:absolute;left:8px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,var(--crimson),var(--navy) 50%,var(--crimson));opacity:.4}
+.ri{position:relative;margin-bottom:32px}
+.ri::before{content:'';position:absolute;left:-28px;top:6px;width:10px;height:10px;border:1.5px solid var(--crimson);background:var(--parchment);border-radius:50%;transform:rotate(45deg)}
+.rd{font-family:'Playfair Display',serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:8px}
+.rl{font-size:12px;color:var(--ink-light);line-height:1.8;padding-left:12px}
+.rl li{list-style:none;padding-left:14px;position:relative}
+.rl li::before{content:'—';position:absolute;left:0;color:var(--crimson);opacity:.4}
+.rl code{font-family:'Montserrat',monospace;font-size:10px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* next steps */
+.steps{display:flex;flex-direction:column;margin:24px 0;border:1px solid var(--border-light)}
+.step{display:grid;grid-template-columns:36px 1fr;gap:16px;padding:16px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3);align-items:start}
+.step:last-child{border-bottom:none}
+.step-n{font-family:'Playfair Display',serif;font-size:22px;font-weight:900;color:var(--navy);opacity:.25;line-height:1}
+.step-title{font-family:'Playfair Display',serif;font-size:13px;font-weight:700;color:var(--navy);margin-bottom:5px}
+.step-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.step-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* footer */
+.orn{text-align:center;font-size:18px;color:var(--crimson);opacity:.2;margin:28px 0;letter-spacing:12px}
+.frule{margin:64px 0 32px;border:none;border-top:1px solid var(--border-light);position:relative}
+.frule::after{content:'⬥ POSSESSIO ⬥';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--parchment);padding:0 16px;font-family:'Playfair Display',serif;font-size:11px;color:var(--crimson);opacity:.5;letter-spacing:3px;white-space:nowrap}
+.ft{text-align:center;font-size:10px;color:var(--ink-light);opacity:.4;letter-spacing:1px;margin-bottom:8px}
+
+@keyframes fu{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+/* FLYWHEEL */
+.flywheel{border:1px solid var(--border);background:rgba(245,236,215,.5);padding:28px 32px;margin:28px 0;position:relative;font-family:"Montserrat",monospace;font-size:11px;overflow-x:auto}
+.flywheel pre{color:var(--ink);line-height:1.8;white-space:pre;font-family:"Montserrat",monospace;font-size:11px}
+.flywheel pre .hl{color:var(--crimson);font-weight:700}
+.flywheel pre .bl{color:var(--navy);font-weight:700}
+.flywheel-title{font-family:"Playfair Display",serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.flywheel-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+@media(max-width:700px){
+  .toc-grid{grid-template-columns:1fr}
+  .toc-col:first-child{border-right:none;border-bottom:1px solid var(--border-light)}
+  .stats{flex-direction:column}
+  .mstrip{grid-template-columns:1fr}
+  .mcell+.mcell{border-left:none;border-top:1px solid var(--border-light)}
+  .wrap{padding:0 16px 60px}
+  .late-tbl{font-size:11px}
+}
+</style>
+</head>
+<body>
+<div class="corners"></div>
+<div class="wrap">
+
+<!-- ══════════════════════════════ MASTHEAD ══════════════════════════════ -->
+<div class="mast">
+  <div class="seal-wrap">
+    <div class="seal"><div class="seal-txt">POS<br>SES<br>SIO</div></div>
+    <div class="cord-l"></div><div class="cord-r"></div>
+  </div>
+  <div class="eye">Registry of Protocol &amp; Provenance · Base Network</div>
+  <div class="m-title">POSSESSIO</div>
+  <div class="m-sub">A Self-Sustaining, Ad-Free Property Intelligence Utility</div>
+  <div class="m-tag">The data Zillow has no incentive to show you</div>
+  <div class="m-rule"></div>
+  <div class="m-meta">WHITE PAPER · $PITI TOKEN · MASTER TECHNICAL SPECIFICATION · VERSION 1.0</div>
+</div>
+
+<!-- ══════════════════════════════ TABLE OF CONTENTS ══════════════════════════════ -->
+<div class="toc">
+  <div class="toc-head"><div class="toc-title">Table of Contents</div><div class="toc-rule"></div></div>
+  <div class="toc-grid">
+    <div class="toc-col">
+      <div class="toc-grp">I. Project Overview</div>
+      <a class="toc-a" href="#s1-1"><span class="toc-n">1.1</span>What Possessio Is</a>
+      <a class="toc-a" href="#s1-2"><span class="toc-n">1.2</span>The Problem We Solve</a>
+      <a class="toc-a" href="#s1-3"><span class="toc-n">1.3</span>Design Principles</a>
+
+      <div class="toc-grp" style="margin-top:12px">II. The L.A.T.E. Contract</div>
+      <a class="toc-a" href="#s2-1"><span class="toc-n">2.1</span>Architecture Overview</a>
+      <a class="toc-a" href="#s2-2"><span class="toc-n">2.2</span>L — Liquidity Pillar</a>
+      <a class="toc-a" href="#s2-3"><span class="toc-n">2.3</span>T — Treasury Pillar</a>
+      <a class="toc-a" href="#s2-4"><span class="toc-n">2.4</span>A — Asset Yield Pillar</a>
+      <a class="toc-a" href="#s2-5"><span class="toc-n">2.5</span>E — Engine State &amp; Transparency</a>
+
+      <div class="toc-grp" style="margin-top:12px">III. Web Utility</div>
+      <a class="toc-a" href="#s3-1"><span class="toc-n">3.1</span>The Institutional Index</a>
+      <a class="toc-a" href="#s3-2"><span class="toc-n">3.2</span>True PITI Calculator</a>
+      <a class="toc-a" href="#s3-3"><span class="toc-n">3.3</span>The DEED Score</a>
+      <a class="toc-a" href="#s3-4"><span class="toc-n">3.4</span>Agent Intelligence Network</a>
+      <a class="toc-a" href="#s3-5"><span class="toc-n">3.5</span>Farcaster Frame Integration</a>
+    </div>
+    <div class="toc-col">
+      <div class="toc-grp">IV. Security &amp; Fail-Safe</div>
+      <a class="toc-a" href="#s4-1"><span class="toc-n">4.1</span>Immutable Liquidity Logic</a>
+      <a class="toc-a" href="#s4-2"><span class="toc-n">4.2</span>Multi-Sig Governance</a>
+      <a class="toc-a" href="#s4-3"><span class="toc-n">4.3</span>Emergency Circuit Breaker</a>
+      <a class="toc-a" href="#s4-4"><span class="toc-n">4.4</span>48-Hour Timelock</a>
+
+      <div class="toc-grp" style="margin-top:12px">V. $PITI Token</div>
+      <a class="toc-a" href="#s5-1"><span class="toc-n">5.1</span>Token Overview</a>
+      <a class="toc-a" href="#s5-2"><span class="toc-n">5.2</span>Revenue Allocation</a>
+      <a class="toc-a" href="#s5-3"><span class="toc-n">5.3</span>Regulatory Posture</a>
+
+      <div class="toc-grp" style="margin-top:12px">VI. Build Specification</div>
+      <a class="toc-a" href="#s6-1"><span class="toc-n">6.1</span>Developer Next Steps</a>
+      <a class="toc-a" href="#s6-2"><span class="toc-n">6.2</span>Legal Safeguard Language</a>
+      <a class="toc-a" href="#s6-3"><span class="toc-n">6.3</span>System Logic Reference</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §1: PROJECT OVERVIEW ══════════════════════════════ -->
+
+<div class="sec" id="s1-1">
+  <div class="badge"><div class="badge-n">§ 1.1</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">What Possessio Is</div>
+  <div class="sec-sub">A self-sustaining, protocol-funded data utility providing institutional-grade insurance and county withdrawal metrics</div>
+
+  <p class="p">Possessio is a property intelligence protocol built on Base. It layers real-time insurance carrier data, FAIR Plan dependency rates, True PITI calculations, and county withdrawal metrics on every property in America — listed or off-market. The data is queryable without login, without ads, and without requiring any token purchase to access.</p>
+
+  <p class="p">The protocol is self-sustaining. Its operating costs — premium API subscriptions for institutional-grade insurance and county rate feeds — are funded autonomously by the <strong>L.A.T.E. smart contract</strong> (Liquidity and Treasury Engine), which routes ETH swap fees — 25% directly into protocol-owned liquidity, 75% into yield-bearing assets whose yield further feeds the LP and operations simultaneously. No advertising revenue. No user data sold. No gated access.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-n">Ad-Free</div><div class="stat-l">Zero advertising, zero data monetization</div><div class="stat-s">Protocol-funded by L.A.T.E. fee engine</div></div>
+    <div class="stat"><div class="stat-n">Base</div><div class="stat-l">Deployment network</div><div class="stat-s">Ethereum L2 · OpenZeppelin · Safe multi-sig</div></div>
+    <div class="stat"><div class="stat-n">$0.00</div><div class="stat-l">Cost to query the index</div><div class="stat-s">Zero-barrier public access</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s1-2">
+  <div class="badge"><div class="badge-n">§ 1.2</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">The Problem We Solve</div>
+  <div class="sec-sub">The data Zillow has no incentive to show you</div>
+
+  <p class="p">PITI — Principal, Interest, Taxes, and Insurance — is the true monthly cost of homeownership. Lenders calculate it. Escrow accounts collect it. The single most volatile component, <strong>insurance</strong>, is routinely estimated rather than verified at the point of purchase decision. In insurance-stressed markets, Zillow's standard estimate can be more than $1,000 per month wrong.</p>
+
+  <p class="p">When State Farm stops writing policies in a county, that signal is the most accurate leading indicator of future property value decline available anywhere — and it arrives months before any map, model, or Zestimate reflects it. That signal is never surfaced by platforms whose revenue depends on transaction volume. Possessio's incentive is structurally opposite: the protocol earns from use, not from sales.</p>
+
+  <div class="pq"><div class="pq-t">Zillow shows you comps. Possessio shows you what actually determines long-term value — real-time insurance intelligence layered on every property in America, listed or not.</div></div>
+
+  <div class="rows">
+    <div class="row"><div class="row-tag">The Gap</div><div class="row-txt">In coastal Florida, fire-corridor California, and flood-zone Texas, the difference between Zillow's estimated PITI and the True PITI can exceed <strong>$1,380/month</strong>. That delta affects debt-to-income ratios, mortgage qualification, and real affordability. The lender finds this number at underwriting. Possessio shows it before the offer.</div></div>
+    <div class="row"><div class="row-tag">The Signal</div><div class="row-txt">Insurance carrier withdrawals are the earliest structural signal in the property market. When a carrier exits a county, every listing in that county is mispriced against the new insurance reality. Possessio aggregates this signal across all 50 states in real time. Nobody else does this at this layer.</div></div>
+    <div class="row"><div class="row-tag">The Fix</div><div class="row-txt">An open, protocol-funded public intelligence index. No login required. No token required to view data. Institutional-grade feeds, funded by the L.A.T.E. treasury. The index replaces the traditional gated listing system with a free public data layer — permanently.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s1-3">
+  <div class="badge"><div class="badge-n">§ 1.3</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">Design Principles</div>
+  <div class="sec-sub"><em>Non-discretionary. Self-executing. Transparent by architecture.</em></div>
+
+  <div class="rows">
+    <div class="row"><div class="row-tag">Zero Barrier</div><div class="row-txt">No login, no ads, no requirement to buy tokens to view data. The index is a public utility. Access is the point — not a funnel.</div></div>
+    <div class="row"><div class="row-tag">Non-Discretionary</div><div class="row-txt">Funding and yield reinvestment are handled by self-executing smart contract code, not human management. The L.A.T.E. contract's 25% liquidity split is hardcoded and immutable. No admin can redirect these funds.</div></div>
+    <div class="row"><div class="row-tag">Institutional Grade</div><div class="row-txt">The 75% treasury allocation funds premium API subscriptions for insurance withdrawal data, county rate feeds, FAIR Plan enrollment statistics, and FEMA flood zone updates. The same data tier used by institutional insurers and mortgage lenders — available publicly at zero cost.</div></div>
+    <div class="row"><div class="row-tag">Transparent</div><div class="row-txt">Every fee-split event is emitted on-chain. The treasury balance is public. The yield position is readable. The Farcaster Frame dashboard renders this data in real time. The audit is always open.</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §2: L.A.T.E. CONTRACT ══════════════════════════════ -->
+
+<div class="sec" id="s2-1">
+  <div class="badge"><div class="badge-n">§ 2.1</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">L.A.T.E. Architecture</div>
+  <div class="sec-sub">Liquidity and Treasury Engine — the autonomous smart contract powering the protocol on Base</div>
+
+  <p class="p">The L.A.T.E. smart contract is the financial engine of Possessio. It is an autonomous contract on Base, built using the OpenZeppelin library, that intercepts ETH swap fees and routes them with hardcoded, immutable logic across four operational pillars. No human decision-making is required or possible in the core fee-routing path.</p>
+
+  <div class="late-wrap">
+    <div class="late-header">
+      <div class="late-header-title">L · A · T · E</div>
+      <div class="late-header-sub">Liquidity and Treasury Engine · Base Network · OpenZeppelin</div>
+    </div>
+    <table class="late-tbl">
+      <thead>
+        <tr>
+          <th style="width:100px">Pillar</th>
+          <th style="width:140px">Mechanism</th>
+          <th>Logic Execution</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="late-pillar">L<span>Liquidity</span></div>
+          </td>
+          <td>
+            <div class="pct-badge">25%</div>
+            <div class="late-mech">Allocation</div>
+          </td>
+          <td>
+            <div class="late-logic">Captures <strong>25% of ETH swap fees</strong> and pairs them with $PITI to inject into the Base Liquidity Pool. This generates its own LP fees and continuously raises the price floor. The injection function is <strong>hardcoded and immutable</strong> — no admin can redirect these funds.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">T<span>Treasury</span></div>
+          </td>
+          <td>
+            <div class="pct-badge">75%</div>
+            <div class="late-mech">Allocation</div>
+          </td>
+          <td>
+            <div class="late-logic">Routes <strong>75% of ETH fees</strong> to a <strong>Safe (Gnosis) 3-of-5 multi-sig</strong>. This sustainably funds high-frequency API costs for institutional-grade insurance withdrawal data, county rate feeds, and FAIR Plan enrollment statistics. The treasury is the protocol's operating budget — non-discretionary, on-chain, and publicly auditable.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">A<span>Asset Yield</span></div>
+          </td>
+          <td>
+            <div class="late-mech">Yield Deployment</div>
+          </td>
+          <td>
+            <div class="late-logic"><strong>75% of swap fees deploy into yield-bearing assets</strong> — cbETH or Ondo USDY. The yield earned is then split: <strong>25% of yield back into the LP</strong> (compounding the liquidity floor), <strong>75% of yield stays in treasury</strong> (funding API costs and compounding further). Two income streams — swap fees and yield — both continuously feeding the liquidity pool.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">E<span>Engine State</span></div>
+          </td>
+          <td>
+            <div class="late-mech">Transparency</div>
+          </td>
+          <td>
+            <div class="late-logic">The contract <strong>emits on-chain events for every fee-split</strong> — every routing decision is permanently logged. These events power the <strong>real-time Farcaster Frame dashboard</strong>, allowing any holder or user to verify treasury health, liquidity depth, and yield position without trusting any centralized reporter.</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="flywheel">
+  <div class="flywheel-title">The POSSESSIO Compounding Flywheel</div>
+  <pre>
+Token Swaps
+     ↓
+<span class="hl">1% Swap Fee collected</span>
+     ↓
+Split two ways simultaneously:
+     ↓                         ↓
+<span class="bl">25% → LP injection</span>       <span class="hl">75% → Treasury</span>
+(raises price floor)           ↓
+     ↑             Deployed to yield
+     ↑             (cbETH / Ondo USDY)
+     ↑                         ↓
+     ↑               <span class="hl">Yield earned</span>
+     ↑                         ↓
+     ↑             Split two ways:
+     ↑                 ↓              ↓
+     ←── <span class="bl">25% of yield</span> ───        <span class="hl">75% stays</span>
+         back into LP             in treasury
+                                  (API costs +
+                                   compounds)
+  </pre>
+  <div style="font-size:11px;color:var(--ink-light);margin-top:12px;font-family:'Montserrat',sans-serif;font-style:italic">Two income streams — swap fees and yield — both continuously feeding the same liquidity pool. Each cycle amplifies the next.</div>
+</div>
+
+<div class="sec" id="s2-2">
+  <div class="badge"><div class="badge-n">§ 2.2</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">L — Liquidity Pillar</div>
+  <div class="sec-sub">25% of ETH swap fees · Paired with $PITI · Injected into Base Liquidity Pool</div>
+  <p class="p">The Liquidity Pillar has two inputs — not one. First: 25% of all ETH swap fees are automatically paired with $PITI and injected directly into the Base Liquidity Pool. Second: 25% of the yield earned by the treasury on its yield-bearing assets is also injected into the LP. Both streams continuously deepen the pool. This is not rented liquidity — it is owned by the protocol permanently, growing from two compounding sources simultaneously.</p>
+  <p class="p">The compounding effect is structural: each fee cycle deepens the pool, generates more LP fee yield, and raises the price floor. The injection function is hardcoded. No admin key, governance vote, or multi-sig action can redirect these funds. The 25% path is immutable from deployment.</p>
+  <div class="fbox">
+    <div class="fbox-title">Liquidity Flow — Two Input Streams</div>
+    <div class="fl"><strong>Input 1:</strong> 25% of ETH swap fees — captured by L.A.T.E. on every swap event</div>
+    <div class="fl"><strong>Input 2:</strong> 25% of treasury yield — earned on cbETH / Ondo USDY deployed by the treasury</div>
+    <div class="fl"><strong>Pairing:</strong> ETH paired with $PITI at current pool ratio</div>
+    <div class="fl"><strong>Destination:</strong> Base Liquidity Pool — protocol-owned LP position</div>
+    <div class="fl"><strong>Secondary yield:</strong> LP fees generated by pool activity, reinvested into LP</div>
+    <div class="fl"><strong>Effect:</strong> Continuously rising price floor, deepening pool, lower slippage for users</div>
+    <hr class="fdiv">
+    <div class="fl" style="font-size:11px;opacity:.65">Immutability requirement: The liquidity injection function must be hardcoded at deployment. No admin function, upgrade path, or governance mechanism may alter the 25% routing logic post-deploy.</div>
+  </div>
+</div>
+
+<div class="sec" id="s2-3">
+  <div class="badge"><div class="badge-n">§ 2.3</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">T — Treasury Pillar</div>
+  <div class="sec-sub">75% of ETH swap fees · Safe (Gnosis) 3-of-5 Multi-Sig · API operations budget</div>
+  <p class="p">The Treasury Pillar routes 75% of all ETH swap fees to a Safe (Gnosis) multi-sig wallet governed by a 3-of-5 signing structure. These funds are then deployed into yield-bearing assets — cbETH or Ondo USDY. The yield earned is split: 25% back into the LP as an additional liquidity injection, 75% retained in the treasury to fund API subscriptions and operations. The treasury is the protocol's operating budget and its yield engine simultaneously.</p>
+  <p class="p">The treasury is the reason the index can be zero-cost to users. The data is expensive at institutional tier. The L.A.T.E. treasury pays for it autonomously, without advertising, without selling user data, and without any human discretion over fund deployment beyond what the 3-of-5 governance structure permits.</p>
+  <div class="fbox">
+    <div class="fbox-title">Treasury Flow</div>
+    <div class="fl"><strong>Input:</strong> 75% of ETH swap fees — deployed into cbETH or Ondo USDY</div>
+    <div class="fl"><strong>Yield split:</strong> 25% of yield → LP injection · 75% of yield → treasury operations</div>
+    <div class="fl"><strong>Destination:</strong> Safe (Gnosis) multi-sig — 3-of-5 signing threshold</div>
+    <div class="fl"><strong>Primary use:</strong> Institutional API subscriptions — insurance withdrawal, county rate, FAIR Plan, FEMA feeds</div>
+    <div class="fl"><strong>Effect:</strong> Treasury compounds continuously — yield funds both the LP and API costs simultaneously</div>
+    <div class="fl"><strong>Governance:</strong> Any treasury disbursement requires 3-of-5 signers — subject to 48-hour timelock (see §4.4)</div>
+  </div>
+</div>
+
+<div class="sec" id="s2-4">
+  <div class="badge"><div class="badge-n">§ 2.4</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">A — Asset Yield Pillar</div>
+  <div class="sec-sub">75% of swap fees deployed to yield · 25% of yield back into LP · 75% of yield funds operations</div>
+  <p class="p">The 75% treasury allocation is deployed into yield-bearing assets — cbETH or Ondo USDY. The yield earned on these assets is then split: <strong>25% of yield is injected back into the LP</strong>, adding to the liquidity floor on top of the direct swap fee injection. <strong>75% of yield is retained in the treasury</strong> to fund API subscriptions and compound further. The result is a treasury that never sits idle — it funds operations and simultaneously deepens the liquidity pool from two directions.</p>
+  <p class="p">This means the treasury is never idle. Every dollar of surplus is working. Yield compounds back into the treasury, extending the protocol's API runway without requiring additional fee volume. As usage grows, yield grows — and the protocol becomes progressively more self-sustaining.</p>
+  <div class="rows">
+    
+    <div class="row"><div class="row-tag">cbETH</div><div class="row-txt">Coinbase Wrapped Staked ETH. ETH-denominated yield from Ethereum proof-of-stake consensus rewards. 25% of yield earned flows back into the LP. 75% funds treasury operations.</div></div>
+    <div class="row"><div class="row-tag">Ondo USDY</div><div class="row-txt">Tokenized yield-bearing stablecoin backed by U.S. Treasury Bills. Stable-value yield without ETH price exposure. Same 25/75 yield split applies.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s2-5">
+  <div class="badge"><div class="badge-n">§ 2.5</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">E — Engine State &amp; Transparency</div>
+  <div class="sec-sub">On-chain event emission · Farcaster Frame dashboard · The audit is always open</div>
+  <p class="p">The L.A.T.E. contract emits an on-chain event for every fee-split execution. Every routing decision — the 25% liquidity injection, the 75% treasury deposit, every yield deployment — is permanently logged to Base and publicly readable. This is not optional reporting. It is the contract's native behavior.</p>
+  <p class="p">These events power the real-time <strong>Farcaster Frame v2 dashboard</strong>, allowing any user to query treasury health, current liquidity depth, yield position, and fee volume directly from their social feed — without visiting any separate interface, without trusting any centralized reporter, and without any token holdings required.</p>
+  <div class="mstrip">
+    <div class="mcell"><div class="mv">On-Chain</div><div class="ml">Every fee-split event logged to Base</div><div class="mn">Permanent · immutable · public</div></div>
+    <div class="mcell"><div class="mv">Frame v2</div><div class="ml">Farcaster Frame dashboard</div><div class="mn">Query data from social feed</div></div>
+    <div class="mcell"><div class="mv">Real-Time</div><div class="ml">Live treasury &amp; yield state</div><div class="mn">No trust required</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §3: WEB UTILITY ══════════════════════════════ -->
+
+<div class="sec" id="s3-1">
+  <div class="badge"><div class="badge-n">§ 3.1</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">The Institutional Index</div>
+  <div class="sec-sub">Zero-barrier access · No login · No ads · No token required to view data</div>
+  <p class="p">The Possessio web utility is an institutional-grade property intelligence index, freely accessible to the public. It replaces the traditional gated listing system with an open public data layer — sourced from premium APIs funded by the L.A.T.E. treasury, and indexed across all 158 million residential properties in America, listed and off-market.</p>
+  <p class="p">The index requires no account, no email, no wallet connection, and no $PITI token to access. Any person can query any property and receive its DEED Score, True PITI calculation, insurance carrier status, FAIR Plan dependency rate, and DEED Estimate vs. Zestimate comparison — immediately, at no cost.</p>
+  <table class="ctbl">
+    <thead><tr><th class="old">Traditional Gated Listing Platforms</th><th class="nw">Possessio Institutional Index</th></tr></thead>
+    <tbody>
+      <tr><td>Login required</td><td class="c-g">✓ Zero login · publicly accessible</td></tr>
+      <tr><td>Agent advertising funded</td><td class="c-g">✓ Protocol-funded · L.A.T.E. treasury</td></tr>
+      <tr><td class="c-x">No insurance withdrawal data</td><td class="c-g">✓ Real-time carrier withdrawal alerts · all 50 states</td></tr>
+      <tr><td class="c-x">Standard estimated insurance only</td><td class="c-g">✓ True PITI · actual insurance market cost</td></tr>
+      <tr><td class="c-x">No FAIR Plan dependency signal</td><td class="c-g">✓ FAIR Plan dependency flag per county</td></tr>
+      <tr><td class="c-x">Listed properties only</td><td class="c-g">✓ 158M properties indexed · listed &amp; off-market</td></tr>
+      <tr><td class="c-x">No on-chain data layer</td><td class="c-g">✓ On-chain event log · Farcaster Frame v2 integration</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="sec" id="s3-2">
+  <div class="badge"><div class="badge-n">§ 3.2</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">True PITI Calculator</div>
+  <div class="sec-sub">The number Zillow doesn't show you — surfaced before the offer, not at closing</div>
+  <p class="p">The True PITI calculator is the protocol's primary user-facing intelligence tool. It draws on three verified data sources per property: current mortgage rate and principal/interest at list price; county-level property tax actuals from public records; and the <strong>real insurance market cost</strong> for that county based on live carrier data, active policy rates, and FAIR Plan pricing where applicable — not a national average estimate.</p>
+
+  <div class="audit-wrap">
+    <div class="audit-hd">
+      <div class="audit-hd-t">Live PITI Verification Log</div>
+      <div class="audit-hd-l"><div class="ldot"></div>Continuous On-Chain Verification</div>
+    </div>
+    <table class="atbl">
+      <thead><tr><th>Property</th><th>Zillow PITI Est.</th><th>True PITI</th><th>Delta / Month</th><th>Driver</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Naples, FL</td><td>$4,967</td><td>$6,347</td><td class="c-r">+$1,380</td><td>FAIR Plan only · $18,400/yr</td><td><span class="sr">Critical Risk</span></td></tr>
+        <tr><td>Tampa, FL</td><td>$2,180</td><td>$2,560</td><td class="c-r">+$380</td><td>2 carrier withdrawals Q1 2026</td><td><span class="sr">Risk Detected</span></td></tr>
+        <tr><td>Pittsburgh, PA</td><td>$1,612</td><td>$1,679</td><td style="color:var(--navy);font-weight:600">+$67</td><td>1 carrier withdrew 2024</td><td><span class="sv">Monitor</span></td></tr>
+        <tr><td>Ann Arbor, MI</td><td>$2,673</td><td>$2,690</td><td class="c-g">+$17</td><td>4 carriers active · zero withdrawals 48mo</td><td><span class="sv">Verified</span></td></tr>
+        <tr><td>Detroit, MI</td><td>$936</td><td>$936</td><td class="c-g">$0</td><td>Stable · Great Lakes resilience</td><td><span class="sv">Accurate</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="sec" id="s3-3">
+  <div class="badge"><div class="badge-n">§ 3.3</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">The DEED Score</div>
+  <div class="sec-sub">A 0–100 composite built on the four signals that determine long-term property value</div>
+  <p class="p">The DEED Score is applied to every indexed property — listed or off-market. It is a signal-weighted composite of four sub-scores, each out of 25, calibrated to the factors that institutional insurers and mortgage lenders already use to price risk. The score is not a marketing rating. It is a structured summary of the insurance viability, climate resilience, geographic stability, and market accuracy of any given property.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">🌊 Climate<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Flood risk, wildfire probability, water access security, and heat stress exposure. Sourced from FEMA flood zone data, carrier risk models, and climate migration datasets. The most predictive long-run sub-score — insurance markets price climate first, then the property market follows.</div></div>
+    <div class="row"><div class="row-tag">🛡️ Insurance<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Number of active carriers in the county, withdrawal history over 48 months, FAIR Plan dependency rate, and year-over-year premium trend. Sourced from live institutional carrier filing data funded by the L.A.T.E. treasury. The earliest structural signal of value decline.</div></div>
+    <div class="row"><div class="row-tag">📍 Geography<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Economic anchor quality, employer diversity, infrastructure resilience, and climate migration inflow/outflow patterns. A university-anchored Great Lakes city with net inbound migration scores near 25. A single-employer coastal town with net outmigration and rising FAIR Plan dependency scores low.</div></div>
+    <div class="row"><div class="row-tag">📊 Market<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">How accurately the current list price reflects insurance-adjusted fundamentals. When the DEED Estimate diverges significantly from the Zestimate, this sub-score explains why — and quantifies how much of the gap is insurance risk not yet priced by backward-looking comps.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s3-4">
+  <div class="badge"><div class="badge-n">§ 3.4</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">Agent Intelligence Network</div>
+  <div class="sec-sub">Agents already know. Possessio pays them in $PITI for verified submissions. No purchase required.</div>
+  <p class="p">Local real estate agents are the most underutilized source of insurance intelligence in the market. They already know which carriers stopped writing in their territory, which streets flood, and which neighborhoods have seen FAIR Plan dependency rise. Possessio's Agent Portal converts that existing knowledge into verified, on-chain data — and compensates agents in $PITI automatically for every confirmed submission.</p>
+  <p class="p"><strong>No purchase required. Earn first. Claim to wallet when ready.</strong> Agents submit via a simple form interface — no crypto knowledge needed at the point of submission. Reward amounts are calibrated by signal type. Verified agents receive a badge displayed on all associated listings, signaling data quality to users querying that area.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">+200 $PITI</div><div class="row-txt">Local flood or storm damage event · highest reward, highest verification value</div></div>
+    <div class="row"><div class="row-tag">+175 $PITI</div><div class="row-txt">Wildfire risk update · FAIR Plan dependency increase</div></div>
+    <div class="row"><div class="row-tag">+150 $PITI</div><div class="row-txt">Insurance carrier withdrawal · climate migration activity signal</div></div>
+    <div class="row"><div class="row-tag">+125 $PITI</div><div class="row-txt">Premium increase observed in market</div></div>
+    <div class="row"><div class="row-tag">+120 $PITI</div><div class="row-txt">New carrier entering market · positive signal, also valuable</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s3-5">
+  <div class="badge"><div class="badge-n">§ 3.5</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">Farcaster Frame Integration</div>
+  <div class="sec-sub">Social-Fi ready · Farcaster Frame v2 · Query data from your feed without leaving the app</div>
+  <p class="p">Possessio is fully integrated as a <strong>Farcaster Frame v2</strong> application. Users can query True PITI data, DEED Scores, and carrier withdrawal alerts directly from their Farcaster social feed — without visiting a separate interface, connecting a wallet, or purchasing any token.</p>
+  <p class="p">The L.A.T.E. contract's Engine State events (§2.5) feed directly into the Frame dashboard, rendering treasury balance, current yield position, liquidity depth, and recent fee-split events in real time. Farcaster's social graph is the distribution layer — the Frame is the interface, and the on-chain event log is the data source. No centralized server sits between the contract state and the user's display.</p>
+  <div class="box">
+    <div class="box-title">Frame v2 Query Capabilities</div>
+    <p class="p" style="margin-bottom:10px">From within the Farcaster social feed, any user can query: <strong>True PITI</strong> for any U.S. address; <strong>DEED Score</strong> for any indexed property; <strong>carrier withdrawal alerts</strong> for any ZIP code; <strong>treasury balance and yield state</strong> for the L.A.T.E. contract; and <strong>recent fee-split events</strong> from the Engine State log. All queries return live data. No login. No wallet required.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §4: SECURITY ══════════════════════════════ -->
+
+<div class="sec" id="s4-1">
+  <div class="badge"><div class="badge-n">§ 4.1</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Immutable Liquidity Logic</div>
+  <div class="sec-sub">The 25% liquidity injection function is hardcoded — no admin can redirect these funds</div>
+  <p class="p">This is the protocol's primary security requirement. The 25% ETH fee allocation to the Base Liquidity Pool must be hardcoded in the L.A.T.E. contract at deployment. There must be no admin function, no <code>onlyOwner</code> modifier, no upgrade proxy, and no governance mechanism that can alter or bypass this routing logic after deployment.</p>
+  <p class="p">The immutability of the liquidity path is what makes the protocol trustless at the liquidity layer. Users, token holders, and institutional API partners can rely on the price floor continuously rising — because the mechanism that drives it cannot be turned off.</p>
+  <div class="disc">
+    <div class="disc-title">Developer Implementation Requirement</div>
+    <div class="disc-txt">The liquidity injection function must not be wrapped in any conditional that can be toggled by an admin address. It must not be located behind a proxy contract. It must not be part of any function set that can be upgraded, paused (except by the Emergency Circuit Breaker — §4.3), or replaced. The 25% routing must be verifiable by reading the deployed bytecode directly, with no intermediary trust required.</div>
+  </div>
+</div>
+
+<div class="sec" id="s4-2">
+  <div class="badge"><div class="badge-n">§ 4.2</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Multi-Sig Governance</div>
+  <div class="sec-sub">75% treasury governed by a Safe (Gnosis) 3-of-5 multi-sig</div>
+  <p class="p">The 75% treasury allocation is received by a <strong>Safe (Gnosis) multi-sig wallet</strong> requiring <strong>3-of-5 signers</strong> to authorize any outbound transaction. This structure ensures that no single key compromise, no single team member, and no external actor can unilaterally access treasury funds.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Threshold</div><div class="row-txt">3-of-5 signatures required for any treasury disbursement. Standard for institutional-grade DeFi treasury management on Base.</div></div>
+    <div class="row"><div class="row-tag">Scope</div><div class="row-txt">Governs all outbound treasury transactions: API subscription payments and any protocol parameter changes subject to the 48-hour timelock.</div></div>
+    <div class="row"><div class="row-tag">Transparency</div><div class="row-txt">All multi-sig transactions are publicly visible on the Safe UI and on-chain. The treasury address is published in the System Logic Reference (§6.3). Any holder can monitor balance, pending transactions, and signer activity at all times.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s4-3">
+  <div class="badge"><div class="badge-n">§ 4.3</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Emergency Circuit Breaker</div>
+  <div class="sec-sub">Halts fee-routing if the connected DEX or network experiences a critical exploit</div>
+  <p class="p">The L.A.T.E. contract must include an emergency pause function capable of halting all fee-routing activity — without affecting the treasury balance, the yield position, or the Liquidity Pool LP position already deployed. The circuit breaker is a defensive mechanism only: it stops new fees from being routed during an active exploit. It does not touch existing deployed funds.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Trigger Conditions</div><div class="row-txt">Critical exploit on the connected Base DEX; abnormal fee volume indicative of sandwich or reentrancy attack; network-level emergency declared by Base foundation; or 3-of-5 multi-sig manual trigger within the 48-hour timelock exception window.</div></div>
+    <div class="row"><div class="row-tag">What Pauses</div><div class="row-txt">New fee capture and routing only. The 25% LP injection and 75% treasury routing are suspended. Existing LP positions, treasury balance, and yield deployments are untouched.</div></div>
+    <div class="row"><div class="row-tag">Resume Condition</div><div class="row-txt">Resumption requires 3-of-5 multi-sig authorization. The exploit must be confirmed resolved. Resumption itself is subject to the 48-hour timelock (§4.4).</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s4-4">
+  <div class="badge"><div class="badge-n">§ 4.4</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">48-Hour Timelock</div>
+  <div class="sec-sub">Any changes to protocol parameters require a 48-hour delay before execution</div>
+  <p class="p">All changes to protocol parameters — fee percentages, yield target contracts, governance signer set, circuit breaker state — must pass through a <strong>48-hour timelock</strong> before execution. This means any proposed change is publicly visible on-chain for 48 hours before it can take effect. Any user, holder, or observer can see a proposed change and act accordingly before it becomes live.</p>
+  <div class="disc">
+    <div class="disc-title">Timelock Scope</div>
+    <div class="disc-txt">The 48-hour timelock applies to: (1) any change to the fee-split percentages; (2) any change to the Safe multi-sig signer set or threshold; (4) resumption of fee-routing after an emergency pause; (5) any upgrade to non-immutable contract components. The timelock does not apply to routine treasury disbursements for API costs, which are authorized by the 3-of-5 multi-sig under normal operating conditions.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §5: $PITI TOKEN ══════════════════════════════ -->
+
+<div class="sec" id="s5-1">
+  <div class="badge"><div class="badge-n">§ 5.1</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">$PITI Token Overview</div>
+  <div class="sec-sub">The protocol's native token · Paired in the Base Liquidity Pool · Earned by agent contributors</div>
+  <p class="p">$PITI is the native token of the Possessio protocol. It serves two primary functions within the L.A.T.E. architecture: it is the asset paired with ETH in the Base Liquidity Pool (the destination of the 25% liquidity allocation), and it is the reward currency for verified agent intelligence submissions through the Agent Portal.</p>
+  <p class="p">$PITI is not required to access the index. Every data feature — True PITI, DEED Score, carrier withdrawal alerts, DEED Estimate vs. Zestimate — is freely accessible without holding or spending any $PITI. The token exists to sustain the liquidity pool and incentivize data quality contributors, not to gate the protocol's core utility behind a paywall.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Liquidity Pair</div><div class="row-txt">$PITI is paired with ETH in the Base Liquidity Pool. The L.A.T.E. contract's 25% allocation continuously adds to this pool, deepening liquidity and raising the price floor on every swap fee cycle.</div></div>
+    <div class="row"><div class="row-tag">Agent Rewards</div><div class="row-txt">Verified data contributors earn $PITI automatically for every accepted submission. No wallet required at submission — contributors can claim to wallet when ready. Rewards range from +120 to +200 $PITI per verified signal type.</div></div>
+    <div class="row"><div class="row-tag">No Gating</div><div class="row-txt">Zero data features are paywalled behind $PITI ownership. The protocol's core value proposition — institutional-grade property intelligence, freely accessible — is unconditional. $PITI is the protocol's economic layer, not its access key.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s5-2">
+  <div class="badge"><div class="badge-n">§ 5.2</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">Revenue Allocation</div>
+  <div class="sec-sub">L.A.T.E.-governed · Non-discretionary · Treasury compounds continuously</div>
+  <div class="alloc">
+    <div class="alloc-row"><div class="ap">75%</div><div><div class="an">Treasury — Safe (Gnosis) 3-of-5 Multi-Sig</div><div class="as2">API costs · deployed to cbETH / Ondo USDY · 25% of yield → LP · 75% of yield → operations</div><div class="abar"><div class="abar-f" style="width:75%"></div></div></div></div>
+    <div class="alloc-row"><div class="ap">25%</div><div><div class="an">Liquidity — Base Liquidity Pool (ETH / $PITI pair)</div><div class="as2">Protocol-owned LP · generates its own fees · raises price floor · hardcoded and immutable</div><div class="abar"><div class="abar-f" style="width:25%"></div></div></div></div>
+  </div>
+  <p class="p">This is the complete fee allocation. There is no founder allocation from protocol fees. There is no team percentage. There is no marketing slice from the swap fee stream. The L.A.T.E. contract routes fees to two destinations only: the Liquidity Pool and the treasury. All other budget lines (marketing, development, legal) are funded from treasury disbursements authorized by the 3-of-5 multi-sig, subject to the 48-hour timelock.</p>
+</div>
+
+<div class="sec" id="s5-3">
+  <div class="badge"><div class="badge-n">§ 5.3</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">Regulatory Posture</div>
+  <div class="sec-sub">Utility-first. Non-discretionary by design. Compliance-forward.</div>
+  <p class="p">$PITI is a utility token. Its functions are: pairing in the Liquidity Pool and rewarding verified data contributors. It is not sold with any representation of profit from the efforts of others. The L.A.T.E. contract's autonomous, non-discretionary fee routing is a key regulatory distinction — funding and yield reinvestment are executed by self-executing code, not human management.</p>
+  <div class="disc">
+    <div class="disc-title">Legal Safeguard Language — For the Index and Protocol</div>
+    <div class="disc-txt"><strong>Informational Purposes Only:</strong> POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. No content on the Possessio index constitutes insurance advice, a recommendation to buy or sell real estate, or a guarantee of property value. Users should consult licensed professionals before making real estate or insurance decisions.<br><br><strong>Non-Discretionary Protocol:</strong> Funding and yield reinvestment within the L.A.T.E. contract are handled by self-executing smart contract code, not human management. No person or entity exercises discretion over the 25% liquidity injection or the the 25% liquidity injection. These functions execute autonomously according to immutable contract logic.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §6: BUILD SPECIFICATION ══════════════════════════════ -->
+
+<div class="sec" id="s6-1">
+  <div class="badge"><div class="badge-n">§ 6.1</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">Developer Next Steps</div>
+  <div class="sec-sub">The complete build sequence for the Possessio protocol on Base</div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-n">1</div>
+      <div>
+        <div class="step-title">Clone the Prototype Frontend</div>
+        <div class="step-txt">Use the existing Netlify structure for the frontend. The prototype index provides the full UI layer — property cards, DEED Score display, True PITI calculator, DEED Estimate vs. Zestimate panel, Agent Portal, and the insurance status system. Clone and adapt for production deployment. All frontend logic is contained in a single-file architecture.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">2</div>
+      <div>
+        <div class="step-title">Build the L.A.T.E. Smart Contract</div>
+        <div class="step-txt">Build the Liquidity and Treasury Engine using the <code>OpenZeppelin</code> library on Base. Required components: (a) immutable 25% LP injection function; (b) 75% Safe multi-sig routing; (c) on-chain event emission for every fee-split; (d) on-chain event emission for every fee-split; (e) Emergency Circuit Breaker; (f) 48-hour Timelock. Security audit required before mainnet deployment.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">3</div>
+      <div>
+        <div class="step-title">Secure Institutional API Subscriptions</div>
+        <div class="step-txt">Secure subscriptions for: insurance carrier withdrawal feeds (real-time, all 50 states); county-level insurance rate data; FAIR Plan enrollment statistics (state-level); FEMA flood zone integration; climate risk data layer. These subscriptions are funded by the L.A.T.E. treasury. API costs should be modeled against expected fee volume to ensure the treasury self-funds within the first operational quarter.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">4</div>
+      <div>
+        <div class="step-title">Deploy Safe Multi-Sig</div>
+        <div class="step-txt">Configure a <code>Safe (Gnosis)</code> multi-sig on Base with a 3-of-5 signing threshold. Document all five signer addresses publicly. Configure the 48-hour timelock module. Publish the Safe address in the System Logic Reference (§6.3) and hard-code it as the treasury destination in the L.A.T.E. contract.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">5</div>
+      <div>
+        <div class="step-title">Build Farcaster Frame v2 Integration</div>
+        <div class="step-txt">Implement the <code>Farcaster Frame v2</code> interface. Frame must support: True PITI query by address; DEED Score lookup; carrier withdrawal alert by ZIP; L.A.T.E. treasury state (balance, yield position, recent fee-splits from on-chain events). All Frame data must be sourced directly from on-chain state or the institutional API layer — no centralized intermediary.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">6</div>
+      <div>
+        <div class="step-title">Security Audit &amp; Testnet Verification</div>
+        <div class="step-txt">Full third-party security audit of the L.A.T.E. contract before Base mainnet deployment. Testnet verification of: the 25% immutability (attempt admin redirect — must fail); the 48-hour timelock (attempt bypass — must fail); the Emergency Circuit Breaker (trigger and verify existing fund safety); multi-sig threshold (attempt single-signer disbursement — must fail). Audit report to be published publicly.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec" id="s6-2">
+  <div class="badge"><div class="badge-n">§ 6.2</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">Legal Safeguard Language</div>
+  <div class="sec-sub">Required disclosures — to be included in the index footer and all protocol documentation</div>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Informational<br>Purposes Only</div><div class="row-txt">POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. All content provided by the Possessio index is for informational purposes only and does not constitute insurance advice, a real estate recommendation, or a guarantee of any property value or insurance availability.</div></div>
+    <div class="row"><div class="row-tag">Non-Discretionary<br>Protocol</div><div class="row-txt">Funding and yield deployment within the L.A.T.E. smart contract are handled by self-executing code, not human management. No person or entity exercises discretionary control over the 25% liquidity injection function, the 75% treasury yield deployment, or the yield split back into the LP. All outbound treasury disbursements require 3-of-5 Safe signers.</div></div>
+    <div class="row"><div class="row-tag">No Investment<br>Advice</div><div class="row-txt">Nothing in the Possessio index, whitepaper, Farcaster Frame, or any associated protocol communication constitutes investment advice. $PITI token holders assume full responsibility for their own financial decisions. Past protocol performance does not guarantee future results.</div></div>
+    <div class="row"><div class="row-tag">Data Accuracy</div><div class="row-txt">While Possessio sources data from institutional-grade API providers and on-chain agent verification, no warranty is made as to the completeness, accuracy, or timeliness of any data displayed. Users should verify critical insurance and PITI information independently with licensed professionals before making financial commitments.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s6-3">
+  <div class="badge"><div class="badge-n">§ 6.3</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">System Logic Reference</div>
+  <div class="sec-sub">The canonical parameter record — all values are open source and auditable on-chain</div>
+
+  <div class="slog">
+    <div class="slog-hd">L.A.T.E. Contract — Canonical Parameters</div>
+    <div class="slog-row"><div class="sk">Protocol Name</div><div class="sv2">POSSESSIO</div></div>
+    <div class="slog-row"><div class="sk">Native Token</div><div class="sv2">$PITI</div></div>
+    <div class="slog-row"><div class="sk">$PITI Contract Address (Base)</div><div class="sv2">Pending V2 Deployment</div></div>
+    <div class="slog-row"><div class="sk">Deployment Network</div><div class="sv2">Base (Ethereum L2)</div></div>
+    <div class="slog-row"><div class="sk">Smart Contract Library</div><div class="sv2">OpenZeppelin</div></div>
+    <div class="slog-row"><div class="sk">Treasury Governance</div><div class="sv2">Safe (Gnosis) — 3-of-5 · Deployed on Base</div></div>
+    <div class="slog-row"><div class="sk">POSSESSIO Treasury Address (Base)</div><div class="sv2">0x188bE439C141c9138Bd3075f6A376F73c07F1903</div></div>
+    <div class="slog-row"><div class="sk">GitHub — Open Source Contract</div><div class="sv2"><a href="https://github.com/jonb89201-svg/Possessio" target="_blank" style="color:var(--navy)">github.com/jonb89201-svg/Possessio</a></div></div>
+    <div class="slog-row"><div class="sk">Liquidity Allocation (Immutable)</div><div class="sv2">25% of ETH swap fees → Base LP (ETH / $PITI)</div></div>
+    <div class="slog-row"><div class="sk">Treasury Allocation</div><div class="sv2">75% of ETH swap fees → Safe Multi-Sig</div></div>
+    
+    <div class="slog-row"><div class="sk">Yield Target — Option A</div><div class="sv2">cbETH (Coinbase Wrapped Staked ETH)</div></div>
+    <div class="slog-row"><div class="sk">Yield Target — Option B</div><div class="sv2">Ondo USDY (Tokenized U.S. Treasury yield)</div></div>
+    <div class="slog-row"><div class="sk">Yield Split</div><div class="sv2">25% of yield → LP injection · 75% of yield → treasury operations</div></div>
+    <div class="slog-row"><div class="sk">Engine State Emission</div><div class="sv2">On-chain event per fee-split → Farcaster Frame v2</div></div>
+    <div class="slog-row"><div class="sk">Timelock — Parameter Changes</div><div class="sv2">48-hour delay · all protocol parameter changes</div></div>
+    <div class="slog-row"><div class="sk">Emergency Pause</div><div class="sv2">Circuit breaker · halts fee-routing only · does not touch deployed funds</div></div>
+    <div class="slog-row"><div class="sk">Properties Indexed</div><div class="sv2">158 million · listed and off-market · all 50 U.S. states</div></div>
+    <div class="slog-row"><div class="sk">DEED Score Range</div><div class="sv2">0–100 composite · 4 sub-scores × 25 pts each</div></div>
+    <div class="slog-row"><div class="sk">Index Access Cost</div><div class="sv2">$0.00 · zero-barrier · no login · no token required</div></div>
+    <div class="slog-row"><div class="sk">Agent Reward — Flood / Storm</div><div class="sv2">+200 $PITI per verified submission</div></div>
+    <div class="slog-row"><div class="sk">Agent Reward — Carrier Withdrawal</div><div class="sv2">+150 $PITI per verified submission</div></div>
+    <div class="slog-row"><div class="sk">Frontend Infrastructure</div><div class="sv2">Netlify · single-file prototype architecture</div></div>
+    <div class="slog-row"><div class="sk">Social Integration</div><div class="sv2">Farcaster Frame v2</div></div>
+    <div class="slog-row"><div class="sk">Legal Classification</div><div class="sv2">Data aggregator · not a licensed insurance producer · not a financial advisor</div></div>
+  </div>
+
+  <p class="p" style="margin-top:24px">All smart contract addresses, Safe multi-sig signer list, treasury balance, and LP position are published publicly following mainnet deployment. The audit report is published prior to deployment. The L.A.T.E. contract's bytecode is publicly verifiable on Base — the 25% immutability of the liquidity injection function requires no trusted intermediary to confirm. Read the code.</p>
+</div>
+
+<!-- ══ FOOTER ══ -->
+<div class="orn">✦ ✦ ✦</div>
+<hr class="frule">
+<div class="ft">POSSESSIO PROTOCOL · WHITE PAPER &amp; MASTER TECHNICAL SPECIFICATION · $PITI TOKEN · ALL RIGHTS RESERVED</div>
+<div class="ft" style="margin-top:6px">This document is for informational purposes only. POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. $PITI is a utility token. Nothing herein constitutes investment advice. See §5.3 and §6.2 for full legal safeguard language.</div>
+
+</div>
+</body>
+</html>
