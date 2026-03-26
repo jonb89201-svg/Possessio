@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POSSESSIO — White Paper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400;1,700&family=Montserrat:wght@300;400;500;600&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root {
+  --crimson: #8B0000;
+  --crimson-pale: rgba(139,0,0,0.07);
+  --navy: #000080;
+  --parchment: #f5ecd7;
+  --ink: #2c1a0e;
+  --ink-light: #4a3728;
+  --gold-seal: #b8860b;
+  --wax: #8B0000;
+  --border: rgba(139,0,0,0.25);
+  --border-light: rgba(139,0,0,0.12);
+  --green: #2d6a2d;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background-color:var(--parchment);color:var(--ink);font-family:'Montserrat',sans-serif;position:relative;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23p)' opacity='0.06'/%3E%3C/svg%3E"),
+  linear-gradient(135deg,#f8f0dd 0%,#f2e4c4 25%,#f7edd5 50%,#ede0c0 75%,#f5ecd7 100%)}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 120% 80% at 50% 0%,rgba(248,240,221,.6) 0%,transparent 70%),
+  radial-gradient(ellipse 80% 60% at 20% 80%,rgba(210,180,140,.3) 0%,transparent 60%),
+  radial-gradient(ellipse 60% 80% at 80% 50%,rgba(200,170,130,.2) 0%,transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:980px;margin:0 auto;padding:0 32px 80px}
+
+/* corners */
+.corners{position:fixed;inset:0;pointer-events:none;z-index:2}
+.corners::before,.corners::after{content:'';position:absolute;width:60px;height:60px;border-color:var(--crimson);border-style:solid;opacity:.15}
+.corners::before{top:20px;left:20px;border-width:2px 0 0 2px}
+.corners::after{bottom:20px;right:20px;border-width:0 2px 2px 0}
+
+/* masthead */
+.mast{text-align:center;padding:64px 0 52px;border-bottom:1.5px solid var(--border);position:relative;animation:fu .8s ease both}
+.mast::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:60%;height:1px;background:linear-gradient(90deg,transparent,var(--crimson),transparent);opacity:.4}
+.seal-wrap{display:inline-block;position:relative;margin-bottom:36px}
+.seal{width:120px;height:120px;background:radial-gradient(circle at 35% 35%,#c00 0%,var(--wax) 45%,#5a0000 100%);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;box-shadow:0 4px 24px rgba(139,0,0,.45),inset 0 2px 6px rgba(255,255,255,.15),inset 0 -3px 8px rgba(0,0,0,.3)}
+.seal::before{content:'';position:absolute;inset:8px;border:1.5px solid rgba(255,200,150,.3);border-radius:50%}
+.seal-txt{font-family:'Playfair Display',serif;color:rgba(255,220,180,.9);font-size:13px;font-weight:700;letter-spacing:2px;text-align:center;line-height:1.3;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.cord-l,.cord-r{position:absolute;bottom:-28px;width:2px;height:30px;background:linear-gradient(180deg,var(--crimson) 0%,var(--gold-seal) 50%,var(--crimson) 100%);opacity:.7}
+.cord-l{left:30px;transform:rotate(-8deg)}.cord-r{right:30px;transform:rotate(8deg)}
+.cord-l::after,.cord-r::after{content:'';position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:8px;height:8px;border-radius:50%;background:var(--gold-seal);opacity:.8}
+.eye{font-size:9px;letter-spacing:6px;text-transform:uppercase;color:var(--crimson);opacity:.7;margin-bottom:16px}
+.m-title{font-family:'Playfair Display',serif;font-size:clamp(52px,8vw,96px);font-weight:900;color:var(--crimson);line-height:.9;letter-spacing:-1px;margin-bottom:12px}
+.m-sub{font-family:'IM Fell English',serif;font-style:italic;font-size:18px;color:var(--ink-light);margin-bottom:8px}
+.m-tag{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--crimson);opacity:.65;margin-bottom:28px}
+.m-rule{width:180px;height:1px;background:linear-gradient(90deg,transparent,var(--crimson),transparent);margin:0 auto 22px;opacity:.5}
+.m-meta{font-size:10px;color:var(--ink-light);letter-spacing:1px;opacity:.7}
+
+/* toc */
+.toc{padding:52px 0 40px;border-bottom:1px solid var(--border-light)}
+.toc-head{display:flex;align-items:center;gap:16px;margin-bottom:36px}
+.toc-title{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--crimson)}
+.toc-rule{flex:1;height:1px;background:linear-gradient(90deg,var(--crimson),transparent);opacity:.3}
+.toc-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--border-light);background:var(--border-light)}
+.toc-col{background:rgba(245,236,215,.5);padding:28px 32px;display:flex;flex-direction:column;gap:10px}
+.toc-col:first-child{border-right:1px solid var(--border-light)}
+.toc-grp{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson);margin-top:8px;margin-bottom:4px}
+.toc-a{display:flex;align-items:baseline;gap:10px;font-size:12px;color:var(--ink-light);text-decoration:none;transition:color .2s}
+.toc-a:hover{color:var(--crimson)}
+.toc-n{font-family:'Playfair Display',serif;font-size:10px;font-weight:700;color:var(--crimson);opacity:.7;min-width:28px}
+
+/* section */
+.sec{padding:60px 0 48px;border-bottom:1px solid var(--border-light);position:relative}
+.sec::before{content:'';position:absolute;top:0;left:-32px;right:-32px;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent)}
+.badge{display:inline-flex;align-items:center;gap:10px;margin-bottom:12px}
+.badge-n{font-family:'Playfair Display',serif;font-size:11px;font-weight:700;color:var(--crimson);opacity:.6;letter-spacing:2px;border:1px solid var(--border);padding:2px 8px}
+.badge-c{font-size:9px;letter-spacing:4px;text-transform:uppercase;color:var(--ink-light);opacity:.5}
+.sec-title{font-family:'Playfair Display',serif;font-size:clamp(28px,4vw,44px);font-weight:700;color:var(--crimson);line-height:1.1;margin-bottom:8px}
+.sec-title em{font-style:italic}
+.sec-sub{font-family:'IM Fell English',serif;font-style:italic;font-size:16px;color:var(--ink-light);margin-bottom:28px}
+.p{font-size:14px;line-height:1.85;color:var(--ink);margin-bottom:20px}
+.p strong{color:var(--crimson);font-weight:600}
+.p code{font-family:'Montserrat',monospace;font-size:12px;background:rgba(139,0,0,.06);border:1px solid var(--border-light);padding:1px 6px;color:var(--navy)}
+
+/* pullquote */
+.pq{border-left:3px solid var(--crimson);padding:16px 24px;margin:28px 0;background:var(--crimson-pale,rgba(139,0,0,.07));position:relative}
+.pq::before{content:'\201C';font-family:'Playfair Display',serif;font-size:72px;color:var(--crimson);opacity:.15;position:absolute;top:-16px;left:16px;line-height:1}
+.pq-t{font-family:'IM Fell English',serif;font-style:italic;font-size:17px;color:var(--crimson);line-height:1.6}
+
+/* stat boxes */
+.stats{display:flex;gap:16px;margin:32px 0;flex-wrap:wrap}
+.stat{flex:1;min-width:140px;border:1px solid var(--border);background:linear-gradient(135deg,rgba(245,236,215,.8),rgba(237,224,196,.9));padding:20px 18px;text-align:center;position:relative}
+.stat::before{content:'';position:absolute;top:4px;left:4px;right:4px;bottom:4px;border:1px solid var(--border-light);pointer-events:none}
+.stat-n{font-family:'Playfair Display',serif;font-size:36px;font-weight:900;color:var(--crimson);line-height:1;margin-bottom:6px}
+.stat-l{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--ink-light);opacity:.7}
+.stat-s{font-size:10px;color:var(--ink-light);margin-top:6px;font-style:italic;font-family:'IM Fell English',serif}
+
+/* rows */
+.rows{margin:24px 0;display:flex;flex-direction:column;border:1px solid var(--border-light)}
+.row{display:flex;gap:16px;padding:14px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.4);transition:background .2s}
+.row:last-child{border-bottom:none}
+.row:hover{background:rgba(139,0,0,.04)}
+.row-tag{font-family:'Playfair Display',serif;font-size:12px;font-weight:700;color:var(--crimson);min-width:110px;flex-shrink:0;padding-top:1px}
+.row-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.row-txt strong{color:var(--crimson);font-weight:600}
+.row-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* late table — the centerpiece */
+.late-wrap{margin:28px 0}
+.late-header{background:var(--crimson);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.late-header-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:900;color:rgba(255,220,180,.95);letter-spacing:2px}
+.late-header-sub{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:rgba(255,220,180,.55)}
+.late-tbl{width:100%;border-collapse:collapse}
+.late-tbl th{font-family:'Montserrat',sans-serif;font-size:8px;font-weight:600;letter-spacing:2px;text-transform:uppercase;padding:10px 20px;border:1px solid var(--border);background:rgba(139,0,0,.08);color:var(--crimson);text-align:left}
+.late-tbl td{padding:14px 20px;border:1px solid var(--border-light);vertical-align:top;font-size:12px;color:var(--ink)}
+.late-tbl tr:nth-child(odd) td{background:rgba(245,236,215,.5)}
+.late-tbl tr:nth-child(even) td{background:rgba(237,224,196,.4)}
+.late-pillar{font-family:'Playfair Display',serif;font-size:20px;font-weight:900;color:var(--crimson);line-height:1;display:flex;flex-direction:column;gap:3px}
+.late-pillar span{font-size:9px;letter-spacing:2px;color:var(--ink-light);opacity:.6;font-family:'Montserrat',sans-serif;font-weight:600}
+.late-mech{font-weight:600;color:var(--navy);margin-bottom:5px;font-family:'Playfair Display',serif;font-size:13px}
+.late-logic{font-size:11px;color:var(--ink-light);line-height:1.65}
+.late-logic strong{color:var(--crimson)}
+.pct-badge{display:inline-block;font-family:'Playfair Display',serif;font-size:22px;font-weight:900;color:var(--navy);border:1px solid var(--border);padding:4px 12px;background:rgba(0,0,128,.04);margin-bottom:6px}
+
+/* comparison table */
+.ctbl{width:100%;border-collapse:collapse;margin:28px 0;font-size:12px}
+.ctbl th{font-family:'Playfair Display',serif;font-size:11px;font-weight:700;padding:10px 16px;border:1px solid var(--border);text-align:left;letter-spacing:1px}
+.ctbl th.old{color:var(--ink-light);background:rgba(0,0,0,.04)}
+.ctbl th.nw{color:var(--crimson);background:rgba(139,0,0,.06)}
+.ctbl td{padding:10px 16px;border:1px solid var(--border-light);background:rgba(245,236,215,.3)}
+.ctbl tr:nth-child(even) td{background:rgba(237,224,196,.4)}
+.c-g{color:var(--green);font-weight:600}
+.c-r{color:var(--crimson);font-weight:600}
+.c-b{color:var(--navy);font-weight:600}
+.c-x{color:#999;text-decoration:line-through;opacity:.5}
+
+/* security requirements */
+.reqs{display:flex;flex-direction:column;margin:24px 0;border:1px solid var(--border-light)}
+.req{display:grid;grid-template-columns:40px 1fr;gap:16px;padding:16px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3);align-items:start}
+.req:last-child{border-bottom:none}
+.req-num{font-family:'Playfair Display',serif;font-size:24px;font-weight:900;color:var(--crimson);opacity:.25;line-height:1}
+.req-title{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson);margin-bottom:5px}
+.req-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.req-txt strong{color:var(--navy);font-weight:600}
+.req-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* metrics strip */
+.mstrip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);background:var(--border-light);margin:24px 0}
+.mcell{background:rgba(245,236,215,.6);padding:20px 18px;text-align:center}
+.mcell+.mcell{border-left:1px solid var(--border-light)}
+.mv{font-family:'Playfair Display',serif;font-size:28px;font-weight:900;color:var(--navy);line-height:1;margin-bottom:6px}
+.ml{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--ink-light);opacity:.6}
+.mn{font-size:10px;color:var(--green);margin-top:4px;font-family:'IM Fell English',serif;font-style:italic}
+
+/* audit table */
+.audit-wrap{margin:32px 0}
+.audit-hd{background:rgba(139,0,0,.08);border:1px solid var(--border);border-bottom:none;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+.audit-hd-t{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--crimson)}
+.audit-hd-l{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--navy)}
+.ldot{width:6px;height:6px;border-radius:50%;background:var(--navy);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.atbl{width:100%;border-collapse:collapse;font-size:11px}
+.atbl th{font-size:8px;font-weight:600;letter-spacing:2px;text-transform:uppercase;padding:8px 14px;border:1px solid var(--border-light);background:rgba(237,224,196,.6);color:var(--ink-light);text-align:left}
+.atbl td{padding:9px 14px;border:1px solid var(--border-light);background:rgba(245,236,215,.3);font-family:'Montserrat',sans-serif}
+.atbl tr:nth-child(even) td{background:rgba(237,224,196,.35)}
+.sv{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-weight:600;font-size:10px}
+.sv::before{content:'✓'}
+.sr{display:inline-flex;align-items:center;gap:5px;color:var(--crimson);font-weight:600;font-size:10px}
+.sr::before{content:'⚠'}
+
+/* formula */
+.fbox{border:1px solid var(--border);background:linear-gradient(135deg,rgba(0,0,128,.04),rgba(245,236,215,.6));padding:28px 32px;margin:28px 0}
+.fbox-title{font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:var(--navy);margin-bottom:16px;letter-spacing:1px}
+.fl{font-size:12px;color:var(--ink-light);line-height:2}
+.fl strong{color:var(--navy);font-weight:600}
+.fl .hl{color:var(--crimson);font-weight:600}
+.fdiv{border:none;border-top:1px solid var(--border-light);margin:14px 0}
+
+/* box */
+.box{border:1px solid var(--border);background:rgba(245,236,215,.5);padding:28px 32px;margin:28px 0;position:relative}
+.box::after{content:'';position:absolute;inset:5px;border:1px solid var(--border-light);pointer-events:none}
+.box-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.box-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+/* disclaimer */
+.disc{border:1px solid var(--border);background:rgba(139,0,0,.04);padding:18px 24px;margin:24px 0}
+.disc-title{font-size:9px;letter-spacing:3px;text-transform:uppercase;color:var(--crimson);font-weight:600;margin-bottom:8px}
+.disc-txt{font-size:11px;color:var(--ink-light);line-height:1.7}
+
+/* alloc */
+.alloc{display:flex;flex-direction:column;border:1px solid var(--border-light);margin:24px 0}
+.alloc-row{display:grid;grid-template-columns:58px 1fr;gap:16px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3)}
+.alloc-row:last-child{border-bottom:none}
+.ap{font-family:'Playfair Display',serif;font-size:20px;font-weight:900;color:var(--crimson)}
+.an{font-size:11px;color:var(--ink-light);margin-bottom:3px;font-weight:500}
+.as2{font-size:9px;color:var(--ink-light);opacity:.5;font-style:italic}
+.abar{height:4px;background:rgba(0,0,0,.06);margin-top:6px}
+.abar-f{height:4px;background:linear-gradient(90deg,var(--crimson),var(--navy))}
+
+/* syslogic */
+.slog{border:1px solid var(--border);background:rgba(0,0,128,.04);padding:16px 24px;margin:24px 0}
+.slog-hd{font-size:8px;letter-spacing:3px;text-transform:uppercase;color:var(--navy);font-weight:600;margin-bottom:10px;opacity:.7}
+.slog-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--ink-light);padding:6px 0;border-bottom:1px solid var(--border-light)}
+.slog-row:last-child{border-bottom:none}
+.sk{opacity:.7}
+.sv2{font-weight:600;color:var(--navy);text-align:right;font-family:'Montserrat',monospace;font-size:10px}
+
+/* roadmap */
+.rmap{position:relative;padding-left:32px;margin:28px 0}
+.rmap::before{content:'';position:absolute;left:8px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,var(--crimson),var(--navy) 50%,var(--crimson));opacity:.4}
+.ri{position:relative;margin-bottom:32px}
+.ri::before{content:'';position:absolute;left:-28px;top:6px;width:10px;height:10px;border:1.5px solid var(--crimson);background:var(--parchment);border-radius:50%;transform:rotate(45deg)}
+.rd{font-family:'Playfair Display',serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:8px}
+.rl{font-size:12px;color:var(--ink-light);line-height:1.8;padding-left:12px}
+.rl li{list-style:none;padding-left:14px;position:relative}
+.rl li::before{content:'—';position:absolute;left:0;color:var(--crimson);opacity:.4}
+.rl code{font-family:'Montserrat',monospace;font-size:10px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* next steps */
+.steps{display:flex;flex-direction:column;margin:24px 0;border:1px solid var(--border-light)}
+.step{display:grid;grid-template-columns:36px 1fr;gap:16px;padding:16px 20px;border-bottom:1px solid var(--border-light);background:rgba(245,236,215,.3);align-items:start}
+.step:last-child{border-bottom:none}
+.step-n{font-family:'Playfair Display',serif;font-size:22px;font-weight:900;color:var(--navy);opacity:.25;line-height:1}
+.step-title{font-family:'Playfair Display',serif;font-size:13px;font-weight:700;color:var(--navy);margin-bottom:5px}
+.step-txt{font-size:12px;color:var(--ink-light);line-height:1.65}
+.step-txt code{font-family:'Montserrat',monospace;font-size:11px;background:rgba(0,0,128,.05);border:1px solid rgba(0,0,128,.15);padding:1px 5px;color:var(--navy)}
+
+/* footer */
+.orn{text-align:center;font-size:18px;color:var(--crimson);opacity:.2;margin:28px 0;letter-spacing:12px}
+.frule{margin:64px 0 32px;border:none;border-top:1px solid var(--border-light);position:relative}
+.frule::after{content:'⬥ POSSESSIO ⬥';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--parchment);padding:0 16px;font-family:'Playfair Display',serif;font-size:11px;color:var(--crimson);opacity:.5;letter-spacing:3px;white-space:nowrap}
+.ft{text-align:center;font-size:10px;color:var(--ink-light);opacity:.4;letter-spacing:1px;margin-bottom:8px}
+
+@keyframes fu{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+/* FLYWHEEL */
+.flywheel{border:1px solid var(--border);background:rgba(245,236,215,.5);padding:28px 32px;margin:28px 0;position:relative;font-family:"Montserrat",monospace;font-size:11px;overflow-x:auto}
+.flywheel pre{color:var(--ink);line-height:1.8;white-space:pre;font-family:"Montserrat",monospace;font-size:11px}
+.flywheel pre .hl{color:var(--crimson);font-weight:700}
+.flywheel pre .bl{color:var(--navy);font-weight:700}
+.flywheel-title{font-family:"Playfair Display",serif;font-size:15px;font-weight:700;color:var(--crimson);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.flywheel-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+@media(max-width:700px){
+  .toc-grid{grid-template-columns:1fr}
+  .toc-col:first-child{border-right:none;border-bottom:1px solid var(--border-light)}
+  .stats{flex-direction:column}
+  .mstrip{grid-template-columns:1fr}
+  .mcell+.mcell{border-left:none;border-top:1px solid var(--border-light)}
+  .wrap{padding:0 16px 60px}
+  .late-tbl{font-size:11px}
+}
+</style>
+</head>
+<body>
+<div class="corners"></div>
+<div class="wrap">
+
+<!-- ══════════════════════════════ MASTHEAD ══════════════════════════════ -->
+<div class="mast">
+  <div class="seal-wrap">
+    <div class="seal"><div class="seal-txt">POS<br>SES<br>SIO</div></div>
+    <div class="cord-l"></div><div class="cord-r"></div>
+  </div>
+  <div class="eye">Registry of Protocol &amp; Provenance · Base Network</div>
+  <div class="m-title">POSSESSIO</div>
+  <div class="m-sub">A Self-Sustaining, Ad-Free Property Intelligence Utility</div>
+  <div class="m-tag">The data Zillow has no incentive to show you</div>
+  <div class="m-rule"></div>
+  <div class="m-meta">WHITE PAPER · $PITI TOKEN · MASTER TECHNICAL SPECIFICATION · VERSION 1.0</div>
+</div>
+
+<!-- ══════════════════════════════ TABLE OF CONTENTS ══════════════════════════════ -->
+<div class="toc">
+  <div class="toc-head"><div class="toc-title">Table of Contents</div><div class="toc-rule"></div></div>
+  <div class="toc-grid">
+    <div class="toc-col">
+      <div class="toc-grp">I. Project Overview</div>
+      <a class="toc-a" href="#s1-1"><span class="toc-n">1.1</span>What Possessio Is</a>
+      <a class="toc-a" href="#s1-2"><span class="toc-n">1.2</span>The Problem We Solve</a>
+      <a class="toc-a" href="#s1-3"><span class="toc-n">1.3</span>Design Principles</a>
+
+      <div class="toc-grp" style="margin-top:12px">II. The L.A.T.E. Contract</div>
+      <a class="toc-a" href="#s2-1"><span class="toc-n">2.1</span>Architecture Overview</a>
+      <a class="toc-a" href="#s2-2"><span class="toc-n">2.2</span>L — Liquidity Pillar</a>
+      <a class="toc-a" href="#s2-3"><span class="toc-n">2.3</span>T — Treasury Pillar</a>
+      <a class="toc-a" href="#s2-4"><span class="toc-n">2.4</span>A — Asset Yield Pillar</a>
+      <a class="toc-a" href="#s2-5"><span class="toc-n">2.5</span>E — Engine State &amp; Transparency</a>
+
+      <div class="toc-grp" style="margin-top:12px">III. Web Utility</div>
+      <a class="toc-a" href="#s3-1"><span class="toc-n">3.1</span>The Institutional Index</a>
+      <a class="toc-a" href="#s3-2"><span class="toc-n">3.2</span>True PITI Calculator</a>
+      <a class="toc-a" href="#s3-3"><span class="toc-n">3.3</span>The DEED Score</a>
+      <a class="toc-a" href="#s3-4"><span class="toc-n">3.4</span>Agent Intelligence Network</a>
+      <a class="toc-a" href="#s3-5"><span class="toc-n">3.5</span>Farcaster Frame Integration</a>
+    </div>
+    <div class="toc-col">
+      <div class="toc-grp">IV. Security &amp; Fail-Safe</div>
+      <a class="toc-a" href="#s4-1"><span class="toc-n">4.1</span>Immutable Liquidity Logic</a>
+      <a class="toc-a" href="#s4-2"><span class="toc-n">4.2</span>Multi-Sig Governance</a>
+      <a class="toc-a" href="#s4-3"><span class="toc-n">4.3</span>Emergency Circuit Breaker</a>
+      <a class="toc-a" href="#s4-4"><span class="toc-n">4.4</span>48-Hour Timelock</a>
+
+      <div class="toc-grp" style="margin-top:12px">V. $PITI Token</div>
+      <a class="toc-a" href="#s5-1"><span class="toc-n">5.1</span>Token Overview</a>
+      <a class="toc-a" href="#s5-2"><span class="toc-n">5.2</span>Revenue Allocation</a>
+      <a class="toc-a" href="#s5-3"><span class="toc-n">5.3</span>Regulatory Posture</a>
+
+      <div class="toc-grp" style="margin-top:12px">III-B. Public Access Model</div>
+      <a class="toc-a" href="#s3-6"><span class="toc-n">3.6</span>Public Service Declaration</a>
+      <a class="toc-a" href="#s3-7"><span class="toc-n">3.7</span>API Activation Strategy</a>
+      <a class="toc-a" href="#s3-8"><span class="toc-n">3.8</span>Treasury Sustainability Model</a>
+      <a class="toc-a" href="#s3-9"><span class="toc-n">3.9</span>Daily Search Governor</a>
+
+      <div class="toc-grp" style="margin-top:12px">IV-B. Humanity Gate</div>
+      <a class="toc-a" href="#s4-5"><span class="toc-n">4.5</span>Human Verification System</a>
+      <a class="toc-a" href="#s4-6"><span class="toc-n">4.6</span>Bot Detection &amp; Penalties</a>
+      <a class="toc-a" href="#s4-7"><span class="toc-n">4.7</span>Appeals &amp; Governance Pardon</a>
+
+      <div class="toc-grp" style="margin-top:12px">II-B. Protocol Sovereignty</div>
+      <a class="toc-a" href="#s2-6"><span class="toc-n">2.6</span>Protocol Sovereignty Roadmap</a>
+
+      <div class="toc-grp" style="margin-top:12px">VI. Build Specification</div>
+      <a class="toc-a" href="#s6-1"><span class="toc-n">6.1</span>Developer Next Steps</a>
+      <a class="toc-a" href="#s6-2"><span class="toc-n">6.2</span>Legal Safeguard Language</a>
+      <a class="toc-a" href="#s6-3"><span class="toc-n">6.3</span>System Logic Reference</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §1: PROJECT OVERVIEW ══════════════════════════════ -->
+
+<div class="sec" id="s1-1">
+  <div class="badge"><div class="badge-n">§ 1.1</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">What Possessio Is</div>
+  <div class="sec-sub">A self-sustaining, protocol-funded data utility providing institutional-grade insurance and county withdrawal metrics</div>
+
+  <p class="p">Possessio is a property intelligence protocol built on Base. It layers real-time insurance carrier data, FAIR Plan dependency rates, True PITI calculations, and county withdrawal metrics on every property in America — listed or off-market. The data is queryable without login, without ads, and without requiring any token purchase to access.</p>
+
+  <p class="p">The protocol is self-sustaining. Its operating costs — premium API subscriptions for institutional-grade insurance and county rate feeds — are funded autonomously by the <strong>L.A.T.E. smart contract</strong> (Liquidity and Treasury Engine), which routes ETH swap fees — 25% directly into protocol-owned liquidity, 75% into yield-bearing assets whose yield further feeds the LP and operations simultaneously. No advertising revenue. No user data sold. No gated access.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-n">Ad-Free</div><div class="stat-l">Zero advertising, zero data monetization</div><div class="stat-s">Protocol-funded by L.A.T.E. fee engine</div></div>
+    <div class="stat"><div class="stat-n">Base</div><div class="stat-l">Deployment network</div><div class="stat-s">Ethereum L2 · OpenZeppelin · Safe multi-sig</div></div>
+    <div class="stat"><div class="stat-n">$0.00</div><div class="stat-l">Cost to query the index</div><div class="stat-s">Zero-barrier public access</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s1-2">
+  <div class="badge"><div class="badge-n">§ 1.2</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">The Problem We Solve</div>
+  <div class="sec-sub">The data Zillow has no incentive to show you</div>
+
+  <p class="p">PITI — Principal, Interest, Taxes, and Insurance — is the true monthly cost of homeownership. Lenders calculate it. Escrow accounts collect it. The single most volatile component, <strong>insurance</strong>, is routinely estimated rather than verified at the point of purchase decision. In insurance-stressed markets, Zillow's standard estimate can be more than $1,000 per month wrong.</p>
+
+  <p class="p">When State Farm stops writing policies in a county, that signal is the most accurate leading indicator of future property value decline available anywhere — and it arrives months before any map, model, or Zestimate reflects it. That signal is never surfaced by platforms whose revenue depends on transaction volume. Possessio's incentive is structurally opposite: the protocol earns from use, not from sales.</p>
+
+  <div class="pq"><div class="pq-t">Zillow shows you comps. Possessio shows you what actually determines long-term value — real-time insurance intelligence layered on every property in America, listed or not.</div></div>
+
+  <div class="rows">
+    <div class="row"><div class="row-tag">The Gap</div><div class="row-txt">In coastal Florida, fire-corridor California, and flood-zone Texas, the difference between Zillow's estimated PITI and the True PITI can exceed <strong>$1,380/month</strong>. That delta affects debt-to-income ratios, mortgage qualification, and real affordability. The lender finds this number at underwriting. Possessio shows it before the offer.</div></div>
+    <div class="row"><div class="row-tag">The Signal</div><div class="row-txt">Insurance carrier withdrawals are the earliest structural signal in the property market. When a carrier exits a county, every listing in that county is mispriced against the new insurance reality. Possessio aggregates this signal across all 50 states in real time. Nobody else does this at this layer.</div></div>
+    <div class="row"><div class="row-tag">The Fix</div><div class="row-txt">An open, protocol-funded public intelligence index. No login required. No token required to view data. Institutional-grade feeds, funded by the L.A.T.E. treasury. The index replaces the traditional gated listing system with a free public data layer — permanently.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s1-3">
+  <div class="badge"><div class="badge-n">§ 1.3</div><div class="badge-c">Project Overview</div></div>
+  <div class="sec-title">Design Principles</div>
+  <div class="sec-sub"><em>Non-discretionary. Self-executing. Transparent by architecture.</em></div>
+
+  <div class="rows">
+    <div class="row"><div class="row-tag">Zero Barrier</div><div class="row-txt">No login, no ads, no requirement to buy tokens to view data. The index is a public utility. Access is the point — not a funnel.</div></div>
+    <div class="row"><div class="row-tag">Non-Discretionary</div><div class="row-txt">Funding and yield reinvestment are handled by self-executing smart contract code, not human management. The L.A.T.E. contract's 25% liquidity split is hardcoded and immutable. No admin can redirect these funds.</div></div>
+    <div class="row"><div class="row-tag">Institutional Grade</div><div class="row-txt">The 75% treasury allocation funds premium API subscriptions for insurance withdrawal data, county rate feeds, FAIR Plan enrollment statistics, and FEMA flood zone updates. The same data tier used by institutional insurers and mortgage lenders — available publicly at zero cost.</div></div>
+    <div class="row"><div class="row-tag">Transparent</div><div class="row-txt">Every fee-split event is emitted on-chain. The treasury balance is public. The yield position is readable. The Farcaster Frame dashboard renders this data in real time. The audit is always open.</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §2: L.A.T.E. CONTRACT ══════════════════════════════ -->
+
+<div class="sec" id="s2-1">
+  <div class="badge"><div class="badge-n">§ 2.1</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">L.A.T.E. Architecture</div>
+  <div class="sec-sub">Liquidity and Treasury Engine — the autonomous smart contract powering the protocol on Base</div>
+
+  <p class="p">The L.A.T.E. smart contract is the financial engine of Possessio. It is an autonomous contract on Base, built using the OpenZeppelin library, that intercepts ETH swap fees and routes them with hardcoded, immutable logic across four operational pillars. No human decision-making is required or possible in the core fee-routing path.</p>
+
+  <div class="late-wrap">
+    <div class="late-header">
+      <div class="late-header-title">L · A · T · E</div>
+      <div class="late-header-sub">Liquidity and Treasury Engine · Base Network · OpenZeppelin</div>
+    </div>
+    <table class="late-tbl">
+      <thead>
+        <tr>
+          <th style="width:100px">Pillar</th>
+          <th style="width:140px">Mechanism</th>
+          <th>Logic Execution</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="late-pillar">L<span>Liquidity</span></div>
+          </td>
+          <td>
+            <div class="pct-badge">25%</div>
+            <div class="late-mech">Allocation</div>
+          </td>
+          <td>
+            <div class="late-logic">Captures <strong>25% of ETH swap fees</strong> and pairs them with $PITI to inject into the Base Liquidity Pool. This generates its own LP fees and continuously raises the price floor. The injection function is <strong>hardcoded and immutable</strong> — no admin can redirect these funds.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">T<span>Treasury</span></div>
+          </td>
+          <td>
+            <div class="pct-badge">75%</div>
+            <div class="late-mech">Allocation</div>
+          </td>
+          <td>
+            <div class="late-logic">Routes <strong>75% of ETH fees</strong> to a <strong>Safe (Gnosis) 3-of-5 multi-sig</strong>. This sustainably funds high-frequency API costs for institutional-grade insurance withdrawal data, county rate feeds, and FAIR Plan enrollment statistics. The treasury is the protocol's operating budget — non-discretionary, on-chain, and publicly auditable.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">A<span>Asset Yield</span></div>
+          </td>
+          <td>
+            <div class="late-mech">Yield Deployment</div>
+          </td>
+          <td>
+            <div class="late-logic"><strong>75% of swap fees deploy into yield-bearing assets</strong> — cbETH or Ondo USDY. The yield earned is then split: <strong>25% of yield back into the LP</strong> (compounding the liquidity floor), <strong>75% of yield stays in treasury</strong> (funding API costs and compounding further). Two income streams — swap fees and yield — both continuously feeding the liquidity pool.</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="late-pillar">E<span>Engine State</span></div>
+          </td>
+          <td>
+            <div class="late-mech">Transparency</div>
+          </td>
+          <td>
+            <div class="late-logic">The contract <strong>emits on-chain events for every fee-split</strong> — every routing decision is permanently logged. These events power the <strong>real-time Farcaster Frame dashboard</strong>, allowing any holder or user to verify treasury health, liquidity depth, and yield position without trusting any centralized reporter.</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="flywheel">
+  <div class="flywheel-title">The POSSESSIO Compounding Flywheel</div>
+  <pre>
+Token Swaps
+     ↓
+<span class="hl">1% Swap Fee collected</span>
+     ↓
+Split two ways simultaneously:
+     ↓                         ↓
+<span class="bl">25% → LP injection</span>       <span class="hl">75% → Treasury</span>
+(raises price floor)           ↓
+     ↑             Deployed to yield
+     ↑             (cbETH / Ondo USDY)
+     ↑                         ↓
+     ↑               <span class="hl">Yield earned</span>
+     ↑                         ↓
+     ↑             Split two ways:
+     ↑                 ↓              ↓
+     ←── <span class="bl">25% of yield</span> ───        <span class="hl">75% stays</span>
+         back into LP             in treasury
+                                  (API costs +
+                                   compounds)
+  </pre>
+  <div style="font-size:11px;color:var(--ink-light);margin-top:12px;font-family:'Montserrat',sans-serif;font-style:italic">Two income streams — swap fees and yield — both continuously feeding the same liquidity pool. Each cycle amplifies the next.</div>
+</div>
+
+<div class="sec" id="s2-2">
+  <div class="badge"><div class="badge-n">§ 2.2</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">L — Liquidity Pillar</div>
+  <div class="sec-sub">25% of ETH swap fees · Paired with $PITI · Injected into Base Liquidity Pool</div>
+  <p class="p">The Liquidity Pillar has two inputs — not one. First: 25% of all ETH swap fees are automatically paired with $PITI and injected directly into the Base Liquidity Pool. Second: 25% of the yield earned by the treasury on its yield-bearing assets is also injected into the LP. Both streams continuously deepen the pool. This is not rented liquidity — it is owned by the protocol permanently, growing from two compounding sources simultaneously.</p>
+  <p class="p">The compounding effect is structural: each fee cycle deepens the pool, generates more LP fee yield, and raises the price floor. The injection function is hardcoded. No admin key, governance vote, or multi-sig action can redirect these funds. The 25% path is immutable from deployment.</p>
+  <div class="fbox">
+    <div class="fbox-title">Liquidity Flow — Two Input Streams</div>
+    <div class="fl"><strong>Input 1:</strong> 25% of ETH swap fees — captured by L.A.T.E. on every swap event</div>
+    <div class="fl"><strong>Input 2:</strong> 25% of treasury yield — earned on cbETH / Ondo USDY deployed by the treasury</div>
+    <div class="fl"><strong>Pairing:</strong> ETH paired with $PITI at current pool ratio</div>
+    <div class="fl"><strong>Destination:</strong> Base Liquidity Pool — protocol-owned LP position</div>
+    <div class="fl"><strong>Secondary yield:</strong> LP fees generated by pool activity, reinvested into LP</div>
+    <div class="fl"><strong>Effect:</strong> Continuously rising price floor, deepening pool, lower slippage for users</div>
+    <hr class="fdiv">
+    <div class="fl" style="font-size:11px;opacity:.65">Immutability requirement: The liquidity injection function must be hardcoded at deployment. No admin function, upgrade path, or governance mechanism may alter the 25% routing logic post-deploy.</div>
+  </div>
+</div>
+
+<div class="sec" id="s2-3">
+  <div class="badge"><div class="badge-n">§ 2.3</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">T — Treasury Pillar</div>
+  <div class="sec-sub">75% of ETH swap fees · ETH-denominated treasury · Diversified staking · DAI emergency reserve</div>
+  <p class="p">The Treasury Pillar routes 75% of all ETH swap fees to a Safe (Gnosis) multi-sig wallet governed by a 3-of-5 signing structure. The treasury is denominated in ETH — not dollars. This is intentional. API operating costs are denominated in USD. The treasury is denominated in ETH. This asymmetry means that in every macro environment — dollar strengthening, dollar weakening, or dollar crisis — the treasury either buys more API capacity or appreciates in USD value. There is no bad scenario for an ETH-denominated treasury funding USD-denominated operating costs.</p>
+  <p class="p">The treasury deploys into diversified ETH staking positions across three providers — eliminating single-point-of-failure risk. No more than 50% of the treasury may be concentrated in any single staking provider at any time. The 3-of-5 governance structure manages allocation shifts and emergency exits.</p>
+  <div class="fbox">
+    <div class="fbox-title">Treasury Architecture — Three Layers</div>
+    <div class="fl"><strong>Layer 1 — DAI Emergency Reserve:</strong> 20% of the 75% treasury allocation flows to DAI until the reserve reaches $2,280 (24 months of API costs). Auto-switches to full staking when met. Auto-refills if drawn down. Hardcoded quantity check — not a price oracle. No public withdrawal function. Routing only — no single-block rebalancing. This layer guarantees the protocol never goes dark regardless of market conditions.</div>
+    <div class="fl"><strong>Layer 2 — Diversified ETH Staking:</strong> Remaining treasury deployed across three providers: 20% cbETH (Coinbase), 40% wstETH (Lido — $18B TVL), 40% rETH (Rocket Pool — most decentralized). ~3% blended staking yield. No single provider holds more than 50%. Emergency exit protocol: Chainlink cbETH/ETH feed deviation &gt;3% triggers automatic pause of new cbETH deposits. Full exit requires 3-of-5 governance vote to prevent false-positive permanent loss.</div>
+    <div class="fl"><strong>Layer 3 — Swap Fee Compounding:</strong> $PITI swap fees continuously add ETH to the treasury. ETH is never sold — always staked. Treasury grows in ETH terms perpetually. As the protocol matures and ETH appreciates, the same treasury balance funds progressively more API capacity in USD terms.</div>
+    <div class="fl"><strong>Governance rules:</strong> 3-of-5 can shift allocation between providers · trigger emergency exit · adjust DAI reserve size · Cannot touch DAI reserve except for API payments · Cannot sell ETH principal · Cannot reduce below 3 staking providers · Cannot concentrate &gt;50% in one provider</div>
+  </div>
+  <div class="fbox" style="margin-top:16px;border-color:rgba(0,0,128,0.2)">
+    <div class="fbox-title">Bootstrap Mechanism — DAI Reserve Filling</div>
+    <div class="fl"><strong>At launch:</strong> 20% of the 75% treasury allocation → DAI reserve (until $2,280 met)</div>
+    <div class="fl"><strong>Remainder:</strong> 80% of the 75% treasury allocation → ETH staking</div>
+    <div class="fl"><strong>Auto-switch:</strong> When DAI reserve hits $2,280 → 100% of treasury goes to staking</div>
+    <div class="fl"><strong>Auto-refill:</strong> If API costs draw reserve below $2,280 → 20% diversion restarts automatically</div>
+    <div class="fl"><strong>Timeline at $20K/day volume:</strong> Reserve fills in ~76 days (~2.5 months)</div>
+    <div class="fl"><strong>Attack protection:</strong> Hardcoded DAI quantity check (not price oracle) · No public withdrawal function · Switch affects future routing only — no single-block rebalancing</div>
+  </div>
+</div>
+
+<div class="sec" id="s2-4">
+  <div class="badge"><div class="badge-n">§ 2.4</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">A — Asset Yield Pillar</div>
+  <div class="sec-sub">ETH staking yield · 25% back to LP · 75% funds operations · Own validators at Phase 3</div>
+  <p class="p">The treasury deploys ETH into diversified staking positions. Staking yield is split: <strong>25% of yield is injected back into the LP</strong>, adding to the liquidity floor on top of the direct swap fee injection. <strong>75% of yield is retained in the treasury</strong> to fund API subscriptions and compound further. The result is a treasury that never sits idle — it funds operations and simultaneously deepens the liquidity pool from two directions.</p>
+  <p class="p">The protocol's yield strategy is ETH-denominated by design. This provides a natural hedge against dollar debasement — the single greatest macro risk to a USD-cost public service funded by crypto yield. As the U.S. government refinances approximately $10 trillion in debt annually at elevated rates, the compounding interest burden (projected to exceed $1.5 trillion annually by 2028-2030) creates structural pressure on dollar-denominated yield instruments. ETH staking yield is immune to Federal Reserve policy decisions — it is driven by network activity, validator count, and MEV rewards, not interest rate cycles.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">cbETH (20%)</div><div class="row-txt">Coinbase Wrapped Staked ETH. Liquid on Base. Deeply integrated with Aerodrome. Emergency exit monitored by Chainlink cbETH/ETH price feed — &gt;3% depeg triggers automatic pause of new deposits. Full exit requires 3-of-5 governance vote.</div></div>
+    <div class="row"><div class="row-tag">wstETH (40%)</div><div class="row-txt">Lido Wrapped Staked ETH. Largest liquid staking protocol — $18 billion TVL. Decentralized validator set. No single company risk. Deeply liquid on Base via Aerodrome and Uniswap.</div></div>
+    <div class="row"><div class="row-tag">rETH (40%)</div><div class="row-txt">Rocket Pool ETH. Most decentralized option — community-run validators. No corporate counterparty. Confirmed liquid on Base via Uniswap. Sufficient for the 40% allocation based on incremental fee routing rather than single-block rebalancing.</div></div>
+  </div>
+  <div class="fbox" style="margin-top:16px">
+    <div class="fbox-title">Macro Rationale — ETH Treasury as Dollar Hedge</div>
+    <div class="fl"><strong>Dollar strengthens:</strong> ETH buys more API capacity in USD terms → protocol gets more searches per ETH</div>
+    <div class="fl"><strong>Dollar weakens:</strong> ETH appreciates in USD → same ETH treasury funds more API capacity</div>
+    <div class="fl"><strong>Dollar crisis (2028-2030):</strong> ETH surges as hard asset → treasury compounds at exactly the moment dollar yield collapses</div>
+    <div class="fl"><strong>Recession / rate cuts:</strong> ETH staking yield relatively more attractive than compressed TradFi → capital flows on-chain → more $PITI volume → more treasury growth</div>
+    <div class="fl"><strong>Conclusion:</strong> There is no bad macro scenario for an ETH-denominated treasury funding USD-denominated operating costs. The asymmetry is intentional.</div>
+  </div>
+</div>
+
+<div class="sec" id="s2-5">
+  <div class="badge"><div class="badge-n">§ 2.5</div><div class="badge-c">The L.A.T.E. Contract</div></div>
+  <div class="sec-title">E — Engine State &amp; Transparency</div>
+  <div class="sec-sub">On-chain event emission · Farcaster Frame dashboard · The audit is always open</div>
+  <p class="p">The L.A.T.E. contract emits an on-chain event for every fee-split execution. Every routing decision — the 25% liquidity injection, the 75% treasury deposit, every yield deployment — is permanently logged to Base and publicly readable. This is not optional reporting. It is the contract's native behavior.</p>
+  <p class="p">These events power the real-time <strong>Farcaster Frame v2 dashboard</strong>, allowing any user to query treasury health, current liquidity depth, yield position, and fee volume directly from their social feed — without visiting any separate interface, without trusting any centralized reporter, and without any token holdings required.</p>
+  <div class="mstrip">
+    <div class="mcell"><div class="mv">On-Chain</div><div class="ml">Every fee-split event logged to Base</div><div class="mn">Permanent · immutable · public</div></div>
+    <div class="mcell"><div class="mv">Frame v2</div><div class="ml">Farcaster Frame dashboard</div><div class="mn">Query data from social feed</div></div>
+    <div class="mcell"><div class="mv">Real-Time</div><div class="ml">Live treasury &amp; yield state</div><div class="mn">No trust required</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §3: WEB UTILITY ══════════════════════════════ -->
+
+<div class="sec" id="s3-1">
+  <div class="badge"><div class="badge-n">§ 3.1</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">The Institutional Index</div>
+  <div class="sec-sub">Zero-barrier access · No login · No ads · No token required to view data</div>
+  <p class="p">The Possessio web utility is an institutional-grade property intelligence index, freely accessible to the public. It replaces the traditional gated listing system with an open public data layer — sourced from premium APIs funded by the L.A.T.E. treasury, and indexed across all 158 million residential properties in America, listed and off-market.</p>
+  <p class="p">The index requires no account, no email, no wallet connection, and no $PITI token to access. Any person can query any property and receive its DEED Score, True PITI calculation, insurance carrier status, FAIR Plan dependency rate, and DEED Estimate vs. Zestimate comparison — immediately, at no cost.</p>
+  <table class="ctbl">
+    <thead><tr><th class="old">Traditional Gated Listing Platforms</th><th class="nw">Possessio Institutional Index</th></tr></thead>
+    <tbody>
+      <tr><td>Login required</td><td class="c-g">✓ Zero login · publicly accessible</td></tr>
+      <tr><td>Agent advertising funded</td><td class="c-g">✓ Protocol-funded · L.A.T.E. treasury</td></tr>
+      <tr><td class="c-x">No insurance withdrawal data</td><td class="c-g">✓ Real-time carrier withdrawal alerts · all 50 states</td></tr>
+      <tr><td class="c-x">Standard estimated insurance only</td><td class="c-g">✓ True PITI · actual insurance market cost</td></tr>
+      <tr><td class="c-x">No FAIR Plan dependency signal</td><td class="c-g">✓ FAIR Plan dependency flag per county</td></tr>
+      <tr><td class="c-x">Listed properties only</td><td class="c-g">✓ 158M properties indexed · listed &amp; off-market</td></tr>
+      <tr><td class="c-x">No on-chain data layer</td><td class="c-g">✓ On-chain event log · Farcaster Frame v2 integration</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="sec" id="s3-2">
+  <div class="badge"><div class="badge-n">§ 3.2</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">True PITI Calculator</div>
+  <div class="sec-sub">The number Zillow doesn't show you — surfaced before the offer, not at closing</div>
+  <p class="p">The True PITI calculator is the protocol's primary user-facing intelligence tool. It draws on three verified data sources per property: current mortgage rate and principal/interest at list price; county-level property tax actuals from public records; and the <strong>real insurance market cost</strong> for that county based on live carrier data, active policy rates, and FAIR Plan pricing where applicable — not a national average estimate.</p>
+
+  <div class="audit-wrap">
+    <div class="audit-hd">
+      <div class="audit-hd-t">Live PITI Verification Log</div>
+      <div class="audit-hd-l"><div class="ldot"></div>Continuous On-Chain Verification</div>
+    </div>
+    <table class="atbl">
+      <thead><tr><th>Property</th><th>Zillow PITI Est.</th><th>True PITI</th><th>Delta / Month</th><th>Driver</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Naples, FL</td><td>$4,967</td><td>$6,347</td><td class="c-r">+$1,380</td><td>FAIR Plan only · $18,400/yr</td><td><span class="sr">Critical Risk</span></td></tr>
+        <tr><td>Tampa, FL</td><td>$2,180</td><td>$2,560</td><td class="c-r">+$380</td><td>2 carrier withdrawals Q1 2026</td><td><span class="sr">Risk Detected</span></td></tr>
+        <tr><td>Pittsburgh, PA</td><td>$1,612</td><td>$1,679</td><td style="color:var(--navy);font-weight:600">+$67</td><td>1 carrier withdrew 2024</td><td><span class="sv">Monitor</span></td></tr>
+        <tr><td>Ann Arbor, MI</td><td>$2,673</td><td>$2,690</td><td class="c-g">+$17</td><td>4 carriers active · zero withdrawals 48mo</td><td><span class="sv">Verified</span></td></tr>
+        <tr><td>Detroit, MI</td><td>$936</td><td>$936</td><td class="c-g">$0</td><td>Stable · Great Lakes resilience</td><td><span class="sv">Accurate</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="sec" id="s3-3">
+  <div class="badge"><div class="badge-n">§ 3.3</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">The DEED Score</div>
+  <div class="sec-sub">A 0–100 composite built on the four signals that determine long-term property value</div>
+  <p class="p">The DEED Score is applied to every indexed property — listed or off-market. It is a signal-weighted composite of four sub-scores, each out of 25, calibrated to the factors that institutional insurers and mortgage lenders already use to price risk. The score is not a marketing rating. It is a structured summary of the insurance viability, climate resilience, geographic stability, and market accuracy of any given property.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">🌊 Climate<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Flood risk, wildfire probability, water access security, and heat stress exposure. Sourced from FEMA flood zone data, carrier risk models, and climate migration datasets. The most predictive long-run sub-score — insurance markets price climate first, then the property market follows.</div></div>
+    <div class="row"><div class="row-tag">🛡️ Insurance<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Number of active carriers in the county, withdrawal history over 48 months, FAIR Plan dependency rate, and year-over-year premium trend. Sourced from live institutional carrier filing data funded by the L.A.T.E. treasury. The earliest structural signal of value decline.</div></div>
+    <div class="row"><div class="row-tag">📍 Geography<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">Economic anchor quality, employer diversity, infrastructure resilience, and climate migration inflow/outflow patterns. A university-anchored Great Lakes city with net inbound migration scores near 25. A single-employer coastal town with net outmigration and rising FAIR Plan dependency scores low.</div></div>
+    <div class="row"><div class="row-tag">📊 Market<br><span style="font-size:10px;opacity:.6">/ 25 pts</span></div><div class="row-txt">How accurately the current list price reflects insurance-adjusted fundamentals. When the DEED Estimate diverges significantly from the Zestimate, this sub-score explains why — and quantifies how much of the gap is insurance risk not yet priced by backward-looking comps.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s3-4">
+  <div class="badge"><div class="badge-n">§ 3.4</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">Agent Intelligence Network</div>
+  <div class="sec-sub">First report paid immediately · Rolling stake mechanism · $1-$5 USD in $PITI · SBT reputation</div>
+  <p class="p">Local real estate agents are the most underutilized source of insurance intelligence in the market. They already know which carriers stopped writing in their territory months before any official DOI filing. Possessio's Agent Portal converts that existing knowledge into verified, on-chain data — compensating agents in $PITI automatically for every accepted submission.</p>
+  <p class="p"><strong>Zero barrier to entry.</strong> The first report is paid immediately upon submission in good faith — no confirmation required, no stake required, no crypto knowledge needed. $1 USD in $PITI is sent automatically to the agent's wallet. From that point forward, agents stake their previous reward as collateral for the next submission. This rolling stake mechanism creates compounding skin in the game — without requiring any upfront capital from the agent.</p>
+  
+  <div class="fbox">
+    <div class="fbox-title">Agent Onboarding Flow</div>
+    <div class="fl"><strong>Report 1:</strong> Submit in good faith → $1 USD in $PITI paid immediately → no confirmation required → no stake required</div>
+    <div class="fl"><strong>Report 2+:</strong> Stake previous reward as collateral → submit report → confirmed by DOI: stake returned + new reward earned + new reward auto-staked → contradicted by DOI: stake slashed to treasury + reputation penalty</div>
+    <div class="fl"><strong>Reward range:</strong> $1 USD base → $5 USD maximum — denominated in USD, paid in $PITI at current 4-hour TWAP price</div>
+    <div class="fl"><strong>Maximum reward:</strong> $5 USD hard cap regardless of price action — enforced by contract</div>
+    <div class="fl"><strong>Why USD denomination:</strong> Agent always receives fair compensation regardless of $PITI price. Price drops → more tokens sent → creates buy pressure. Price rises → fewer tokens sent → LP deepens. Counter-cyclical by design.</div>
+  </div>
+
+  <div class="fbox" style="margin-top:16px">
+    <div class="fbox-title">Dynamic Reward Multipliers</div>
+    <div class="fl"><strong>Base rate:</strong> $1 USD per verified submission</div>
+    <div class="fl"><strong>Quality multiplier:</strong> Confirmed same month: 1.5x · Confirmed 30d early: 2.0x · Confirmed 60d early: 3.0x · Confirmed 90d+ early: 4.0x · Contradicted by DOI: 0.0x + slash</div>
+    <div class="fl"><strong>Quantity multiplier:</strong> 1-10 lifetime: 1.0x · 11-50: 1.1x · 51-100: 1.15x · 100-500: 1.2x · 500+: 1.25x</div>
+    <div class="fl"><strong>Frequency multiplier:</strong> 1-3/month: 1.0x · 4-10/month: 1.1x · 11-20/month: 1.15x · 21+/month: 1.2x</div>
+    <div class="fl"><strong>Accuracy floor:</strong> Above 80%: full multipliers · 70-80%: -25% · 60-70%: -50% · Below 60%: suspended</div>
+    <div class="fl"><strong>Early signal bonus:</strong> Days between submission and DOI confirmation = leading indicator value. The earlier and more accurate — the higher the multiplier. This creates a race to report accurately and early.</div>
+  </div>
+
+  <div class="fbox" style="margin-top:16px">
+    <div class="fbox-title">SBT Reputation System</div>
+    <div class="fl"><strong>Standard:</strong> Custom non-transferable ERC-721 with _beforeTokenTransfer override</div>
+    <div class="fl"><strong>Transferability:</strong> Minting (from 0x0) and burning (to 0x0) permitted · All peer-to-peer transfers blocked</div>
+    <div class="fl"><strong>Recovery:</strong> 3-of-5 governance can migrate SBT if agent loses private keys</div>
+    <div class="fl"><strong>Indexing:</strong> Compatible with The Graph and Dune Analytics — standard ERC-721 schemas apply</div>
+    <div class="fl"><strong>isAgent mapping:</strong> Instant verification for agent layer activation at month 9</div>
+    <div class="fl"><strong>Metadata:</strong> Reputation score updated off-chain by verification logic · reflected on-chain via SBT</div>
+  </div>
+
+  <div class="fbox" style="margin-top:16px">
+    <div class="fbox-title">Unconfirmed Report Protocol — 180 Day Rule</div>
+    <div class="fl"><strong>Days 1-180:</strong> Stake locked in escrow · waiting for DOI confirmation</div>
+    <div class="fl"><strong>Day 180 — DOI silent:</strong> Appeal window opens for 90 days</div>
+    <div class="fl"><strong>Appeal cost:</strong> $0.50 USD in $PITI · non-refundable · unlimited attempts</div>
+    <div class="fl"><strong>Evidence:</strong> Carrier portal screenshots · client non-renewal notices · agency communications</div>
+    <div class="fl"><strong>Vote:</strong> 3-of-5 Safe signers · 60% threshold · 24-hour window</div>
+    <div class="fl"><strong>Granted:</strong> Stake released + reward paid</div>
+    <div class="fl"><strong>Denied:</strong> Stake burned to treasury · can appeal again ($0.50 each time)</div>
+    <div class="fl"><strong>Day 270:</strong> Appeal window closes · no appeal = stake burned · reward forfeited</div>
+  </div>
+
+  <div class="fbox" style="margin-top:16px">
+    <div class="fbox-title">Agent Layer Activation — Three Conditions (Month 9)</div>
+    <div class="fl"><strong>Condition 1:</strong> block.timestamp &gt; launch + 9 months</div>
+    <div class="fl"><strong>Condition 2:</strong> DAI reserve &gt;= $2,280 (fully funded)</div>
+    <div class="fl"><strong>Condition 3:</strong> LP depth &gt; $50,000</div>
+    <div class="fl"><strong>All three must be met simultaneously.</strong> Agent rewards do not activate until all conditions are satisfied.</div>
+    <div class="fl"><strong>TWAP protection at activation:</strong> 4-hour window · 15% circuit breaker vs 24-hour average · $5 hard cap · Scales to 1-hour when LP &gt; $1M</div>
+  </div>
+</div>
+
+<div class="sec" id="s3-5">
+  <div class="badge"><div class="badge-n">§ 3.5</div><div class="badge-c">Web Utility</div></div>
+  <div class="sec-title">Farcaster Frame Integration</div>
+  <div class="sec-sub">Social-Fi ready · Farcaster Frame v2 · Query data from your feed without leaving the app</div>
+  <p class="p">Possessio is fully integrated as a <strong>Farcaster Frame v2</strong> application. Users can query True PITI data, DEED Scores, and carrier withdrawal alerts directly from their Farcaster social feed — without visiting a separate interface, connecting a wallet, or purchasing any token.</p>
+  <p class="p">The L.A.T.E. contract's Engine State events (§2.5) feed directly into the Frame dashboard, rendering treasury balance, current yield position, liquidity depth, and recent fee-split events in real time. Farcaster's social graph is the distribution layer — the Frame is the interface, and the on-chain event log is the data source. No centralized server sits between the contract state and the user's display.</p>
+  <div class="box">
+    <div class="box-title">Frame v2 Query Capabilities</div>
+    <p class="p" style="margin-bottom:10px">From within the Farcaster social feed, any user can query: <strong>True PITI</strong> for any U.S. address; <strong>DEED Score</strong> for any indexed property; <strong>carrier withdrawal alerts</strong> for any ZIP code; <strong>treasury balance and yield state</strong> for the L.A.T.E. contract; and <strong>recent fee-split events</strong> from the Engine State log. All queries return live data. No login. No wallet required.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §4: SECURITY ══════════════════════════════ -->
+
+<div class="sec" id="s4-1">
+  <div class="badge"><div class="badge-n">§ 4.1</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Immutable Liquidity Logic</div>
+  <div class="sec-sub">The 25% liquidity injection function is hardcoded — no admin can redirect these funds</div>
+  <p class="p">This is the protocol's primary security requirement. The 25% ETH fee allocation to the Base Liquidity Pool must be hardcoded in the L.A.T.E. contract at deployment. There must be no admin function, no <code>onlyOwner</code> modifier, no upgrade proxy, and no governance mechanism that can alter or bypass this routing logic after deployment.</p>
+  <p class="p">The immutability of the liquidity path is what makes the protocol trustless at the liquidity layer. Users, token holders, and institutional API partners can rely on the price floor continuously rising — because the mechanism that drives it cannot be turned off.</p>
+  <div class="disc">
+    <div class="disc-title">Developer Implementation Requirement</div>
+    <div class="disc-txt">The liquidity injection function must not be wrapped in any conditional that can be toggled by an admin address. It must not be located behind a proxy contract. It must not be part of any function set that can be upgraded, paused (except by the Emergency Circuit Breaker — §4.3), or replaced. The 25% routing must be verifiable by reading the deployed bytecode directly, with no intermediary trust required.</div>
+  </div>
+</div>
+
+<div class="sec" id="s4-2">
+  <div class="badge"><div class="badge-n">§ 4.2</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Multi-Sig Governance</div>
+  <div class="sec-sub">75% treasury governed by a Safe (Gnosis) 3-of-5 multi-sig</div>
+  <p class="p">The 75% treasury allocation is received by a <strong>Safe (Gnosis) multi-sig wallet</strong> requiring <strong>3-of-5 signers</strong> to authorize any outbound transaction. This structure ensures that no single key compromise, no single team member, and no external actor can unilaterally access treasury funds.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Threshold</div><div class="row-txt">3-of-5 signatures required for any treasury disbursement. Standard for institutional-grade DeFi treasury management on Base.</div></div>
+    <div class="row"><div class="row-tag">Scope</div><div class="row-txt">Governs all outbound treasury transactions: API subscription payments and any protocol parameter changes subject to the 48-hour timelock.</div></div>
+    <div class="row"><div class="row-tag">Transparency</div><div class="row-txt">All multi-sig transactions are publicly visible on the Safe UI and on-chain. The treasury address is published in the System Logic Reference (§6.3). Any holder can monitor balance, pending transactions, and signer activity at all times.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s4-3">
+  <div class="badge"><div class="badge-n">§ 4.3</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Emergency Circuit Breaker</div>
+  <div class="sec-sub">Halts fee-routing if the connected DEX or network experiences a critical exploit</div>
+  <p class="p">The L.A.T.E. contract must include an emergency pause function capable of halting all fee-routing activity — without affecting the treasury balance, the yield position, or the Liquidity Pool LP position already deployed. The circuit breaker is a defensive mechanism only: it stops new fees from being routed during an active exploit. It does not touch existing deployed funds.</p>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Trigger Conditions</div><div class="row-txt">Critical exploit on the connected Base DEX; abnormal fee volume indicative of sandwich or reentrancy attack; network-level emergency declared by Base foundation; or 3-of-5 multi-sig manual trigger within the 48-hour timelock exception window.</div></div>
+    <div class="row"><div class="row-tag">What Pauses</div><div class="row-txt">New fee capture and routing only. The 25% LP injection and 75% treasury routing are suspended. Existing LP positions, treasury balance, and yield deployments are untouched.</div></div>
+    <div class="row"><div class="row-tag">Resume Condition</div><div class="row-txt">Resumption requires 3-of-5 multi-sig authorization. The exploit must be confirmed resolved. Resumption itself is subject to the 48-hour timelock (§4.4).</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s4-4">
+  <div class="badge"><div class="badge-n">§ 4.4</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">48-Hour Timelock</div>
+  <div class="sec-sub">Any changes to protocol parameters require a 48-hour delay before execution</div>
+  <p class="p">All changes to protocol parameters — fee percentages, yield target contracts, governance signer set, circuit breaker state — must pass through a <strong>48-hour timelock</strong> before execution. This means any proposed change is publicly visible on-chain for 48 hours before it can take effect. Any user, holder, or observer can see a proposed change and act accordingly before it becomes live.</p>
+  <div class="disc">
+    <div class="disc-title">Timelock Scope</div>
+    <div class="disc-txt">The 48-hour timelock applies to: (1) any change to the fee-split percentages; (2) any change to the Safe multi-sig signer set or threshold; (4) resumption of fee-routing after an emergency pause; (5) any upgrade to non-immutable contract components. The timelock does not apply to routine treasury disbursements for API costs, which are authorized by the 3-of-5 multi-sig under normal operating conditions.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §5: $PITI TOKEN ══════════════════════════════ -->
+
+<div class="sec" id="s5-1">
+  <div class="badge"><div class="badge-n">§ 5.1</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">$PITI Token Overview</div>
+  <div class="sec-sub">The protocol's native token · Paired in the Base Liquidity Pool · Earned by agent contributors</div>
+  <p class="p">$PITI is the native token of the Possessio protocol. It serves two primary functions within the L.A.T.E. architecture: it is the asset paired with ETH in the Base Liquidity Pool (the destination of the 25% liquidity allocation), and it is the reward currency for verified agent intelligence submissions through the Agent Portal.</p>
+  <p class="p">$PITI is not required to access the index. Every data feature — True PITI, DEED Score, carrier withdrawal alerts, DEED Estimate vs. Zestimate — is freely accessible without holding or spending any $PITI. The token exists to sustain the liquidity pool and incentivize data quality contributors, not to gate the protocol's core utility behind a paywall.</p>
+  <div class="fbox">
+    <div class="fbox-title">Token Distribution — 1,000,000,000 $PITI Total Supply</div>
+    <div class="fl"><strong>400,000,000 (40%) — Aerodrome LP:</strong> Paired with ETH seed at launch. Protocol-owned liquidity. Immutable — never pulled. Price floor from day one.</div>
+    <div class="fl"><strong>500,000,000 (50%) — Public Float:</strong> Available for trading immediately. No restrictions. No insider allocation. No VC allocation. No presale. Open market only.</div>
+    <div class="fl"><strong>50,000,000 (5%) — Founder:</strong> 2-year vesting. Demonstrates commitment. Skin in the game. Cannot dump at launch.</div>
+    <div class="fl"><strong>30,000,000 (3%) — Technical Co-Founder / CTO:</strong> 4-year vesting with 1-year cliff. Milestone accelerators. QSBS eligible via API company C-Corp equity.</div>
+    <div class="fl"><strong>20,000,000 (2%) — Protocol Reserve:</strong> 48-hour timelock. 3-of-5 governance. Emergency use only. Never touched for routine operations.</div>
+  </div>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Liquidity Pair</div><div class="row-txt">$PITI is paired with ETH in the Base Liquidity Pool. The L.A.T.E. contract's 25% allocation continuously adds to this pool, deepening liquidity and raising the price floor on every swap fee cycle. No VC received cheap allocation. No presale diluted the public. The launch price is the fair price.</div></div>
+    <div class="row"><div class="row-tag">Agent Rewards</div><div class="row-txt">Verified data contributors earn $PITI automatically for every accepted submission. First report paid immediately in good faith — no confirmation required. Subsequent rewards earned via rolling stake mechanism. $1-$5 USD denominated — paid at current TWAP price. Rewards sourced from conditional LP buyback — not from treasury principal.</div></div>
+    <div class="row"><div class="row-tag">No Gating</div><div class="row-txt">Zero data features are paywalled behind $PITI ownership. The protocol's core value proposition — institutional-grade property intelligence, freely accessible — is unconditional. $PITI is the protocol's economic layer, not its access key.</div></div>
+    <div class="row"><div class="row-tag">Honest Launch</div><div class="row-txt">90% of supply goes to LP and public float. 10% to builders — fully vested. No investor allocation. No presale. No team dump possible at launch. The distribution is published here and verifiable on-chain from the deployment transaction.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s5-2">
+  <div class="badge"><div class="badge-n">§ 5.2</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">Revenue Allocation</div>
+  <div class="sec-sub">L.A.T.E.-governed · Non-discretionary · Treasury compounds continuously</div>
+  <div class="alloc">
+    <div class="alloc-row"><div class="ap">75%</div><div><div class="an">Treasury — Safe (Gnosis) 3-of-5 Multi-Sig</div><div class="as2">20% of 75% → DAI reserve (until $2,280) · remainder → ETH staking (20% cbETH / 40% wstETH / 40% rETH) · 25% of yield → LP · 75% of yield → operations</div><div class="abar"><div class="abar-f" style="width:75%"></div></div></div></div>
+    <div class="alloc-row"><div class="ap">25%</div><div><div class="an">Liquidity — Base Liquidity Pool (ETH / $PITI pair)</div><div class="as2">Protocol-owned LP · generates its own fees · raises price floor · hardcoded and immutable · source of conditional agent reward buyback when needed</div><div class="abar"><div class="abar-f" style="width:25%"></div></div></div></div>
+  </div>
+  <p class="p">This is the complete fee allocation. There is no founder allocation from protocol fees. There is no team percentage. There is no marketing slice from the swap fee stream. The L.A.T.E. contract routes fees to two destinations only: the Liquidity Pool and the treasury. Agent rewards are sourced from a conditional buyback within the LP allocation — the LP only diverts to agent rewards when the agent wallet falls below threshold, and returns to full LP injection when refilled. All other budget lines are funded from treasury disbursements authorized by the 3-of-5 multi-sig, subject to the 48-hour timelock.</p>
+</div>
+
+<div class="sec" id="s5-3">
+  <div class="badge"><div class="badge-n">§ 5.3</div><div class="badge-c">$PITI Token</div></div>
+  <div class="sec-title">Regulatory Posture</div>
+  <div class="sec-sub">Utility-first. Non-discretionary by design. Compliance-forward.</div>
+  <p class="p">$PITI is a utility token. Its functions are: pairing in the Liquidity Pool and rewarding verified data contributors. It is not sold with any representation of profit from the efforts of others. The L.A.T.E. contract's autonomous, non-discretionary fee routing is a key regulatory distinction — funding and yield reinvestment are executed by self-executing code, not human management.</p>
+  <div class="disc">
+    <div class="disc-title">Legal Safeguard Language — For the Index and Protocol</div>
+    <div class="disc-txt"><strong>Informational Purposes Only:</strong> POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. No content on the Possessio index constitutes insurance advice, a recommendation to buy or sell real estate, or a guarantee of property value. Users should consult licensed professionals before making real estate or insurance decisions.<br><br><strong>Non-Discretionary Protocol:</strong> Funding and yield reinvestment within the L.A.T.E. contract are handled by self-executing smart contract code, not human management. No person or entity exercises discretion over the 25% liquidity injection or the the 25% liquidity injection. These functions execute autonomously according to immutable contract logic.</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ §6: BUILD SPECIFICATION ══════════════════════════════ -->
+
+<!-- ══════════════ §3-6 PUBLIC SERVICE ══════════════ -->
+<div class="sec" id="s3-6">
+  <div class="badge"><div class="badge-n">§ 3.6</div><div class="badge-c">Public Access Model</div></div>
+  <div class="sec-title">Public Service Declaration</div>
+  <div class="sec-sub">Free for every human · No login · No token required · Funded by the treasury</div>
+  <p class="p">POSSESSIO is a free public service. The index exists because homebuyers deserve the same property data that banks, insurers, and institutional investors have always had. When a carrier stops writing policies in a county, that signal arrives months before any listing platform reflects it. POSSESSIO surfaces that signal — free, for everyone, permanently.</p>
+  <p class="p">No account is required to search. No wallet connection is required. No $PITI token purchase is required. Any person can query any U.S. property and receive its True PITI calculation, insurance carrier status, carrier withdrawal history, and POSSESSIO Score — immediately, at zero cost.</p>
+  <div class="fbox">
+    <div class="fbox-title">Access Terms</div>
+    <div class="fl"><strong>Cost to search:</strong> $0.00 — zero, always</div>
+    <div class="fl"><strong>Login required:</strong> None</div>
+    <div class="fl"><strong>Token required:</strong> None — $PITI is not required to access any data</div>
+    <div class="fl"><strong>Data sold:</strong> Never — no user data is collected or monetized</div>
+    <div class="fl"><strong>Advertising:</strong> None — the treasury funds operations, not advertisers</div>
+    <div class="fl"><strong>Funding source:</strong> cbETH staking yield on the $PITI treasury — autonomous, non-discretionary</div>
+  </div>
+</div>
+
+<!-- ══════════════ §3-7 API ACTIVATION ══════════════ -->
+<div class="sec" id="s3-7">
+  <div class="badge"><div class="badge-n">§ 3.7</div><div class="badge-c">Public Access Model</div></div>
+  <div class="sec-title">API Activation Strategy</div>
+  <div class="sec-sub">Option B — Pay $95/month immediately · Regulate searches · Build treasury simultaneously</div>
+  <p class="p">The protocol has chosen a proactive API activation strategy rather than waiting for treasury yield to fully self-fund the ATTOM subscription. Real property data is available from day one of launch. The treasury absorbs the $95/month ATTOM cost directly while yield is insufficient to cover it — a period modeled at 9 months at $20,000/day swap volume. The difference in treasury size at month 9 between paying immediately versus waiting is less than $1,000.</p>
+  <p class="p">During months 1 through 9, daily search capacity is regulated automatically by the Daily Search Governor (§3.9) — searches are throttled to what the remaining yield budget can sustain after ATTOM costs are deducted. As the treasury grows month over month, the daily search limit rises automatically. At month 9, yield fully covers ATTOM and all search throttling is lifted permanently.</p>
+  <div class="fbox">
+    <div class="fbox-title">API Activation Timeline — $20,000/day Volume</div>
+    <div class="fl"><strong>Month 1:</strong> Real data live · ~14 regulated searches/day · Treasury $9,515</div>
+    <div class="fl"><strong>Month 3:</strong> ~26 searches/day · Treasury $18,576</div>
+    <div class="fl"><strong>Month 6:</strong> ~46 searches/day · Treasury $32,240</div>
+    <div class="fl"><strong>Month 9:</strong> ~65 searches/day · Treasury $45,130 · ✓ Yield fully covers ATTOM</div>
+    <div class="fl"><strong>Month 12:</strong> ~84 searches/day · Treasury $58,681 · No throttling · Full free access</div>
+    <div class="fl"><strong>Total ATTOM paid (months 1-9):</strong> $2,280 — difference vs waiting: &lt;$1,000 in treasury</div>
+    <div class="fl"><strong>Advantage:</strong> 8 extra months of real institutional data vs waiting for yield</div>
+  </div>
+</div>
+
+<!-- ══════════════ §3-8 SUSTAINABILITY MODEL ══════════════ -->
+<div class="sec" id="s3-8">
+  <div class="badge"><div class="badge-n">§ 3.8</div><div class="badge-c">Public Access Model</div></div>
+  <div class="sec-title">Treasury Sustainability Model</div>
+  <div class="sec-sub">cbETH yield funds searches · Principal grows permanently · Both compound together</div>
+  <p class="p">The protocol's free search capacity is funded entirely by yield — never by treasury principal. The treasury deploys to cbETH at approximately 3.5% APY. The operational portion of that yield (75%) covers API costs. The remaining yield (25%) reinjects into the liquidity pool. The principal itself is never touched for API costs — it compounds indefinitely from swap fee income.</p>
+  <p class="p">As the treasury grows from L.A.T.E. swap fee income, two things happen simultaneously: the yield bucket grows — funding more free searches per day; and the principal grows — ensuring the yield bucket continues to grow. These two effects compound together. A treasury of $45,000 funds 65 searches per day. A treasury of $228,571 funds 247 searches per day and fully covers the insurance withdrawal API tier from yield alone.</p>
+  <div class="fbox">
+    <div class="fbox-title">Sustainability Parameters</div>
+    <div class="fl"><strong>Blended staking APY:</strong> ~3.0% (cbETH 20% / wstETH 40% / rETH 40%)</div>
+    <div class="fl"><strong>Yield allocation:</strong> 25% → LP reinvestment · 75% → API operations</div>
+    <div class="fl"><strong>API cost per search:</strong> ~$0.05 (ATTOM + insurance data blend)</div>
+    <div class="fl"><strong>ATTOM self-funded (yield only):</strong> Treasury must reach $43,428</div>
+    <div class="fl"><strong>Insurance feed self-funded:</strong> Treasury must reach $228,571</div>
+    <div class="fl"><strong>Full institutional self-funded:</strong> Treasury must reach $1,142,857</div>
+    <div class="fl"><strong>Principal drain:</strong> Never — yield funds all API costs autonomously</div>
+    <div class="fl"><strong>Own validator milestone:</strong> When treasury holds 32+ ETH → governance vote to run own Ethereum validator · eliminates 10% staking provider cut · full yield retained by protocol</div>
+    <div class="fl"><strong>LP projection model:</strong> github.com/jonb89201-svg/Possessio · lp_projection.py</div>
+    <div class="fl"><strong>Sustainability model:</strong> github.com/jonb89201-svg/Possessio · treasury_model.py</div>
+  </div>
+</div>
+
+<!-- ══════════════ §3-9 SEARCH GOVERNOR ══════════════ -->
+<div class="sec" id="s3-9">
+  <div class="badge"><div class="badge-n">§ 3.9</div><div class="badge-c">Public Access Model</div></div>
+  <div class="sec-title">Daily Search Governor</div>
+  <div class="sec-sub">Autonomous daily search limit · Yield-based · Resets midnight UTC · Never touches principal</div>
+  <p class="p">The Daily Search Governor is a smart contract function that calculates the maximum number of free searches available each day based on the treasury's current yield budget. It operates autonomously — no human sets the daily limit. The math does. Every day at midnight UTC the governor resets and recalculates based on the current treasury balance and cbETH yield rate.</p>
+  <div class="fbox">
+    <div class="fbox-title">Governor Logic</div>
+    <div class="fl"><strong>Step 1:</strong> Calculate daily yield — treasury × 3.5% APY ÷ 365</div>
+    <div class="fl"><strong>Step 2:</strong> Deduct API cost allocation — ($95/month ÷ 30 = $3.17/day)</div>
+    <div class="fl"><strong>Step 3:</strong> Remaining yield ÷ $0.05 per search = daily free search limit</div>
+    <div class="fl"><strong>Step 4:</strong> Counter decrements with each search · Resets midnight UTC</div>
+    <div class="fl"><strong>Fail-safe:</strong> When daily yield is exhausted → 10 $PITI stake required per search</div>
+    <div class="fl"><strong>Principal protection:</strong> Treasury principal is never accessed for API costs under any condition</div>
+  </div>
+  <p class="p">The fail-safe mechanism ensures the protocol never goes into debt. When the daily yield bucket is exhausted, the index switches to a 10 $PITI stake requirement per search. That stake goes to the treasury — replenishing the yield bucket and restoring free access the following day. The protocol is self-correcting at every level.</p>
+</div>
+
+<!-- ══════════════ §4-5 HUMANITY GATE ══════════════ -->
+<div class="sec" id="s4-5">
+  <div class="badge"><div class="badge-n">§ 4.5</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Human Verification System</div>
+  <div class="sec-sub">Drag-to-vault · Mouse jitter detection · Mobile touch support · No CAPTCHA required</div>
+  <p class="p">The POSSESSIO Humanity Gate is a lightweight human verification layer that protects the treasury from automated exploitation without burdening legitimate users. No CAPTCHA. No account. No wallet connection. Users drag the $PITI coin icon into the Treasury Vault — a gesture that requires natural human hand movement and cannot be replicated by linear automated scripts.</p>
+  <div class="fbox">
+    <div class="fbox-title">Verification Mechanics</div>
+    <div class="fl"><strong>Method:</strong> Drag-and-drop gesture — $PITI coin to Treasury Vault</div>
+    <div class="fl"><strong>Detection:</strong> Mouse path curvature analysis — minimum jitter threshold of 15 variance units</div>
+    <div class="fl"><strong>Mobile:</strong> Touch event tracking — same curvature analysis on touchmove events</div>
+    <div class="fl"><strong>Linear movement:</strong> Flagged as potential bot — user prompted to retry</div>
+    <div class="fl"><strong>Pass condition:</strong> Natural curvature confirmed → dashboard access granted</div>
+    <div class="fl"><strong>User cost:</strong> Zero — no token required, no wallet needed</div>
+  </div>
+</div>
+
+<!-- ══════════════ §4-6 BOT DETECTION ══════════════ -->
+<div class="sec" id="s4-6">
+  <div class="badge"><div class="badge-n">§ 4.6</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Bot Detection &amp; Penalties</div>
+  <div class="sec-sub">Double-blind honeypot · 10 $PITI slash · On-chain blacklist · Treasury funded by bot penalties</div>
+  <p class="p">The protocol employs a double-blind honeypot architecture — two independent traps, neither visible to legitimate users. Bots that interact with either trap are detected, blacklisted on-chain, and assessed an immediate treasury penalty. Every bot attack attempt funds the protocol it attempted to exploit.</p>
+  <div class="fbox">
+    <div class="fbox-title">Honeypot Architecture</div>
+    <div class="fl"><strong>Trap 1 — Vault hidden field:</strong> An invisible input field adjacent to the vault. Bots auto-fill it on page load. Any value in this field triggers immediate detection and blacklist.</div>
+    <div class="fl"><strong>Trap 2 — Fake search bar:</strong> A CSS-hidden search bar prompting bots to stake 10 $PITI to unlock search access. Bots execute the stake transaction. Funds are captured to the treasury. Wallet is blacklisted.</div>
+    <div class="fl"><strong>Double-blind:</strong> Neither trap is detectable by the other. Bots cannot determine which trap triggered the blacklist.</div>
+    <div class="fl"><strong>Penalty:</strong> 10 $PITI slash — sent directly to treasury Safe</div>
+    <div class="fl"><strong>Blacklist:</strong> On-chain — wallet address recorded in PITI.sol blacklist mapping</div>
+    <div class="fl"><strong>Revenue:</strong> Every bot detection generates treasury income autonomously</div>
+  </div>
+</div>
+
+<!-- ══════════════ §4-7 APPEALS ══════════════ -->
+<div class="sec" id="s4-7">
+  <div class="badge"><div class="badge-n">§ 4.7</div><div class="badge-c">Security &amp; Fail-Safe</div></div>
+  <div class="sec-title">Appeals &amp; Governance Pardon</div>
+  <div class="sec-sub">$1 PITI per appeal · 24-hour vote · 3-of-5 signers · 60% threshold · Unlimited appeals</div>
+  <p class="p">Blacklisted wallets may submit a governance pardon appeal. The appeal system is intentionally designed to be accessible but non-trivial — it costs real value to appeal, discouraging frivolous or automated appeal attempts while remaining accessible to any human who was genuinely flagged in error.</p>
+  <div class="fbox">
+    <div class="fbox-title">Appeal Types — Two Tiers</div>
+    <div class="fl"><strong>Bot/Blacklist Appeal:</strong> Cost $1.00 USD in $PITI · Submit anytime · 24-hour vote window · 3-of-5 signers · 60% threshold · Unlimited attempts</div>
+    <div class="fl"><strong>Agent Unconfirmed Appeal:</strong> Cost $0.50 USD in $PITI · 90-day submission window (after 180-day escrow) · 24-hour vote window · 3-of-5 signers · 60% threshold · Unlimited attempts</div>
+    <div class="fl"><strong>All appeal fees:</strong> Non-refundable regardless of outcome · Flow directly to treasury</div>
+    <div class="fl"><strong>Granted:</strong> Wallet removed from blacklist / stake released + reward paid</div>
+    <div class="fl"><strong>Denied:</strong> Status unchanged · $PITI retained by treasury · May appeal again</div>
+  </div>
+  <p class="p">The lower cost for agent appeals ($0.50 vs $1.00) reflects the difference in intent. Bots attempting to circumvent security measures face a higher economic barrier. Agents acting in good faith with data that was never officially confirmed by DOI face a lower barrier — the protocol respects the agent's contribution and the carrier's failure to file does not automatically penalize accurate ground-truth submissions.</p>
+</div>
+
+<!-- ══════════════ §2-6 PROTOCOL SOVEREIGNTY ══════════════ -->
+<div class="sec" id="s2-6">
+  <div class="badge"><div class="badge-n">§ 2.6</div><div class="badge-c">Protocol Sovereignty</div></div>
+  <div class="sec-title">Protocol Sovereignty Roadmap</div>
+  <div class="sec-sub">Renting infrastructure today · Buying it tomorrow · Five phases to full sovereignty</div>
+  <p class="p">POSSESSIO launches on Base — the most institutionally backed and regulated Ethereum L2 available. This is a deliberate starting point, not a permanent destination. The protocol is designed to become progressively more sovereign as it becomes progressively more valuable. Each phase reduces dependency on third-party infrastructure and increases protocol ownership of the stack it runs on.</p>
+  <div class="rmap">
+    <div class="ri">
+      <div class="rd">Phase 1 — Launch on Base (Now)</div>
+      <ul class="rl">
+        <li>Build on Base network — Coinbase L2, most regulated and institutional</li>
+        <li>Use existing infrastructure: Aerodrome DEX, Safe multi-sig, Cloudflare Workers</li>
+        <li>Diversified staking: cbETH / wstETH / rETH — no single provider dependency</li>
+        <li>DAI emergency reserve — decentralized stablecoin, not Circle/Coinbase</li>
+        <li>Move fast. Prove the concept. Build the community.</li>
+      </ul>
+    </div>
+    <div class="ri">
+      <div class="rd">Phase 2 — Establish (Year 1-2) · Reduce Dependencies</div>
+      <ul class="rl">
+        <li>Replace CDP SDK with direct Aerodrome Router swap — no Coinbase SDK</li>
+        <li>Reduce cbETH exposure as wstETH/rETH liquidity on Base deepens</li>
+        <li>Backend running on Cloudflare Workers — no centralized server dependency</li>
+        <li>API company incorporated as Delaware C-Corp — separate USD revenue stream</li>
+        <li>Technical co-founder onboarded — full L.A.T.E. contract deployed</li>
+      </ul>
+    </div>
+    <div class="ri">
+      <div class="rd">Phase 3 — Own Validators (Trigger: 32+ ETH in treasury)</div>
+      <ul class="rl">
+        <li>Treasury governance vote to run first POSSESSIO Ethereum validator</li>
+        <li>32 ETH minimum required per validator (~$64,000 at $2,000/ETH)</li>
+        <li>Direct staking eliminates intermediary cut: cbETH/wstETH/rETH each take ~10-14%</li>
+        <li>Full 100% of staking yield retained by protocol</li>
+        <li>At $500K treasury: own validators yield $16,500/year vs $15,000 through intermediaries</li>
+        <li>Difference grows with treasury size — significant at scale</li>
+      </ul>
+    </div>
+    <div class="ri">
+      <div class="rd">Phase 4 — Appchain / L3 on Base (Trigger: $PITI market cap &gt; $10M + governance vote)</div>
+      <ul class="rl">
+        <li>POSSESSIO deploys dedicated L3 built on OP Stack — same foundation as Base</li>
+        <li>Protocol controls its own sequencer</li>
+        <li>$PITI used as gas token on the appchain</li>
+        <li>Every property search, agent submission, and API query burns $PITI</li>
+        <li>Deflationary pressure on token supply scales with protocol usage</li>
+        <li>Transaction fees captured by protocol — not shared with Base beyond minimal security costs</li>
+      </ul>
+    </div>
+    <div class="ri">
+      <div class="rd">Phase 5 — Infrastructure Layer (Trigger: API company &gt; $1M annual revenue)</div>
+      <ul class="rl">
+        <li>POSSESSIO becomes the data layer that other protocols build on</li>
+        <li>API company is the institutional standard for property insurance intelligence</li>
+        <li>$PITI is the currency of property intelligence on-chain</li>
+        <li>The Bloomberg Terminal comparison is no longer an aspiration — it is a description</li>
+        <li>Other AI real estate platforms query POSSESSIO before every transaction</li>
+        <li>Protocol sovereignty is complete — no critical dependency on any single external entity</li>
+      </ul>
+    </div>
+  </div>
+  <div class="fbox">
+    <div class="fbox-title">The Sovereign Treasury Principle</div>
+    <div class="fl"><strong>Today:</strong> We rent infrastructure (Base, Aerodrome, staking providers) to prove the concept</div>
+    <div class="fl"><strong>Tomorrow:</strong> We buy infrastructure (own validators, own chain) when the concept is proven</div>
+    <div class="fl"><strong>The goal:</strong> A protocol where no single external entity — not Coinbase, not Lido, not any government — can unilaterally shut down the public service or seize the treasury</div>
+    <div class="fl"><strong>The path:</strong> Each phase reduces one dependency. Each dependency reduced increases protocol resilience. Sovereignty is not a launch feature — it is an earned property of a mature protocol.</div>
+  </div>
+</div>
+
+<div class="sec" id="s6-1">
+  <div class="badge"><div class="badge-n">§ 6.1</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">Developer Next Steps</div>
+  <div class="sec-sub">The complete build sequence for the Possessio protocol on Base</div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-n">1</div>
+      <div>
+        <div class="step-title">Clone the Prototype Frontend</div>
+        <div class="step-txt">Use the existing Netlify structure for the frontend. The prototype index provides the full UI layer — property cards, DEED Score display, True PITI calculator, DEED Estimate vs. Zestimate panel, Agent Portal, and the insurance status system. Clone and adapt for production deployment. All frontend logic is contained in a single-file architecture.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">2</div>
+      <div>
+        <div class="step-title">Build the L.A.T.E. Smart Contract</div>
+        <div class="step-txt">Build the Liquidity and Treasury Engine using the <code>OpenZeppelin</code> library on Base. Required components: (a) immutable 25% LP injection function; (b) 75% Safe multi-sig routing; (c) on-chain event emission for every fee-split; (d) on-chain event emission for every fee-split; (e) Emergency Circuit Breaker; (f) 48-hour Timelock. Security audit required before mainnet deployment.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">3</div>
+      <div>
+        <div class="step-title">Secure Institutional API Subscriptions</div>
+        <div class="step-txt">Secure subscriptions for: insurance carrier withdrawal feeds (real-time, all 50 states); county-level insurance rate data; FAIR Plan enrollment statistics (state-level); FEMA flood zone integration; climate risk data layer. These subscriptions are funded by the L.A.T.E. treasury. API costs should be modeled against expected fee volume to ensure the treasury self-funds within the first operational quarter.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">4</div>
+      <div>
+        <div class="step-title">Deploy Safe Multi-Sig</div>
+        <div class="step-txt">Configure a <code>Safe (Gnosis)</code> multi-sig on Base with a 3-of-5 signing threshold. Document all five signer addresses publicly. Configure the 48-hour timelock module. Publish the Safe address in the System Logic Reference (§6.3) and hard-code it as the treasury destination in the L.A.T.E. contract.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">5</div>
+      <div>
+        <div class="step-title">Build Farcaster Frame v2 Integration</div>
+        <div class="step-txt">Implement the <code>Farcaster Frame v2</code> interface. Frame must support: True PITI query by address; DEED Score lookup; carrier withdrawal alert by ZIP; L.A.T.E. treasury state (balance, yield position, recent fee-splits from on-chain events). All Frame data must be sourced directly from on-chain state or the institutional API layer — no centralized intermediary.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-n">6</div>
+      <div>
+        <div class="step-title">Security Audit &amp; Testnet Verification</div>
+        <div class="step-txt">Full third-party security audit of the L.A.T.E. contract before Base mainnet deployment. Testnet verification of: the 25% immutability (attempt admin redirect — must fail); the 48-hour timelock (attempt bypass — must fail); the Emergency Circuit Breaker (trigger and verify existing fund safety); multi-sig threshold (attempt single-signer disbursement — must fail). Audit report to be published publicly.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec" id="s6-2">
+  <div class="badge"><div class="badge-n">§ 6.2</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">Legal Safeguard Language</div>
+  <div class="sec-sub">Required disclosures — to be included in the index footer and all protocol documentation</div>
+  <div class="rows">
+    <div class="row"><div class="row-tag">Informational<br>Purposes Only</div><div class="row-txt">POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. All content provided by the Possessio index is for informational purposes only and does not constitute insurance advice, a real estate recommendation, or a guarantee of any property value or insurance availability.</div></div>
+    <div class="row"><div class="row-tag">Non-Discretionary<br>Protocol</div><div class="row-txt">Funding and yield deployment within the L.A.T.E. smart contract are handled by self-executing code, not human management. No person or entity exercises discretionary control over the 25% liquidity injection function, the 75% treasury yield deployment, or the yield split back into the LP. All outbound treasury disbursements require 3-of-5 Safe signers.</div></div>
+    <div class="row"><div class="row-tag">No Investment<br>Advice</div><div class="row-txt">Nothing in the Possessio index, whitepaper, Farcaster Frame, or any associated protocol communication constitutes investment advice. $PITI token holders assume full responsibility for their own financial decisions. Past protocol performance does not guarantee future results.</div></div>
+    <div class="row"><div class="row-tag">Data Accuracy</div><div class="row-txt">While Possessio sources data from institutional-grade API providers and on-chain agent verification, no warranty is made as to the completeness, accuracy, or timeliness of any data displayed. Users should verify critical insurance and PITI information independently with licensed professionals before making financial commitments.</div></div>
+  </div>
+</div>
+
+<div class="sec" id="s6-3">
+  <div class="badge"><div class="badge-n">§ 6.3</div><div class="badge-c">Build Specification</div></div>
+  <div class="sec-title">System Logic Reference</div>
+  <div class="sec-sub">The canonical parameter record — all values are open source and auditable on-chain</div>
+
+  <div class="slog">
+    <div class="slog-hd">L.A.T.E. Contract — Canonical Parameters</div>
+    <div class="slog-row"><div class="sk">Protocol Name</div><div class="sv2">POSSESSIO</div></div>
+    <div class="slog-row"><div class="sk">Native Token</div><div class="sv2">$PITI</div></div>
+    <div class="slog-row"><div class="sk">$PITI Contract Address (Base)</div><div class="sv2">Pending V2 Deployment</div></div>
+    <div class="slog-row"><div class="sk">Deployment Network</div><div class="sv2">Base (Ethereum L2)</div></div>
+    <div class="slog-row"><div class="sk">Smart Contract Library</div><div class="sv2">OpenZeppelin</div></div>
+    <div class="slog-row"><div class="sk">Treasury Governance</div><div class="sv2">Safe (Gnosis) — 3-of-5 · Deployed on Base</div></div>
+    <div class="slog-row"><div class="sk">POSSESSIO Treasury Address (Base)</div><div class="sv2">0x188bE439C141c9138Bd3075f6A376F73c07F1903</div></div>
+    <div class="slog-row"><div class="sk">GitHub — Open Source Contract</div><div class="sv2"><a href="https://github.com/jonb89201-svg/Possessio" target="_blank" style="color:var(--navy)">github.com/jonb89201-svg/Possessio</a></div></div>
+    <div class="slog-row"><div class="sk">L.A.T.E. Split Contract (Base)</div><div class="sv2">0xB20B4f672CF7b27e03991346Fd324d24C1d3e572</div></div>
+    <div class="slog-row"><div class="sk">Liquidity Allocation (Immutable)</div><div class="sv2">25% of ETH swap fees → Base LP (ETH / $PITI)</div></div>
+    <div class="slog-row"><div class="sk">Treasury Allocation</div><div class="sv2">75% of ETH swap fees → Safe Multi-Sig</div></div>
+    
+    <div class="slog-row"><div class="sk">Total $PITI Supply</div><div class="sv2">1,000,000,000 (1 billion)</div></div>
+    <div class="slog-row"><div class="sk">LP Allocation</div><div class="sv2">400,000,000 (40%) — Aerodrome · protocol-owned · immutable</div></div>
+    <div class="slog-row"><div class="sk">Public Float</div><div class="sv2">500,000,000 (50%) — no presale · no VC · open market</div></div>
+    <div class="slog-row"><div class="sk">Founder Allocation</div><div class="sv2">50,000,000 (5%) — 2-year vesting</div></div>
+    <div class="slog-row"><div class="sk">CTO Allocation</div><div class="sv2">30,000,000 (3%) — 4-year vesting · 1-year cliff · QSBS eligible</div></div>
+    <div class="slog-row"><div class="sk">Protocol Reserve</div><div class="sv2">20,000,000 (2%) — 48-hour timelock · 3-of-5 governance · emergency only</div></div>
+    <div class="slog-row"><div class="sk">Staking Allocation</div><div class="sv2">20% cbETH · 40% wstETH · 40% rETH · max 50% per provider</div></div>
+    <div class="slog-row"><div class="sk">DAI Emergency Reserve</div><div class="sv2">$2,280 · 24 months API coverage · 20% of 75% treasury until filled</div></div>
+    <div class="slog-row"><div class="sk">Blended Staking APY</div><div class="sv2">~3.0% · 25% of yield → LP · 75% of yield → operations</div></div>
+    <div class="slog-row"><div class="sk">cbETH Emergency Exit</div><div class="sv2">Chainlink feed &gt;3% depeg → auto-pause deposits · full exit = 3-of-5 vote</div></div>
+    <div class="slog-row"><div class="sk">Own Validator Trigger</div><div class="sv2">32+ ETH in treasury → governance vote → direct staking · no intermediary cut</div></div>
+    <div class="slog-row"><div class="sk">Engine State Emission</div><div class="sv2">On-chain event per fee-split → Farcaster Frame v2</div></div>
+    <div class="slog-row"><div class="sk">Timelock — Parameter Changes</div><div class="sv2">48-hour delay · all protocol parameter changes</div></div>
+    <div class="slog-row"><div class="sk">Emergency Pause</div><div class="sv2">Circuit breaker · halts fee-routing only · does not touch deployed funds</div></div>
+    <div class="slog-row"><div class="sk">Properties Indexed</div><div class="sv2">158 million · listed and off-market · all 50 U.S. states</div></div>
+    <div class="slog-row"><div class="sk">DEED Score Range</div><div class="sv2">0–100 composite · 4 sub-scores × 25 pts each</div></div>
+    <div class="slog-row"><div class="sk">Index Access Cost</div><div class="sv2">Standard access free · funded by staking yield · 10 $PITI when yield exhausted</div></div>
+    <div class="slog-row"><div class="sk">Agent Reward Base</div><div class="sv2">$1 USD in $PITI · first report paid immediately · $5 USD maximum</div></div>
+    <div class="slog-row"><div class="sk">Agent TWAP Window</div><div class="sv2">4-hour launch · scales to 1-hour at $1M LP · 15% circuit breaker</div></div>
+    <div class="slog-row"><div class="sk">Agent SBT Standard</div><div class="sv2">Custom ERC-721 · _beforeTokenTransfer override · non-transferable · governance recovery</div></div>
+    <div class="slog-row"><div class="sk">Agent Layer Activation</div><div class="sv2">Month 9 · DAI reserve full · LP &gt; $50K · all three conditions simultaneously</div></div>
+    <div class="slog-row"><div class="sk">Frontend Infrastructure</div><div class="sv2">GitHub Pages · single-file architecture · possessio.io</div></div>
+    <div class="slog-row"><div class="sk">Backend Infrastructure</div><div class="sv2">Cloudflare Workers · ATTOM API · Supabase + PostGIS (agent layer)</div></div>
+    <div class="slog-row"><div class="sk">API Company</div><div class="sv2">Delaware C-Corp · USD revenue only · separate from $PITI token economy</div></div>
+    <div class="slog-row"><div class="sk">Social Integration</div><div class="sv2">Farcaster Frame v2 · Twitter · Instagram</div></div>
+    <div class="slog-row"><div class="sk">Legal Classification</div><div class="sv2">Data aggregator · not a licensed insurance producer · not a financial advisor</div></div>
+    <div class="slog-row"><div class="sk">LP Projection Model</div><div class="sv2">github.com/jonb89201-svg/Possessio · lp_projection.py</div></div>
+    <div class="slog-row"><div class="sk">Treasury Model</div><div class="sv2">github.com/jonb89201-svg/Possessio · treasury_model.py</div></div>
+  </div>
+
+  <div class="slog" style="margin-top:16px">
+    <div class="slog-hd">Humanity Gate — Security Parameters</div>
+    <div class="slog-row"><div class="sk">Verification Method</div><div class="sv2">Drag-to-vault gesture · mouse jitter curvature analysis</div></div>
+    <div class="slog-row"><div class="sk">Jitter Threshold</div><div class="sv2">15 variance units minimum · mobile touch supported</div></div>
+    <div class="slog-row"><div class="sk">Honeypot 1</div><div class="sv2">Hidden vault field · auto-filled by bots → blacklist</div></div>
+    <div class="slog-row"><div class="sk">Honeypot 2</div><div class="sv2">Fake search bar · 10 $PITI stake trap → blacklist + treasury</div></div>
+    <div class="slog-row"><div class="sk">Bot Penalty</div><div class="sv2">10 $PITI slash → treasury Safe</div></div>
+    <div class="slog-row"><div class="sk">Appeal Cost</div><div class="sv2">$1 USD in $PITI · non-refundable · unlimited attempts</div></div>
+    <div class="slog-row"><div class="sk">Appeal Voting Window</div><div class="sv2">24 hours per appeal</div></div>
+    <div class="slog-row"><div class="sk">Appeal Threshold</div><div class="sv2">3 of 5 Safe signers · 60% approval to grant pardon</div></div>
+  </div>
+
+  <div class="slog" style="margin-top:16px">
+    <div class="slog-hd">API Activation &amp; Sustainability</div>
+    <div class="slog-row"><div class="sk">API Strategy</div><div class="sv2">Option B — pay $95/month immediately · regulate searches · build treasury</div></div>
+    <div class="slog-row"><div class="sk">ATTOM Entry Tier</div><div class="sv2">$95/month · yield self-funded when treasury reaches $43,428</div></div>
+    <div class="slog-row"><div class="sk">Insurance Feed Tier</div><div class="sv2">$500/month · yield self-funded when treasury reaches $228,571</div></div>
+    <div class="slog-row"><div class="sk">Full Institutional Tier</div><div class="sv2">$2,500/month · yield self-funded when treasury reaches $1,142,857</div></div>
+    <div class="slog-row"><div class="sk">Blended ETH APY</div><div class="sv2">~3.0% blended · 20% cbETH / 40% wstETH / 40% rETH</div></div>
+    <div class="slog-row"><div class="sk">Daily Search Governor</div><div class="sv2">Autonomous · yield-based · resets midnight UTC · fail-safe to 10 $PITI</div></div>
+    <div class="slog-row"><div class="sk">Principal Protection</div><div class="sv2">Treasury principal never accessed for API costs under any condition</div></div>
+    <div class="slog-row"><div class="sk">Sustainability Model</div><div class="sv2">github.com/jonb89201-svg/Possessio · treasury_model.py</div></div>
+  </div>
+
+  <p class="p" style="margin-top:24px">All smart contract addresses, Safe multi-sig signer list, treasury balance, and LP position are published publicly following mainnet deployment. The audit report is published prior to deployment. The L.A.T.E. contract's bytecode is publicly verifiable on Base — the 25% immutability of the liquidity injection function requires no trusted intermediary to confirm. Read the code.</p>
+</div>
+
+<!-- ══ FOOTER ══ -->
+<div class="orn">✦ ✦ ✦</div>
+<hr class="frule">
+<div class="ft">POSSESSIO PROTOCOL · WHITE PAPER &amp; MASTER TECHNICAL SPECIFICATION · $PITI TOKEN · ALL RIGHTS RESERVED</div>
+<div class="ft" style="margin-top:6px">This document is for informational purposes only. POSSESSIO is a data aggregator, not a licensed insurance producer or financial advisor. $PITI is a utility token. Nothing herein constitutes investment advice. See §5.3 and §6.2 for full legal safeguard language.</div>
+
+</div>
+</body>
+</html>
