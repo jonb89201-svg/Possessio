@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "forge-std/console.sol";
+import "forge-std/StdStorage.sol";
 import "../src/PLATE.sol";
 
 // ============================================================
@@ -197,6 +198,7 @@ contract MockChainlink {
 // ============================================================
 
 contract PLATETest is Test {
+    using stdStorage for StdStorage;
 
     PLATE         plate;
     MockPool      pool;
@@ -430,12 +432,22 @@ contract PLATETest is Test {
         plate.swapFeesToETH();
     }
 
-    function test_Swap_BootstrapRevertsIfRefPriceZero() public {
-        plate.setReferencePrice(0);
-        // Make pool revert so TWAP unavailable too
+    function test_Swap_BootstrapRevertsIfRefPriceZeroAndTWAPFails() public {
+        // Cannot set referencePrice to 0 via setReferencePrice (has require > 0)
+        // Cannot set to 0 in constructor (also has require > 0)
+        // Use vm.store to directly zero the storage slot
+        // Slot verified via: forge inspect PLATE storage
+        stdstore
+            .target(address(plate))
+            .sig("referencePrice()")
+            .checked_write(uint256(0));
+
+        // Make pool observe() revert so TWAP also unavailable
         pool.setRevert(true);
+
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 25 hours);
+
         vm.expectRevert("PLATE: TWAP unavailable — set reference price");
         plate.swapFeesToETH();
     }
@@ -471,6 +483,18 @@ contract PLATETest is Test {
 
         vm.expectEmit(false, false, false, false); // just check it emits
         emit PLATE.FeesSwappedToETH(0, 0, false, 0);
+        plate.swapFeesToETH();
+    }
+
+    function test_Swap_RevertsWhenRouterReturnsBelowMinOut() public {
+        // Router returns almost nothing — should fail minOut check
+        router.setEthReturn(1); // 1 wei — way below any reasonable minOut
+
+        _seedFees(plate.minSwapBatch() + 1);
+        vm.warp(block.timestamp + 25 hours);
+
+        // Should revert because ethReturn < minOut
+        vm.expectRevert();
         plate.swapFeesToETH();
     }
 
@@ -560,17 +584,12 @@ contract PLATETest is Test {
     function test_DAISwap_ReserveIncrementsByActualDAI() public {
         uint256 daiAmount = 500 * 1e18;
         router.setDAIReturn(daiAmount);
-        dai.mint(address(dai), daiAmount); // Pre-fund DAI contract
 
-        // Manually mint DAI to plate to simulate router behavior
-        // (our mock router doesn't actually transfer DAI)
-        // We test daiReserve tracking via routeETH
+        // Pre-mint DAI to plate to simulate what real Aerodrome router does
+        // Mock router does not actually transfer DAI — we do it manually
         uint256 reserveBefore = plate.daiReserve();
         vm.deal(address(plate), 1 ether);
-
-        // Pre-mint DAI to plate (simulates what real router does)
         dai.mint(address(plate), daiAmount);
-        router.setDAIReturn(daiAmount);
 
         plate.routeETH();
 
@@ -614,10 +633,19 @@ contract PLATETest is Test {
     }
 
     function test_DAISwap_FullEventEmittedWhenTargetCrossed() public {
-        // This would require filling the reserve to target
-        // Simplified: verify DAIReserveFull emits at target
-        // Full test requires many routeETH calls or direct manipulation
-        assertTrue(true, "Covered by reserve fill integration test");
+        // Fill reserve to just below target
+        uint256 target = plate.DAI_TARGET();
+        uint256 nearTarget = target - 100 * 1e18;
+        _fillDAIReserve(nearTarget);
+
+        // Route ETH with enough DAI return to cross target
+        router.setDAIReturn(200 * 1e18); // More than remaining gap
+        dai.mint(address(plate), 200 * 1e18);
+        vm.deal(address(plate), 1 ether);
+
+        vm.expectEmit(false, false, false, false);
+        emit PLATE.DAIReserveFull(block.timestamp);
+        plate.routeETH();
     }
 
     // ============================================================
@@ -667,14 +695,22 @@ contract PLATETest is Test {
 
     function test_Staking_AllocationsSum100Percent() public {
         // When cbETH not paused: 20 + 40 + 40 = 100
-        // When paused: 0 + 60 + 40 = 100 (60 = wstETH+cbETH allocation)
-        // Verified by checking no ETH is stranded in contract after routeETH
+        // wstETH stub sends its allocation to Treasury
+        // Verified by: contract balance near zero AND treasury received wstETH portion
         vm.deal(address(plate), 10 ether);
         router.setDAIReturn(1);
+
+        uint256 treasuryBefore = TREASURY.balance;
         plate.routeETH();
 
-        // Contract ETH balance should be near zero after routing
+        // Contract ETH balance near zero — all allocated
         assertLt(address(plate).balance, 0.01 ether, "ETH should be fully allocated");
+
+        // Treasury received wstETH allocation (stub behavior)
+        // wstETH = 40% of (75% - DAI portion) of total
+        // Just verify treasury gained ETH — exact amount varies with DAI routing
+        assertGt(TREASURY.balance, treasuryBefore,
+            "Treasury must receive wstETH allocation (stub path)");
     }
 
     function test_Staking_EventEmitted() public {
@@ -728,7 +764,7 @@ contract PLATETest is Test {
         plate.harvestYield();
     }
 
-    function test_Harvest_RevertsWhenLSTEqualsP rincipal() public {
+    function test_Harvest_RevertsWhenLSTEqualsPrincipal() public {
         vm.deal(address(plate), 10 ether);
         plate.routeETH();
         // No yield added — lstBal == principal → no harvest
@@ -760,11 +796,16 @@ contract PLATETest is Test {
         cbETH.addYield(address(plate), 2 ether);
         rETH.addYield(address(plate), 2 ether);
 
+        // Ensure PLATE contract has tokens for _addLiquidity pairing
+        // Otherwise addLiquidityETH falls back to sending ETH to Treasury
+        // which changes the split assertion
+        plate.transfer(address(plate), 10_000_000 * 1e18);
+
         uint256 treasuryBefore = TREASURY.balance;
         plate.harvestYield();
 
         uint256 toTreasury = TREASURY.balance - treasuryBefore;
-        // 75% of 4 ETH = 3 ETH
+        // 75% of 4 ETH yield = 3 ETH to treasury
         assertApproxEqRel(toTreasury, 3 ether, 0.01e18, "75% split incorrect");
     }
 
@@ -1116,20 +1157,15 @@ contract PLATETest is Test {
     }
 
     function _fillDAIReserve(uint256 amount) internal {
-        // Directly mint DAI to plate and set daiReserve via routeETH
-        // Simplified: mint DAI to plate, then simulate reserve tracking
+        // Mint actual DAI tokens to PLATE contract
         dai.mint(address(plate), amount);
-        // Force daiReserve update by calling routeETH with small ETH
-        // In production this fills naturally — for tests we use a workaround
-        // Direct state manipulation not possible without cheatcode
-        // Use vm.store to set daiReserve slot directly
-        // Storage slot for daiReserve — found via forge inspect
-        // Slot 14 (approximate — verify with forge inspect PLATE storage)
-        vm.store(
-            address(plate),
-            bytes32(uint256(14)),
-            bytes32(amount)
-        );
+        // Set daiReserve state variable using stdstore
+        // Safer than hardcoded slot — won't break on layout changes
+        // Verify slot: forge inspect PLATE storage
+        stdstore
+            .target(address(plate))
+            .sig("daiReserve()")
+            .checked_write(amount);
     }
 
     receive() external payable {}
