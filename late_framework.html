@@ -730,10 +730,10 @@ body::before {
   <p class="p">For a L.A.T.E. treasury, 32 ETH represents more than a yield optimization. It is the point at which the organization begins to own the infrastructure it depends on — rather than renting it from third parties. This is the first milestone of protocol sovereignty.</p>
 
   <div class="fbox">
-    <div class="fbox-title">The 32 ETH Economics</div>
-    <div class="fl"><strong>32 ETH via liquid staking (intermediary):</strong> ~3.0% APY after provider fee</div>
-    <div class="fl"><strong>32 ETH via own validator (direct):</strong> ~3.3% APY — full yield retained</div>
-    <div class="fl"><strong>Difference per year at $2,000/ETH:</strong> ~$210 annually — grows with treasury size</div>
+    <div class="fbox-title">The 32 ETH Economics — Illustrative</div>
+    <div class="fl"><strong>32 ETH via liquid staking (intermediary):</strong> ~3.0% APY after provider fee (illustrative — actual rates vary)</div>
+    <div class="fl"><strong>32 ETH via own validator (direct):</strong> ~3.3% APY — full yield retained (illustrative — actual rates vary)</div>
+    <div class="fl"><strong>USD value at current ETH price:</strong> Varies with market — check current ETH price before modeling. These figures are structural comparisons, not predictions.</div>
     <div class="fl"><strong>More importantly:</strong> No intermediary can freeze, slash, or alter the validator's behavior. The organization controls its own yield infrastructure permanently.</div>
   </div>
 </div>
@@ -841,6 +841,8 @@ body::before {
 
   <p class="p">POSSESSIO does not define the L.A.T.E. framework. It demonstrates it. Any organization may implement L.A.T.E. for any purpose without reference to property intelligence, insurance data, or any other aspect of the POSSESSIO use case.</p>
 
+  <p class="p">A second implementation — the <strong>Sovereign Labor and Treasury Protocol (SLTP)</strong> — was independently derived from this framework and is currently in development. It applies L.A.T.E. to decentralized labor markets: the same fee routing, the same SBT reputation system, the same 32 ETH sovereignty threshold, and the same 4-hour TWAP for value-stable payments — applied to worker compensation instead of property intelligence. Two different problems. One framework. That is what "any purpose" means in practice.</p>
+
   <div class="fbox">
     <div class="fbox-title">POSSESSIO Reference — Live on Base</div>
     <div class="fl"><strong>Token:</strong> $PITI · 1,000,000,000 total supply</div>
@@ -849,7 +851,7 @@ body::before {
     <div class="fl"><strong>Split contract:</strong> 0xB20B4f672CF7b27e03991346Fd324d24C1d3e572</div>
     <div class="fl"><strong>Yield:</strong> Diversified ETH staking — 20% cbETH / 40% wstETH / 40% rETH</div>
     <div class="fl"><strong>Emergency reserve:</strong> DAI · $2,280 target · 24 months API coverage</div>
-    <div class="fl"><strong>32 ETH target:</strong> Estimated month 12-18 at $20,000/day volume</div>
+    <div class="fl"><strong>32 ETH target:</strong> Reached when cumulative treasury fees compound to threshold — timeline depends entirely on realized swap volume. No specific volume figure is guaranteed.</div>
     <div class="fl"><strong>Open source:</strong> github.com/jonb89201-svg/Possessio</div>
     <div class="fl"><strong>Purpose:</strong> Free public property intelligence — the organization chose this · L.A.T.E. did not</div>
   </div>
@@ -895,7 +897,7 @@ body::before {
     <div class="slog-row"><div class="sk">Smart Contract Library</div><div class="sv2">OpenZeppelin — recommended</div></div>
   </div>
 
-  <p class="p" style="margin-top:24px">The canonical parameters above represent the validated configuration from the POSSESSIO reference implementation. Implementing organizations may deviate from non-immutable parameters — fee percentage, yield target, governance threshold — but should document deviations and understand the implications. The immutable parameters (25% LP allocation, hardcoded routing) are essential to the framework's trustless properties and should not be altered.</p>
+  <p class="p" style="margin-top:24px">The canonical parameters above represent the initial configuration from the POSSESSIO reference implementation — deployed March 2026. These parameters are the starting point, not a validated end state. Implementing organizations should treat them as a tested baseline, not a guarantee. Implementing organizations may deviate from non-immutable parameters — fee percentage, yield target, governance threshold — but should document deviations and understand the implications. The immutable parameters (25% LP allocation, hardcoded routing) are essential to the framework's trustless properties and should not be altered.</p>
 </div>
 
 <!-- ATTRIBUTION -->
@@ -904,11 +906,9 @@ body::before {
   <div class="sec-title">Origin &amp; <span>Credit</span></div>
   <div class="sec-sub">Who built this · When · Why it matters</div>
 
-  <p class="p">The L.A.T.E. Framework was conceived, designed, and first implemented by the <strong>POSSESSIO Protocol</strong> in March 2026. It emerged from a real problem: building a free public property intelligence index that could fund itself permanently without advertising, venture capital, or subscription fees.</p>
+  <p class="p">The L.A.T.E. Framework was first implemented by the <strong>POSSESSIO Protocol</strong> in March 2026 — a free public property intelligence index on Base. The architecture was derived from first principles: what does a self-sustaining organization actually need, and how do you encode that in an immutable smart contract?</p>
 
-  <p class="p">The framework was built from a phone, between grocery store shifts, by someone caring for a family member — with no formal education in finance, computer science, or cryptography. The architecture was derived from first principles: what does a self-sustaining organization actually need, and how do you encode that in an immutable smart contract?</p>
-
-  <p class="p">The answer was L.A.T.E. POSSESSIO is the proof that it works.</p>
+  <p class="p">POSSESSIO is the first live demonstration of the framework. Whether it works at scale is what the market will determine.</p>
 
   <div class="fbox">
     <div class="fbox-title">Creation Record — Permanent &amp; Verifiable</div>
@@ -918,10 +918,6 @@ body::before {
     <div class="fl"><strong>GitHub (timestamped):</strong> github.com/jonb89201-svg/Possessio</div>
     <div class="fl"><strong>Live treasury:</strong> 0x188bE439C141c9138Bd3075f6A376F73c07F1903</div>
     <div class="fl"><strong>Live split contract:</strong> 0xB20B4f672CF7b27e03991346Fd324d24C1d3e572</div>
-  </div>
-
-  <div class="pq">
-    <div class="pq-t">Build on it. Fork it. Improve it. Apply it to any problem worth solving. That is the entire point. Just remember where it came from.</div>
   </div>
 
   <div class="rows">
