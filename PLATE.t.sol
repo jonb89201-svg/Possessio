@@ -87,7 +87,7 @@ contract MockRouter {
         require(!swapShouldRevert, "MockRouter: swap reverts");
         require(daiReturn >= amountOutMin, "MockRouter: DAI slippage");
         swapETHForTokensCallCount++;
-        // Caller must mint DAI separately — this just records the call
+        // Caller must mint DAI separately - this just records the call
         amounts    = new uint[](2);
         amounts[0] = msg.value;
         amounts[1] = daiReturn;
@@ -228,7 +228,7 @@ contract PLATETest is Test {
         clDAI   = new MockChainlink(int256(500_000));    // ~$0.005 ETH per DAI
 
         plate = new PLATE(
-            address(0x9999), // temp LP — replaced below
+            address(0x9999), // temp LP - replaced below
             address(router),
             address(cbETH),
             address(0),      // wstETH stub
@@ -321,7 +321,7 @@ contract PLATETest is Test {
     function test_Fee_CollectedOnSwapFromPair() public {
         uint256 amount = 10_000 * 1e18;
 
-        // Seed pool from TREASURY (excluded address) — no fee collected here
+        // Seed pool from TREASURY (excluded address) - no fee collected here
         plate.transfer(TREASURY, amount);
         vm.prank(TREASURY);
         plate.transfer(address(pool), amount);
@@ -331,7 +331,7 @@ contract PLATETest is Test {
         // Now snapshot pendingFees before the swap-from-pair
         uint256 feesBefore = plate.pendingFees();
 
-        // Simulate swap FROM pool (pool → user) — pool is DEX pair → fee applies
+        // Simulate swap FROM pool (pool → user) - pool is DEX pair → fee applies
         vm.prank(address(pool));
         plate.transfer(USER, amount / 2);
 
@@ -355,7 +355,7 @@ contract PLATETest is Test {
     }
 
     function test_Fee_ZeroForExcludedAddress() public {
-        // Transfer from excluded (treasury) — no fee
+        // Transfer from excluded (treasury) - no fee
         plate.transfer(TREASURY, 1_000 * 1e18);
         vm.prank(TREASURY);
         plate.transfer(address(pool), 1_000 * 1e18);
@@ -413,7 +413,7 @@ contract PLATETest is Test {
     }
 
     function test_Swap_RevertsBelowMinBatch() public {
-        // Only 1 PLATE in fees — way below minSwapBatch
+        // Only 1 PLATE in fees - way below minSwapBatch
         plate.transfer(address(pool), 1 * 1e18);
         vm.warp(block.timestamp + 25 hours);
         vm.expectRevert("PLATE: Below minimum batch size");
@@ -442,7 +442,7 @@ contract PLATETest is Test {
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 25 hours);
         router.setEthReturn(1 ether);
-        // Should not revert — reference price is set
+        // Should not revert - reference price is set
         plate.swapFeesToETH();
     }
 
@@ -467,12 +467,12 @@ contract PLATETest is Test {
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 25 hours);
 
-        vm.expectRevert("PLATE: TWAP unavailable — set reference price");
+        vm.expectRevert("PLATE: TWAP unavailable - set reference price");
         plate.swapFeesToETH();
     }
 
     function test_Swap_FreshDeployIsInBootstrapWithRefPriceSet() public {
-        // Deploy a FRESH plate instance — still within 24hr bootstrap window
+        // Deploy a FRESH plate instance - still within 24hr bootstrap window
         PLATE freshPlate = new PLATE(
             address(pool), address(router), address(cbETH),
             address(0), address(rETH), address(dai),
@@ -482,7 +482,7 @@ contract PLATETest is Test {
         // Verify bootstrap is active on fresh deploy
         assertTrue(freshPlate.isBootstrapPeriod(), "Fresh deploy must be in bootstrap");
 
-        // Seed fees via direct transfer to pool (pool is DEX pair? No — pool not
+        // Seed fees via direct transfer to pool (pool is DEX pair? No - pool not
         // registered on freshPlate yet. Transfer through registered pair)
         // For this test: just verify isBootstrapPeriod() = true and referencePrice set
         assertEq(freshPlate.referencePrice(), INIT_REF, "Reference price must be set");
@@ -512,12 +512,12 @@ contract PLATETest is Test {
     }
 
     function test_Swap_EventEmittedWithCorrectTWAPFlag() public {
-        // Bootstrap — usedTWAP should be false
+        // Bootstrap - usedTWAP should be false
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 25 hours);
         router.setEthReturn(1 ether);
 
-        // expectEmit(false,false,false,false) — only checks event was emitted,
+        // expectEmit(false,false,false,false) - only checks event was emitted,
         // not the data values. Acceptable here since exact ETH amounts depend
         // on mock router behavior tested separately in slippage tests.
         vm.expectEmit(false, false, false, false);
@@ -526,8 +526,8 @@ contract PLATETest is Test {
     }
 
     function test_Swap_RevertsWhenRouterReturnsBelowMinOut() public {
-        // Router returns almost nothing — should fail minOut check
-        router.setEthReturn(1); // 1 wei — way below any reasonable minOut
+        // Router returns almost nothing - should fail minOut check
+        router.setEthReturn(1); // 1 wei - way below any reasonable minOut
 
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 25 hours);
@@ -609,7 +609,7 @@ contract PLATETest is Test {
         router.setDAIReturn(10 * 1e18);
         dai.mint(address(plate), 10 * 1e18);
 
-        // Only checking event was emitted — exact allocation amounts
+        // Only checking event was emitted - exact allocation amounts
         // verified in test_RouteETH_AllocationsComputedUpfront
         vm.expectEmit(false, false, false, false);
         emit PLATE.ETHRouted(0, 0, 0, 0, 0);
@@ -625,7 +625,7 @@ contract PLATETest is Test {
         router.setDAIReturn(daiAmount);
 
         // Pre-mint DAI to plate to simulate what real Aerodrome router does
-        // Mock router does not actually transfer DAI — we do it manually
+        // Mock router does not actually transfer DAI - we do it manually
         uint256 reserveBefore = plate.daiReserve();
         vm.deal(address(plate), 1 ether);
         dai.mint(address(plate), daiAmount);
@@ -650,7 +650,7 @@ contract PLATETest is Test {
         vm.deal(address(plate), 1 ether);
         dai.mint(address(plate), 1 * 1e18);
         router.setDAIReturn(1); // minDAI = 1 fallback
-        plate.routeETH(); // Should not revert — falls back to minDAI = 1
+        plate.routeETH(); // Should not revert - falls back to minDAI = 1
     }
 
     function test_DAISwap_FallsBackWhenFeedReverts() public {
@@ -785,12 +785,12 @@ contract PLATETest is Test {
         assertApproxEqAbs(rETH.balanceOf(address(plate)), expRETH, 0.01 ether,
             "rETH allocation incorrect");
 
-        // wstETH stub sent to Treasury — verify exact amount
+        // wstETH stub sent to Treasury - verify exact amount
         uint256 treasuryGained = TREASURY.balance - treasuryBefore;
         assertApproxEqAbs(treasuryGained, expWstETH, 0.01 ether,
             "Treasury must receive wstETH stub allocation (exactly 40% of staking)");
 
-        // Contract ETH balance near zero — all ETH accounted for
+        // Contract ETH balance near zero - all ETH accounted for
         assertLt(address(plate).balance, 0.01 ether,
             "No ETH should be stranded in contract");
     }
@@ -849,7 +849,7 @@ contract PLATETest is Test {
     function test_Harvest_RevertsWhenLSTEqualsPrincipal() public {
         vm.deal(address(plate), 10 ether);
         plate.routeETH();
-        // No yield added — lstBal == principal → no harvest
+        // No yield added - lstBal == principal → no harvest
         vm.expectRevert("PLATE: No yield to harvest");
         plate.harvestYield();
     }
@@ -1002,7 +1002,7 @@ contract PLATETest is Test {
         );
         // Should not revert or pause
         vm.deal(address(plateNoFeed), 1 ether);
-        // routeETH requires onlyOwner — call from this contract (owner)
+        // routeETH requires onlyOwner - call from this contract (owner)
         plateNoFeed.routeETH();
         assertFalse(plateNoFeed.cbETHPaused(), "Zero feed should be skipped");
     }
@@ -1178,7 +1178,7 @@ contract PLATETest is Test {
     //                      FUZZ TESTS
     // ============================================================
 
-    /// @dev Fee is always exactly 2% — no rounding exploits
+    /// @dev Fee is always exactly 2% - no rounding exploits
     function testFuzz_FeeMath(uint256 amount) public {
         vm.assume(amount > 0 && amount <= plate.totalSupply() / 2);
 
@@ -1190,7 +1190,7 @@ contract PLATETest is Test {
         assertEq(collected, expected, "Fee must always be exactly 2%");
     }
 
-    /// @dev Fee conservation — fee + net always equals original amount
+    /// @dev Fee conservation - fee + net always equals original amount
     function testFuzz_FeeConservation(uint256 amount) public {
         vm.assume(amount > 0 && amount <= plate.totalSupply() / 2);
 
@@ -1218,7 +1218,7 @@ contract PLATETest is Test {
     }
 
     /// @dev Principal never exceeds actual LST balance after routing
-    /// Catches miscalculations — principal should always be <= actual position
+    /// Catches miscalculations - principal should always be <= actual position
     function testFuzz_PrincipalNeverExceedsLSTBalance(uint256 ethAmt) public {
         ethAmt = bound(ethAmt, 0.01 ether, 100 ether);
         vm.deal(address(plate), ethAmt);
@@ -1249,7 +1249,7 @@ contract PLATETest is Test {
         // Mint actual DAI tokens to PLATE contract
         dai.mint(address(plate), amount);
         // Set daiReserve state variable using stdstore
-        // Safer than hardcoded slot — won't break on layout changes
+        // Safer than hardcoded slot - won't break on layout changes
         // Verify slot: forge inspect PLATE storage
         stdstore
             .target(address(plate))
