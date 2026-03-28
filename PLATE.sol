@@ -9,11 +9,11 @@ pragma solidity ^0.8.20;
  * ██║     ███████╗██║  ██║   ██║   ███████╗
  * ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝
  *
- * PLATE — Protocol Liquidity Asset Treasury Engine
+ * PLATE - Protocol Liquidity Asset Treasury Engine
  * The flywheel for POSSESSIO's treasury needs
- * Part of the L.A.T.E. Framework — MIT License
+ * Part of the L.A.T.E. Framework - MIT License
  *
- * Fee pipeline — ETH denominated throughout:
+ * Fee pipeline - ETH denominated throughout:
  *
  *   Step 1: _update() collects 2% PLATE fee → pendingFees
  *   Step 2: swapFeesToETH() swaps PLATE → ETH via Aerodrome
@@ -30,7 +30,7 @@ pragma solidity ^0.8.20;
  *   Yield: harvestYield() collects cbETH + rETH yield
  *          · Measures actual ETH received via balance delta
  *          · 25% raw ETH → LP · 75% → Treasury Safe
- *          · wstETH: stub — requires Lido withdrawal queue
+ *          · wstETH: stub - requires Lido withdrawal queue
  *
  * Treasury: 0x188bE439C141c9138Bd3075f6A376F73c07F1903
  * GitHub:   github.com/jonb89201-svg/Possessio
@@ -43,7 +43,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 // ============================================================
 //                    TICKMATH LIBRARY
-//                 (Uniswap V3 — MIT License)
+//                 (Uniswap V3 - MIT License)
 // Converts between tick integers and sqrt price ratios.
 // price = 1.0001^tick
 // Every 6931 ticks = price doubles
@@ -195,17 +195,17 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     /// @notice 24-hour delay between fee swaps (MEV protection)
     uint256 public constant SWAP_DELAY    = 24 hours;
 
-    /// @notice Bootstrap period — 24 hours after pool creation
+    /// @notice Bootstrap period - 24 hours after pool creation
     /// During bootstrap use manual reference price
     /// After bootstrap use TickMath TWAP
     uint256 public constant BOOTSTRAP     = 24 hours;
 
-    /// @notice TWAP window — 1 hour
+    /// @notice TWAP window - 1 hour
     /// Short at launch (pool needs observation history)
     /// Governance can increase as pool matures
     uint32  public twapWindow             = 3600; // 1 hour
 
-    /// @notice Slippage tolerance — 10%
+    /// @notice Slippage tolerance - 10%
     uint256 public constant SLIPPAGE      = 90; // 90% of expected
 
     // --------------------------------------------------------
@@ -227,7 +227,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     /// Base feed: 0x591e79239a7d679378eC703cCb00F843d559C66
     address public chainlinkDAIFeed;
 
-    /// @notice When the LP pool was created — starts BOOTSTRAP period
+    /// @notice When the LP pool was created - starts BOOTSTRAP period
     uint256 public poolCreatedAt;
 
     /// @notice Manual reference price
@@ -237,7 +237,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     /// Owner updates when market price shifts significantly
     uint256 public referencePrice;
 
-    /// @notice DAI reserve — tracks actual DAI held by contract
+    /// @notice DAI reserve - tracks actual DAI held by contract
     uint256 public daiReserve;
 
     /// @notice Accumulated PLATE fees pending swap to ETH
@@ -249,10 +249,10 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     /// @notice Last time fees were swapped to ETH
     uint256 public lastSwapTime;
 
-    /// @notice Principal staked in cbETH — for yield-only harvesting
+    /// @notice Principal staked in cbETH - for yield-only harvesting
     uint256 public cbETHPrincipal;
 
-    /// @notice Principal staked in rETH — for yield-only harvesting
+    /// @notice Principal staked in rETH - for yield-only harvesting
     uint256 public rETHPrincipal;
 
     bool public cbETHPaused = false;
@@ -316,7 +316,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         address _dai,
         address _chainlink,
         address _chainlinkDAI,   // Chainlink DAI/ETH feed on Base
-        uint256 _referencePrice  // Initial manual price — PLATE per ETH
+        uint256 _referencePrice  // Initial manual price - PLATE per ETH
     )
         ERC20("PLATE", "PLATE")
         ERC20Permit("PLATE")
@@ -343,21 +343,21 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         isExcluded[TREASURY]      = true;
 
         // Approve router to spend PLATE for fee swaps
-        // Sized to total supply — reduced at swap time in production
+        // Sized to total supply - reduced at swap time in production
         _approve(address(this), _router, type(uint256).max);
 
         _mint(msg.sender, TOTAL_SUPPLY);
     }
 
     // --------------------------------------------------------
-    //           STEP 1 — FEE COLLECTION
+    //           STEP 1 - FEE COLLECTION
     // --------------------------------------------------------
 
     /**
-     * @notice Intercepts DEX swaps — collects 2% PLATE fee
-     * @dev Fees accumulated in pendingFees — not swapped here
+     * @notice Intercepts DEX swaps - collects 2% PLATE fee
+     * @dev Fees accumulated in pendingFees - not swapped here
      *      Keeps _update() gas efficient
-     *      Circuit breaker pauses routing only — transfers always work
+     *      Circuit breaker pauses routing only - transfers always work
      */
     function _update(
         address from,
@@ -382,20 +382,20 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     }
 
     // --------------------------------------------------------
-    //         STEP 2 — SWAP PLATE FEES → ETH
+    //         STEP 2 - SWAP PLATE FEES → ETH
     // --------------------------------------------------------
 
     /**
      * @notice Swaps accumulated PLATE fees to ETH
      *
-     * MEV Protection — two layers:
+     * MEV Protection - two layers:
      *
-     * Layer 1 — Time delay:
+     * Layer 1 - Time delay:
      *   Maximum one swap per 24 hours
      *   Attacker cannot force swap timing
      *   Fees batch to meaningful size
      *
-     * Layer 2 — Price protection:
+     * Layer 2 - Price protection:
      *   Bootstrap period (first 24hrs after pool created):
      *     Uses manual referencePrice set by owner
      *     Pool needs observation history before TWAP works
@@ -430,7 +430,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         } else {
             // Post-bootstrap: use TickMath TWAP
             uint256 twapPrice = _getTWAPPrice();
-            require(twapPrice > 0, "PLATE: TWAP unavailable — set reference price");
+            require(twapPrice > 0, "PLATE: TWAP unavailable - set reference price");
             // twapPrice units: ETH per 1 PLATE (Q96 fixed point format)
             // To convert: actualPrice = twapPrice / 2^96
             // expectedETH = toSwap (PLATE) * twapPrice / Q96
@@ -464,13 +464,13 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     }
 
     // --------------------------------------------------------
-    //            STEP 3 — ROUTE ETH TO PILLARS
+    //            STEP 3 - ROUTE ETH TO PILLARS
     // --------------------------------------------------------
 
     /**
      * @notice Routes ETH to LP, DAI reserve, and staking
      * @dev Called after swapFeesToETH()
-     *      Anyone can call — all funds go to protocol destinations
+     *      Anyone can call - all funds go to protocol destinations
      */
     function routeETH() external nonReentrant notPaused onlyOwner {
         uint256 total = address(this).balance;
@@ -478,7 +478,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
         // Compute ALL allocations upfront from total
         // before any external calls to prevent accounting drift
-        // addLiquidityETH() may refund some ETH — ignore it
+        // addLiquidityETH() may refund some ETH - ignore it
         // all calculations based on original total only
         uint256 toLp      = (total * LP_PCT) / 100;
         uint256 toT       = total - toLp;
@@ -502,12 +502,12 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     }
 
     // --------------------------------------------------------
-    //              LP INJECTION — addLiquidityETH
+    //              LP INJECTION - addLiquidityETH
     // --------------------------------------------------------
 
     /**
      * @notice Adds ETH + PLATE to Aerodrome pool via router
-     * @dev Uses addLiquidityETH() — not raw ETH to pool address
+     * @dev Uses addLiquidityETH() - not raw ETH to pool address
      *      Raw ETH sent to an AMM pool is unrecoverable
      *      Router handles the pairing correctly
      *      LP tokens sent to TREASURY Safe
@@ -531,7 +531,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             plateForLP = (ethAmt * referencePrice) / 1e18;
         }
 
-        // If we have PLATE to pair — use addLiquidityETH
+        // If we have PLATE to pair - use addLiquidityETH
         if (plateForLP > 0 && balanceOf(address(this)) >= plateForLP) {
             // 10% tolerance on both amounts
             uint256 minPlate = (plateForLP * 90) / 100;
@@ -547,13 +547,13 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             ) returns (uint256 amtToken, uint256 amtETH, uint256 liquidity) {
                 emit LiquidityAdded(amtETH, amtToken, liquidity, block.timestamp);
             } catch {
-                // If addLiquidity fails — send ETH to Treasury Safe
+                // If addLiquidity fails - send ETH to Treasury Safe
                 // Better than losing it
                 (bool ok,) = TREASURY.call{value: ethAmt}("");
                 require(ok, "PLATE: LP and Treasury fallback failed");
             }
         } else {
-            // No PLATE available to pair — send ETH to Treasury
+            // No PLATE available to pair - send ETH to Treasury
             (bool ok,) = TREASURY.call{value: ethAmt}("");
             require(ok, "PLATE: ETH to Treasury failed");
         }
@@ -607,7 +607,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             emit DAIReserveFunded(daiReceived, daiReserve, block.timestamp);
             if (daiReserve >= DAI_TARGET) emit DAIReserveFull(block.timestamp);
         } catch {
-            // Swap failed — send ETH to Treasury instead
+            // Swap failed - send ETH to Treasury instead
             (bool ok,) = TREASURY.call{value: ethAmt}("");
             require(ok, "PLATE: DAI swap and Treasury fallback failed");
         }
@@ -631,7 +631,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
     /**
      * @notice Deploys ETH to diversified staking (20/40/40)
-     * @dev Internal — called only from routeETH()
+     * @dev Internal - called only from routeETH()
      *      cbETH depeg monitored via Chainlink
      *      Tracks principal for yield-only harvesting
      */
@@ -645,7 +645,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             (ethAmt * WSTETH_PCT) / 100;
         uint256 rAmt   = ethAmt - cbAmt - wstAmt;
 
-        // Deploy cbETH — track principal
+        // Deploy cbETH - track principal
         if (cbAmt > 0 && cbETHAddress != address(0)) {
             IcbETH(cbETHAddress).deposit{value: cbAmt}();
             cbETHPrincipal += cbAmt;
@@ -662,7 +662,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             require(ok, "PLATE: wstETH fallback failed");
         }
 
-        // Deploy rETH — track principal
+        // Deploy rETH - track principal
         if (rAmt > 0 && rETHAddress != address(0)) {
             IrETH(rETHAddress).deposit{value: rAmt}();
             rETHPrincipal += rAmt;
@@ -676,7 +676,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     // --------------------------------------------------------
 
     /**
-     * @notice Harvests staking yield — principal stays staked
+     * @notice Harvests staking yield - principal stays staked
      * @dev Only withdraws ABOVE tracked principal
      *      Measures actual ETH received via balance delta
      *      25% raw ETH → LP · 75% → Treasury Safe
@@ -688,7 +688,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         // Principal tracking assumption:
         // cbETHPrincipal tracks original ETH deposited
         // As staking accrues yield lstBal grows above principal
-        // harvestYield() withdraws the excess — correct behavior
+        // harvestYield() withdraws the excess - correct behavior
         // Edge case: if lstBal drops BELOW cbETHPrincipal
         // (due to slashing or severe depeg) this skips silently
         // cbETHPrincipal will overestimate the actual position
@@ -727,7 +727,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         require(total > 0, "PLATE: No yield to harvest");
 
         // 25% → LP via addLiquidityETH() · 75% → Treasury Safe
-        // Uses _addLiquidity() — same as routeETH()
+        // Uses _addLiquidity() - same as routeETH()
         // Raw ETH sent to AMM pool address is unrecoverable
         uint256 toLp = (total * YIELD_TO_LP) / 100;
         uint256 toT  = total - toLp;
@@ -750,7 +750,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
      *      Converts to price using TickMath.getSqrtRatioAtTick()
      *      Returns price as ETH-per-PLATE in Q96 fixed point format
      *      (i.e. how much ETH you get for 1 PLATE, scaled by 2^96)
-     *      referencePrice is PLATE-per-ETH — opposite direction
+     *      referencePrice is PLATE-per-ETH - opposite direction
      *      Both are used correctly in swapFeesToETH()
      *      Returns 0 if pool has insufficient observation history
      */
@@ -781,7 +781,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             // If PLATE is token1 (not token0) price is inverted
             try IAerodromePool(liquidityPool).token0() returns (address t0) {
                 if (t0 != address(this)) {
-                    // PLATE is token1 — invert the price
+                    // PLATE is token1 - invert the price
                     priceX96 = priceX96 > 0 ? (Q96 * Q96) / priceX96 : 0;
                 }
             } catch {
@@ -880,7 +880,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
     /**
      * @notice Updates TWAP window as pool matures
-     * @dev Start short (1hr) — increase as observation history builds
+     * @dev Start short (1hr) - increase as observation history builds
      *      Longer window = more manipulation resistant
      */
     function setTWAPWindow(uint32 _window) external onlyOwner {

@@ -929,7 +929,7 @@ contract PLATETest is Test {
         uint256 payAmount     = 95 * 1e18;
 
         vm.prank(TREASURY);
-        plate.payAPI(address(0xAPI), payAmount);
+        plate.payAPI(address(0xAA11), payAmount);
 
         assertEq(plate.daiReserve(), reserveBefore - payAmount, "Reserve must decrement");
     }
@@ -937,7 +937,7 @@ contract PLATETest is Test {
     function test_PayAPI_TransfersDAI() public {
         _fillDAIReserve(1000 * 1e18);
 
-        address recipient = address(0xAPI);
+        address recipient = address(0xAA11);
         uint256 payAmount = 95 * 1e18;
 
         vm.prank(TREASURY);
@@ -950,10 +950,10 @@ contract PLATETest is Test {
         _fillDAIReserve(1000 * 1e18);
 
         vm.expectEmit(true, false, false, true);
-        emit PLATE.DAIPaid(address(0xAPI), 95 * 1e18, block.timestamp);
+        emit PLATE.DAIPaid(address(0xAA11), 95 * 1e18, block.timestamp);
 
         vm.prank(TREASURY);
-        plate.payAPI(address(0xAPI), 95 * 1e18);
+        plate.payAPI(address(0xAA11), 95 * 1e18);
     }
 
     function test_IsDaiReserveFull_CorrectState() public {
@@ -1164,7 +1164,7 @@ contract PLATETest is Test {
 
     function test_TL_LPUpdateSetsIsDEXPairCorrectly() public {
         address oldLP = address(pool);
-        address newLP = address(0xNEWLP);
+        address newLP = address(0xEE55);
 
         bytes32 id = plate.queueLPUpdate(newLP);
         vm.warp(block.timestamp + 48 hours + 1);
