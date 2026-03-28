@@ -249,6 +249,13 @@ contract PLATETest is Test {
 
         // Fund router with ETH for swap returns
         vm.deal(address(router), 100 ether);
+        // Set default ethReturn high enough to pass TWAP minOut checks
+        // referencePrice = 1M PLATE per ETH
+        // minSwapBatch = 1000 PLATE
+        // expectedETH = 1000 / 1_000_000 = 0.001 ETH
+        // minOut = 0.001 * 90% = 0.0009 ETH
+        // Set to 1 ETH to be safe for all swap tests
+        router.setEthReturn(1 ether);
         vm.deal(address(cbETH),  100 ether);
         vm.deal(address(rETH),   100 ether);
         vm.deal(USER,            10 ether);
@@ -581,6 +588,9 @@ contract PLATETest is Test {
         router.setDAIReturn(100 * 1e18);
         dai.mint(address(plate), 100 * 1e18);
 
+        // Seed PLATE to contract so addLiquidityETH has tokens to pair
+        plate.transfer(address(plate), 10_000_000 * 1e18);
+
         uint256 total     = 10 ether;
         uint256 toLp      = total * 25 / 100;       // 2.5 ETH
         uint256 toT       = total - toLp;            // 7.5 ETH
@@ -678,12 +688,13 @@ contract PLATETest is Test {
         _fillDAIReserve(nearTarget);
 
         // Route ETH with enough DAI return to cross target
-        router.setDAIReturn(200 * 1e18); // More than remaining gap
-        dai.mint(address(plate), 200 * 1e18);
+        // Router will mint 200 DAI to plate via updated mock
+        router.setDAIReturn(200 * 1e18);
         vm.deal(address(plate), 1 ether);
 
+        // Just check event is emitted — don't check exact timestamp
         vm.expectEmit(false, false, false, false);
-        emit PLATE.DAIReserveFull(block.timestamp);
+        emit PLATE.DAIReserveFull(0);
         plate.routeETH();
     }
 
@@ -856,11 +867,16 @@ contract PLATETest is Test {
 
     function test_Harvest_ETHDeltaMeasuredCorrectly() public {
         vm.deal(address(plate), 10 ether);
+        // Seed PLATE to contract so _addLiquidity can pair correctly
+        plate.transfer(address(plate), 5_000_000 * 1e18);
         plate.routeETH();
 
         // Add exact known yield
         uint256 yieldAmt = 1 ether;
         cbETH.addYield(address(plate), yieldAmt);
+
+        // Seed more PLATE for harvest LP injection
+        plate.transfer(address(plate), 5_000_000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
         plate.harvestYield();
@@ -986,8 +1002,15 @@ contract PLATETest is Test {
     }
 
     function test_Depeg_StaleFeedSkipped() public {
+        // Set feed stale — updatedAt = block.timestamp - 7200 (2 hours ago)
+        // PLATE checks: if (block.timestamp - updatedAt > 3600) return
+        // 7200 > 3600 so feed should be skipped
         clCbETH.setStale();
-        clCbETH.setAnswer(int256(90_000_000)); // Very low but stale
+        clCbETH.setAnswer(int256(90_000_000)); // Very low price but stale
+
+        // Warp forward to ensure staleness check triggers
+        vm.warp(block.timestamp + 1);
+
         vm.deal(address(plate), 1 ether);
         plate.routeETH();
         assertFalse(plate.cbETHPaused(), "Stale feed must be ignored");
