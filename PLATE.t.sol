@@ -471,7 +471,7 @@ contract PLATETest is Test {
         plate.swapFeesToETH();
     }
 
-    function test_Swap_BootstrapUsesRefPriceOnFreshDeploy() public {
+    function test_Swap_FreshDeployIsInBootstrapWithRefPriceSet() public {
         // Deploy a FRESH plate instance — still within 24hr bootstrap window
         PLATE freshPlate = new PLATE(
             address(pool), address(router), address(cbETH),
@@ -768,6 +768,11 @@ contract PLATETest is Test {
         uint256 expCbETH  = toStaking * 20 / 100;       // 1.2 ETH
         uint256 expWstETH = toStaking * 40 / 100;       // 2.4 ETH (→ Treasury stub)
         uint256 expRETH   = toStaking - expCbETH - expWstETH; // 2.4 ETH
+
+        // Seed PLATE to contract so _addLiquidity has tokens to pair
+        // Without this the contract has no PLATE → LP fallback sends ETH to Treasury
+        // which inflates treasuryGained above expWstETH and fails the assertion
+        plate.transfer(address(plate), 5_000_000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
         plate.routeETH();
