@@ -223,13 +223,9 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     address public chainlinkFeed;
 
     /// @notice Chainlink DAI/ETH price feed on Base
-    /// Used for minOut calculation in ETH → DAI swap
+    /// Used for minOut calculation in ETH -> DAI swap
     /// Base feed: 0x591e79239a7d679378eC703cCb00F843d559C66
     address public chainlinkDAIFeed;
-
-    /// @notice Configurable stablecoin target address (default: DAI)
-    /// Replaces hardcoded DAI_ADDRESS — future-proofs for regulated stable pivot
-    address public stablecoinTarget;
 
     /// @notice Max allowed spot-to-TWAP deviation in basis points (default: 10%)
     /// Protects against flash loan price manipulation during fee swaps
