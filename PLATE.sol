@@ -219,13 +219,21 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     address public cbETHAddress;
     address public wstETHAddress;
     address public rETHAddress;
-    address public daiAddress;
+    address public stablecoinTarget;
     address public chainlinkFeed;
 
     /// @notice Chainlink DAI/ETH price feed on Base
     /// Used for minOut calculation in ETH → DAI swap
     /// Base feed: 0x591e79239a7d679378eC703cCb00F843d559C66
     address public chainlinkDAIFeed;
+
+    /// @notice Configurable stablecoin target address (default: DAI)
+    /// Replaces hardcoded DAI_ADDRESS — future-proofs for regulated stable pivot
+    address public stablecoinTarget;
+
+    /// @notice Max allowed spot-to-TWAP deviation in basis points (default: 10%)
+    /// Protects against flash loan price manipulation during fee swaps
+    uint256 public maxDeviationBps = 1000;
 
     /// @notice When the LP pool was created - starts BOOTSTRAP period
     uint256 public poolCreatedAt;
@@ -327,16 +335,16 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         require(_dai          != address(0), "PLATE: Invalid DAI");
         require(_referencePrice > 0,         "PLATE: Invalid reference price");
 
-        liquidityPool   = _lp;
-        aerodromeRouter = _router;
-        cbETHAddress    = _cbETH;
-        wstETHAddress   = _wstETH;
-        rETHAddress     = _rETH;
-        daiAddress      = _dai;
-        chainlinkFeed    = _chainlink;
-        chainlinkDAIFeed = _chainlinkDAI;
-        referencePrice   = _referencePrice;
-        poolCreatedAt   = block.timestamp;
+        liquidityPool      = _lp;
+        aerodromeRouter    = _router;
+        cbETHAddress       = _cbETH;
+        wstETHAddress      = _wstETH;
+        rETHAddress        = _rETH;
+        stablecoinTarget   = _dai;
+        chainlinkFeed      = _chainlink;
+        chainlinkDAIFeed   = _chainlinkDAI;
+        referencePrice     = _referencePrice;
+        poolCreatedAt      = block.timestamp;
 
         isDEXPair[_lp]            = true;
         isExcluded[address(this)] = true;
@@ -431,12 +439,21 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             // Post-bootstrap: use TickMath TWAP
             uint256 twapPrice = _getTWAPPrice();
             require(twapPrice > 0, "PLATE: TWAP unavailable - set reference price");
-            // twapPrice units: ETH per 1 PLATE (Q96 fixed point format)
-            // To convert: actualPrice = twapPrice / 2^96
-            // expectedETH = toSwap (PLATE) * twapPrice / Q96
-            // Example: if 1 PLATE = 0.001 ETH
-            //   twapPrice = 0.001 * 2^96 ≈ 79228162514264337593543950336
-            //   expectedETH = toSwap * twapPrice / Q96
+
+            // Spot-to-TWAP deviation guard
+            // Protects against flash loan price manipulation
+            // If spot price deviates more than maxDeviationBps from TWAP, revert
+            uint256 spotPrice = _getSpotPrice();
+            if (spotPrice > 0 && twapPrice > 0) {
+                uint256 diff = spotPrice > twapPrice
+                    ? spotPrice - twapPrice
+                    : twapPrice - spotPrice;
+                require(
+                    diff <= (twapPrice * maxDeviationBps) / 10000,
+                    "PLATE: Volatility_Guard"
+                );
+            }
+
             uint256 expectedETH = (toSwap * twapPrice) / Q96;
             minOut = (expectedETH * SLIPPAGE) / 100;
         }
@@ -569,13 +586,13 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
      *      daiReserve always matches actual token balance
      */
     function _swapETHToDAI(uint256 ethAmt) internal {
-        if (ethAmt == 0 || daiAddress == address(0)) return;
+        if (ethAmt == 0 || stablecoinTarget == address(0)) return;
 
         address[] memory path = new address[](2);
         path[0] = IRouter(aerodromeRouter).WETH();
-        path[1] = daiAddress;
+        path[1] = stablecoinTarget;
 
-        uint256 daiBefore = IDAI(daiAddress).balanceOf(address(this));
+        uint256 daiBefore = IDAI(stablecoinTarget).balanceOf(address(this));
 
         // Calculate minDAI using Chainlink DAI/ETH feed
         // DAI/ETH feed returns ETH per 1 DAI (8 decimals)
@@ -602,7 +619,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
             address(this),
             block.timestamp + 300
         ) returns (uint[] memory) {
-            uint256 daiReceived = IDAI(daiAddress).balanceOf(address(this)) - daiBefore;
+            uint256 daiReceived = IDAI(stablecoinTarget).balanceOf(address(this)) - daiBefore;
             daiReserve += daiReceived;
             emit DAIReserveFunded(daiReceived, daiReserve, block.timestamp);
             if (daiReserve >= DAI_TARGET) emit DAIReserveFull(block.timestamp);
@@ -621,7 +638,7 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         require(daiReserve >= amount,    "PLATE: Insufficient DAI reserve");
         require(recipient != address(0), "PLATE: Invalid recipient");
         daiReserve -= amount;
-        IDAI(daiAddress).transfer(recipient, amount);
+        IDAI(stablecoinTarget).transfer(recipient, amount);
         emit DAIPaid(recipient, amount, block.timestamp);
     }
 
@@ -803,9 +820,40 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         return _getTWAPPrice();
     }
 
-    // --------------------------------------------------------
-    //                   cbETH DEPEG MONITOR
-    // --------------------------------------------------------
+    /**
+     * @notice Gets current spot price from pool slot0
+     * @dev Used for spot-to-TWAP deviation guard in swapFeesToETH
+     *      Returns 0 if pool unavailable or call fails
+     */
+    function _getSpotPrice() internal view returns (uint256 priceX96) {
+        if (liquidityPool == address(0)) return 0;
+        try IAerodromePool(liquidityPool).observe(new uint32[](2))
+            returns (int56[] memory tickCumulatives, uint160[] memory)
+        {
+            // Use current tick (secondsAgo = 0) for spot price
+            if (tickCumulatives.length < 2) return 0;
+            // spot = current observation (index 1, secondsAgo = 0)
+            int24 spotTick = int24(tickCumulatives[1]);
+            uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(spotTick);
+            priceX96 = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) / Q96;
+            try IAerodromePool(liquidityPool).token0() returns (address t0) {
+                if (t0 != address(this)) {
+                    priceX96 = priceX96 > 0 ? (Q96 * Q96) / priceX96 : 0;
+                }
+            } catch {
+                return 0;
+            }
+        } catch {
+            return 0;
+        }
+    }
+
+    /// @notice Public view of spot price for monitoring
+    function getSpotPrice() external view returns (uint256) {
+        return _getSpotPrice();
+    }
+
+
 
     function _checkDepeg() internal {
         if (chainlinkFeed == address(0)) return;

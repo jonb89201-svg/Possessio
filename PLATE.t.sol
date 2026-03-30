@@ -42,6 +42,7 @@ contract MockPool {
 
 contract MockRouter {
     address public _weth;
+    address public _dai;
     uint256 public ethReturn;
     uint256 public daiReturn;
     uint256 public liquidityReturn = 1000;
@@ -61,6 +62,7 @@ contract MockRouter {
     function setDAIReturn(uint256 v)       external { daiReturn         = v; }
     function setSwapRevert(bool r)         external { swapShouldRevert  = r; }
     function setLiqRevert(bool r)          external { liqShouldRevert   = r; }
+    function setDAIToken(address dai_)     external { _dai              = dai_; }
 
     function swapExactTokensForETH(
         uint amountIn,
@@ -87,7 +89,12 @@ contract MockRouter {
         require(!swapShouldRevert, "MockRouter: swap reverts");
         require(daiReturn >= amountOutMin, "MockRouter: DAI slippage");
         swapETHForTokensCallCount++;
-        // Caller must mint DAI separately - this just records the call
+        // Mint DAI directly to recipient to simulate real router behavior
+        // This ensures balanceOf(plate) increases after the swap call
+        // so _swapETHToDAI correctly calculates daiReceived
+        if (_dai != address(0) && daiReturn > 0) {
+            MockDAI(_dai).mint(to, daiReturn);
+        }
         amounts    = new uint[](2);
         amounts[0] = msg.value;
         amounts[1] = daiReturn;
@@ -262,6 +269,9 @@ contract PLATETest is Test {
         // tickNew - tickOld = avgTick * twapWindow = -138162 * 3600 = -497383200
         // With these ticks: minOut ~ 0.0009 ETH which router.setEthReturn(1 ether) satisfies
         pool.setTicks(0, int56(-497383200));
+
+        // Wire DAI token to router so swapExactETHForTokens mints DAI directly
+        router.setDAIToken(address(dai));
         vm.deal(address(cbETH),  100 ether);
         vm.deal(address(rETH),   100 ether);
         vm.deal(USER,            10 ether);
@@ -420,6 +430,12 @@ contract PLATETest is Test {
     // ============================================================
 
     function test_Swap_RevertsBeforeDelay() public {
+        // First swap to set lastSwapTime
+        _seedFees(plate.minSwapBatch() + 1);
+        vm.warp(block.timestamp + 25 hours);
+        plate.swapFeesToETH();
+
+        // Second swap immediately should revert - delay not elapsed
         _seedFees(plate.minSwapBatch() + 1);
         vm.expectRevert("PLATE: 24hr swap delay not elapsed");
         plate.swapFeesToETH();
@@ -538,12 +554,12 @@ contract PLATETest is Test {
         vm.warp(block.timestamp + 25 hours);
         assertFalse(plate.isBootstrapPeriod(), "Should be past bootstrap");
 
-        // Set pool ticks (tick=0 -> price=1.0)
-        pool.setTicks(0, 0);
+        // Keep correct ticks from setUp (already set to -497383200)
+        // These reflect 1 PLATE = 1e-6 ETH which gives minOut ~ 0.0009 ETH
+        // router.setEthReturn(1 ether) in setUp already covers this
 
         _seedFees(plate.minSwapBatch() + 1);
         vm.warp(block.timestamp + 49 hours);
-        router.setEthReturn(1 ether);
         plate.swapFeesToETH();
     }
 
@@ -672,14 +688,8 @@ contract PLATETest is Test {
         uint256 daiAmount = 500 * 1e18;
         router.setDAIReturn(daiAmount);
 
-        // Pre-mint DAI to plate BEFORE routeETH
-        // The mock router records the swap call but does not transfer DAI
-        // We mint DAI to plate first to simulate what a real router does
-        // PLATE._swapETHToDAI reads balanceOf(address(this)) after swap
-        // and increments daiReserve by the balance increase
-        // So: mint DAI to plate first, then routeETH will see the increase
-        dai.mint(address(plate), daiAmount);
-
+        // Router now mints DAI directly to plate during swapExactETHForTokens
+        // No pre-minting needed - the mock handles it correctly
         uint256 reserveBefore = plate.daiReserve();
         vm.deal(address(plate), 1 ether);
 
@@ -730,11 +740,9 @@ contract PLATETest is Test {
         uint256 nearTarget = target - 100 * 1e18;
         _fillDAIReserve(nearTarget);
 
-        // Route ETH with enough DAI return to cross target
+        // Router mints DAI directly now - no pre-minting needed
         uint256 daiReturn = 200 * 1e18;
         router.setDAIReturn(daiReturn);
-        // Pre-mint DAI to plate so balance increase is visible to _swapETHToDAI
-        dai.mint(address(plate), daiReturn);
         vm.deal(address(plate), 1 ether);
 
         // Just check event is emitted - don't check exact timestamp
@@ -816,42 +824,33 @@ contract PLATETest is Test {
         uint256 total = 10 ether;
         vm.deal(address(plate), total);
 
-        // Calculate expected staking allocations precisely
-        uint256 toLp      = total * 25 / 100;          // 2.5 ETH
-        uint256 toT       = total - toLp;               // 7.5 ETH
-        uint256 toDAI     = toT * 20 / 100;             // 1.5 ETH
-        uint256 toStaking = toT - toDAI;                // 6.0 ETH
-        uint256 expCbETH  = toStaking * 20 / 100;       // 1.2 ETH
-        uint256 expWstETH = toStaking * 40 / 100;       // 2.4 ETH (-> Treasury stub)
-        uint256 expRETH   = toStaking - expCbETH - expWstETH; // 2.4 ETH
+        uint256 toLp      = total * 25 / 100;
+        uint256 toT       = total - toLp;
+        uint256 toDAI     = toT * 20 / 100;
+        uint256 toStaking = toT - toDAI;
+        uint256 expCbETH  = toStaking * 20 / 100;
+        uint256 expWstETH = toStaking * 40 / 100;
+        uint256 expRETH   = toStaking - expCbETH - expWstETH;
 
         // Seed PLATE to contract so _addLiquidity has tokens to pair
         plate.transfer(address(plate), 5_000_000 * 1e18);
 
-        // Make DAI swap succeed so the 1.5 ETH goes to DAI not Treasury
-        // Without this, DAI swap reverts and 1.5 ETH falls back to Treasury
-        // inflating treasuryGained by 1.5 ETH beyond expWstETH
-        uint256 daiAmt = 1000 * 1e18;
-        router.setDAIReturn(daiAmt);
-        dai.mint(address(plate), daiAmt);
+        // Router mints DAI automatically now - just set the return amount
+        router.setDAIReturn(1000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
         plate.routeETH();
 
-        // cbETH received correct share
         assertApproxEqAbs(cbETH.balanceOf(address(plate)), expCbETH, 0.01 ether,
             "cbETH allocation incorrect");
 
-        // rETH received correct share
         assertApproxEqAbs(rETH.balanceOf(address(plate)), expRETH, 0.01 ether,
             "rETH allocation incorrect");
 
-        // wstETH stub sent to Treasury - verify exact amount
         uint256 treasuryGained = TREASURY.balance - treasuryBefore;
         assertApproxEqAbs(treasuryGained, expWstETH, 0.01 ether,
             "Treasury must receive wstETH stub allocation (exactly 40% of staking)");
 
-        // Contract ETH balance near zero - all ETH accounted for
         assertLt(address(plate).balance, 0.01 ether,
             "No ETH should be stranded in contract");
     }
