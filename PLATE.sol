@@ -672,12 +672,15 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         }
 
         // Deploy wstETH
-        // ⚠ PRODUCTION REQUIRED: ETH → stETH via Lido → wrap to wstETH
-        // wstAmt sits as undeployed ETH until developer completes this
-        if (wstAmt > 0 && wstETHAddress != address(0)) {
-            // Production: ILido(lidoAddress).submit{value: wstAmt}(address(0));
-            // Then: IwstETH(wstETHAddress).wrap(stETHAmount);
-            // For now: send to Treasury Safe rather than leave idle
+        // PRODUCTION REQUIRED: ETH -> stETH via Lido -> wrap to wstETH
+        // Until wstETH is deployed, send allocation to Treasury Safe
+        if (wstAmt > 0) {
+            if (wstETHAddress != address(0)) {
+                // Production path (not yet implemented):
+                // ILido(lidoAddress).submit{value: wstAmt}(address(0));
+                // IwstETH(wstETHAddress).wrap(stETHAmount);
+            }
+            // Stub: always route wstAmt to Treasury until production ready
             (bool ok,) = TREASURY.call{value: wstAmt}("");
             require(ok, "PLATE: wstETH fallback failed");
         }
