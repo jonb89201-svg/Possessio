@@ -415,12 +415,8 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         );
         require(pendingFees >= minSwapBatch, "PLATE: Below minimum batch size");
 
-        lastSwapTime = block.timestamp;
-
         uint256 toSwap = pendingFees;
         pendingFees    = 0;
-
-        // Determine price source
         bool useBootstrap = block.timestamp < poolCreatedAt + BOOTSTRAP;
         uint256 minOut;
 
@@ -438,16 +434,17 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
             // Spot-to-TWAP deviation guard
             // Protects against flash loan price manipulation
-            // If spot price deviates more than maxDeviationBps from TWAP, revert
+            // Skip if spot price unavailable (returns 0) - graceful degradation
             uint256 spotPrice = _getSpotPrice();
-            if (spotPrice > 0 && twapPrice > 0) {
+            if (spotPrice > 0 && spotPrice != type(uint256).max) {
                 uint256 diff = spotPrice > twapPrice
                     ? spotPrice - twapPrice
                     : twapPrice - spotPrice;
-                require(
-                    diff <= (twapPrice * maxDeviationBps) / 10000,
-                    "PLATE: Volatility_Guard"
-                );
+                // Only enforce if spot is meaningfully different from TWAP
+                // Guards against single-block manipulation attacks
+                if (diff > (twapPrice * maxDeviationBps) / 10000) {
+                    revert("PLATE: Volatility_Guard");
+                }
             }
 
             uint256 expectedETH = (toSwap * twapPrice) / Q96;
@@ -462,18 +459,28 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
         uint256 ethBefore = address(this).balance;
 
-        IRouter(aerodromeRouter).swapExactTokensForETH(
+        // Accounting sandwich: fees already zeroed above
+        // Restore on failure to prevent silent drift
+        try IRouter(aerodromeRouter).swapExactTokensForETH(
             toSwap,
             minOut,
             path,
             address(this),
             block.timestamp + 300
-        );
-
-        uint256 ethReceived = address(this).balance - ethBefore;
-        require(ethReceived >= minOut, "PLATE: Insufficient ETH received");
-
-        emit FeesSwappedToETH(toSwap, ethReceived, !useBootstrap, block.timestamp);
+        ) returns (uint[] memory) {
+            uint256 ethReceived = address(this).balance - ethBefore;
+            require(ethReceived >= minOut, "PLATE: Insufficient ETH received");
+            lastSwapTime = block.timestamp;
+            emit FeesSwappedToETH(toSwap, ethReceived, !useBootstrap, block.timestamp);
+        } catch (bytes memory reason) {
+            // Restore fees on failure - audit-grade accounting safety
+            pendingFees = toSwap;
+            // Bubble up the revert reason
+            if (reason.length > 0) {
+                assembly { revert(add(32, reason), mload(reason)) }
+            }
+            revert("PLATE: Swap failed");
+        }
     }
 
     // --------------------------------------------------------
@@ -817,21 +824,33 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Gets current spot price from pool slot0
-     * @dev Used for spot-to-TWAP deviation guard in swapFeesToETH
+     * @notice Gets current spot price using current pool tick
+     * @dev Uses a 1-second TWAP window to approximate spot price
      *      Returns 0 if pool unavailable or call fails
      */
     function _getSpotPrice() internal view returns (uint256 priceX96) {
         if (liquidityPool == address(0)) return 0;
-        try IAerodromePool(liquidityPool).observe(new uint32[](2))
+
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = 1; // 1 second ago
+        secondsAgos[1] = 0; // now
+
+        try IAerodromePool(liquidityPool).observe(secondsAgos)
             returns (int56[] memory tickCumulatives, uint160[] memory)
         {
-            // Use current tick (secondsAgo = 0) for spot price
             if (tickCumulatives.length < 2) return 0;
-            // spot = current observation (index 1, secondsAgo = 0)
-            int24 spotTick = int24(tickCumulatives[1]);
+
+            // Calculate tick over last 1 second = approximate spot
+            int56 tickDelta = tickCumulatives[1] - tickCumulatives[0];
+            int24 spotTick  = int24(tickDelta / int56(uint56(1)));
+
+            // If tick is out of valid range, spot data is unreliable
+            // Return 0 to skip deviation guard gracefully
+            if (spotTick > 887272 || spotTick < -887272) return 0;
+
             uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(spotTick);
             priceX96 = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96)) / Q96;
+
             try IAerodromePool(liquidityPool).token0() returns (address t0) {
                 if (t0 != address(this)) {
                     priceX96 = priceX96 > 0 ? (Q96 * Q96) / priceX96 : 0;
