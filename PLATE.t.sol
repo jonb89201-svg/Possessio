@@ -6,6 +6,11 @@ import "forge-std/console.sol";
 import "forge-std/StdStorage.sol";
 import "../src/PLATE.sol";
 
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address a) external view returns (uint256);
+}
+
 // ============================================================
 //                        MOCK CONTRACTS
 // ============================================================
@@ -43,8 +48,10 @@ contract MockPool {
 contract MockRouter {
     address public _weth;
     address public _dai;
+    address public _plate;
     uint256 public ethReturn;
     uint256 public daiReturn;
+    uint256 public plateReturn;
     uint256 public liquidityReturn = 1000;
     bool    public swapShouldRevert;
     bool    public liqShouldRevert;
@@ -60,9 +67,11 @@ contract MockRouter {
 
     function setEthReturn(uint256 v)       external { ethReturn         = v; }
     function setDAIReturn(uint256 v)       external { daiReturn         = v; }
+    function setPlateReturn(uint256 v)     external { plateReturn       = v; }
     function setSwapRevert(bool r)         external { swapShouldRevert  = r; }
     function setLiqRevert(bool r)          external { liqShouldRevert   = r; }
     function setDAIToken(address dai_)     external { _dai              = dai_; }
+    function setPlateToken(address plate_) external { _plate            = plate_; }
 
     function swapExactTokensForETH(
         uint amountIn,
@@ -82,22 +91,38 @@ contract MockRouter {
 
     function swapExactETHForTokens(
         uint amountOutMin,
-        address[] calldata,
+        address[] calldata path,
         address to,
         uint
     ) external payable returns (uint[] memory amounts) {
         require(!swapShouldRevert, "MockRouter: swap reverts");
-        require(daiReturn >= amountOutMin, "MockRouter: DAI slippage");
         swapETHForTokensCallCount++;
-        // Mint DAI directly to recipient to simulate real router behavior
-        // This ensures balanceOf(plate) increases after the swap call
-        // so _swapETHToDAI correctly calculates daiReceived
-        if (_dai != address(0) && daiReturn > 0) {
-            MockDAI(_dai).mint(to, daiReturn);
+
+        // Detect which token to mint based on path destination
+        address tokenOut = path.length >= 2 ? path[path.length - 1] : address(0);
+
+        if (tokenOut != address(0) && tokenOut != _dai && _dai != address(0)) {
+            // ETH -> PLATE swap (used by V2 _addLiquidity)
+            // plateReturn set by test - router transfers PLATE it holds
+            uint256 out = plateReturn > 0 ? plateReturn : 0;
+            require(out >= amountOutMin, "MockRouter: PLATE slippage");
+            if (out > 0) {
+                // Transfer PLATE from router's own balance to recipient
+                IERC20(tokenOut).transfer(to, out);
+            }
+            amounts    = new uint[](2);
+            amounts[0] = msg.value;
+            amounts[1] = out;
+        } else {
+            // ETH -> DAI swap (used by _swapETHToDAI)
+            require(daiReturn >= amountOutMin, "MockRouter: DAI slippage");
+            if (_dai != address(0) && daiReturn > 0) {
+                MockDAI(_dai).mint(to, daiReturn);
+            }
+            amounts    = new uint[](2);
+            amounts[0] = msg.value;
+            amounts[1] = daiReturn;
         }
-        amounts    = new uint[](2);
-        amounts[0] = msg.value;
-        amounts[1] = daiReturn;
     }
 
     function addLiquidityETH(
@@ -272,6 +297,17 @@ contract PLATETest is Test {
 
         // Wire DAI token to router so swapExactETHForTokens mints DAI directly
         router.setDAIToken(address(dai));
+
+        // Wire PLATE token to router for V2 _addLiquidity ETH->PLATE swaps
+        router.setPlateToken(address(plate));
+
+        // Seed router with PLATE so it can transfer during ETH->PLATE swaps
+        // V2 _addLiquidity buys PLATE from the market - router simulates this
+        plate.transfer(address(router), 50_000_000 * 1e18);
+
+        // Set default plateReturn for V2 LP swaps (amount router sends back)
+        router.setPlateReturn(1_000_000 * 1e18);
+
         vm.deal(address(cbETH),  100 ether);
         vm.deal(address(rETH),   100 ether);
         vm.deal(USER,            10 ether);
