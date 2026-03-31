@@ -227,9 +227,10 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     /// Base feed: 0x591e79239a7d679378eC703cCb00F843d559C66
     address public chainlinkDAIFeed;
 
-    /// @notice Max allowed spot-to-TWAP deviation in basis points (default: 10%)
-    /// Protects against flash loan price manipulation during fee swaps
-    uint256 public maxDeviationBps = 1000;
+    /// @notice Max allowed spot-to-TWAP deviation in basis points
+    /// Council mandated: 500 bps (5%) - institutional standard for Base
+    /// Protects against flash loan price manipulation during LP injection
+    uint256 public maxDeviationBps = 500;
 
     /// @notice When the LP pool was created - starts BOOTSTRAP period
     uint256 public poolCreatedAt;
@@ -274,6 +275,9 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     event FeesSwappedToETH(uint256 plateIn, uint256 ethOut, bool usedTWAP, uint256 timestamp);
     event ETHRouted(uint256 total, uint256 toLp, uint256 toDAI, uint256 toStaking, uint256 timestamp);
     event LiquidityAdded(uint256 ethIn, uint256 plateIn, uint256 liquidity, uint256 timestamp);
+    /// @notice Emitted when LP injection is skipped due to market conditions or failure
+    /// Reason codes: 1=TWAP deviation, 2=Swap failure, 3=Slippage breach, 4=LP add failure, 5=No valid price
+    event LPFailed(uint256 ethAmt, uint8 reasonCode);
     event DAIReserveFunded(uint256 daiReceived, uint256 balance, uint256 timestamp);
     event DAIReserveFull(uint256 timestamp);
     event DAIPaid(address indexed recipient, uint256 amount, uint256 timestamp);
@@ -527,24 +531,21 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
     /**
      * @notice Adds ETH + PLATE to Aerodrome pool using market-ratio pairing
-     * @dev V2 design — council approved (Claude/Gemini/ChatGPT/Grok)
+     * @dev V3 design — council approved (Claude/Gemini/ChatGPT/Grok)
      *
-     *      PROBLEM SOLVED: LP Starvation
-     *      The previous implementation required the contract to hold
-     *      sufficient PLATE balance at injection time. When the balance
-     *      was insufficient, ETH fell back to Treasury — LP never grew.
+     *      V3 ISOLATION MODEL:
+     *      LP failures are local no-ops. ETH remains in contract
+     *      for downstream DAI and staking allocations.
+     *      This prevents capital bleed from LP domain into sibling domains.
      *
-     *      V2 SOLUTION: Market-Ratio Swap
-     *      1. Split ethAmt 50/50 (lpSwapRatio is adjustable via timelock)
-     *      2. Swap half ETH -> PLATE via router (TWAP-protected, same as swapFeesToETH)
-     *      3. Use ACTUAL received PLATE — never assumed balances
-     *      4. Add liquidity with real market ratio
-     *      5. On any failure: recover ALL assets to Treasury using actual balances
+     *      FAILURE CONTAINMENT INVARIANT:
+     *      Each execution domain must fail independently
+     *      without affecting sibling allocations.
      *
-     *      INVARIANT: No assets may be stranded in contract — ever
-     *      All failure paths route to Treasury using real balances, not expected values
+     *      _recoverToTreasury() is only called for PARTIAL execution states
+     *      (swap succeeded but LP failed — PLATE is stranded in contract).
      *
-     *      LP tokens always sent to TREASURY Safe
+     *      LP tokens always sent to TREASURY Safe.
      *
      * @param ethAmt Total ETH to deploy into LP
      */
@@ -552,41 +553,34 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
         if (ethAmt == 0) return;
 
         // Split ETH: half to swap for PLATE, half to pair with it
-        // lpSwapRatio default = 50 (50/50 split), adjustable via governance
         uint256 ethForSwap = (ethAmt * lpSwapRatio) / 100;
         uint256 ethForLP   = ethAmt - ethForSwap;
 
-        // ── Step 1: Swap ETH -> PLATE (TWAP-protected) ──────────────────
-        // Calculate minOut using same logic as swapFeesToETH
+        // ── Price determination ──────────────────────────────────────────
         uint256 minPlateOut = 0;
         bool useBootstrap = block.timestamp < poolCreatedAt + BOOTSTRAP;
 
         if (useBootstrap) {
             if (referencePrice > 0) {
-                // referencePrice = PLATE per ETH
                 uint256 expectedPlate = (ethForSwap * referencePrice) / 1e18;
                 minPlateOut = (expectedPlate * SLIPPAGE) / 100;
             }
         } else {
             uint256 twapPrice = _getTWAPPrice();
             if (twapPrice > 0) {
-                // twapPrice is Q96 — ETH per PLATE
-                // expectedPlate = ethForSwap / (twapPrice / Q96)
                 uint256 expectedPlate = (ethForSwap * Q96) / twapPrice;
                 minPlateOut = (expectedPlate * SLIPPAGE) / 100;
             }
         }
 
-        // If we cannot determine a safe minOut — fall back to Treasury
+        // Cannot price LP safely — skip, ETH stays for downstream
         if (minPlateOut == 0) {
-            (bool ok,) = TREASURY.call{value: ethAmt}("");
-            require(ok, "PLATE: LP fallback to Treasury failed");
+            emit LPFailed(ethAmt, 5);
             return;
         }
 
         // ── Symmetry Guard: Spot vs TWAP deviation check ─────────────────
-        // Council Directive: Fail-closed protection against MEV and
-        // spot price manipulation on the ETH->PLATE swap path
+        // Fail-closed protection against MEV and spot manipulation
         // Only enforced post-bootstrap when TWAP is available
         if (!useBootstrap) {
             uint256 twapForGuard = _getTWAPPrice();
@@ -596,8 +590,8 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
                     ? ((spotForGuard - twapForGuard) * 10000) / twapForGuard
                     : ((twapForGuard - spotForGuard) * 10000) / twapForGuard;
                 if (deviation > maxDeviationBps) {
-                    // Price is being manipulated — recover all to Treasury
-                    _recoverToTreasury(ethAmt);
+                    // Price manipulated — isolate LP failure, ETH stays for downstream
+                    emit LPFailed(ethAmt, 1);
                     return;
                 }
             }
@@ -609,23 +603,23 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
 
         uint256 plateBefore = balanceOf(address(this));
 
-        // Attempt swap: ETH -> PLATE
+        // ── Attempt swap: ETH -> PLATE ───────────────────────────────────
         try IRouter(aerodromeRouter).swapExactETHForTokens{value: ethForSwap}(
             minPlateOut,
             path,
             address(this),
             block.timestamp + 300
         ) returns (uint[] memory) {
-            // ── Step 2: Calculate actual PLATE received ──────────────────
+
             uint256 plateReceived = balanceOf(address(this)) - plateBefore;
 
             if (plateReceived == 0) {
-                // Swap returned nothing — recover all to Treasury
-                _recoverToTreasury(ethForLP);
+                // Swap returned nothing — skip LP, ETH stays for downstream
+                emit LPFailed(ethForLP, 3);
                 return;
             }
 
-            // ── Step 3: Add liquidity with actual market ratio ───────────
+            // ── Attempt LP injection ─────────────────────────────────────
             uint256 minPlate = (plateReceived * 90) / 100;
             uint256 minETH   = (ethForLP * 90) / 100;
 
@@ -638,19 +632,28 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
                 block.timestamp + 300
             ) returns (uint256 amtToken, uint256 amtETH, uint256 liquidity) {
                 emit LiquidityAdded(amtETH, amtToken, liquidity, block.timestamp);
-                // Any dust PLATE or ETH refunded by router — recover to Treasury
-                _recoverToTreasury(0);
+                // Partial execution: swap succeeded, LP succeeded
+                // Any dust PLATE still in contract — send to Treasury
+                uint256 plateDust = balanceOf(address(this)) - plateBefore;
+                if (plateDust > 0) {
+                    _transfer(address(this), TREASURY, plateDust);
+                }
             } catch {
-                // LP failed after swap succeeded
-                // PLATE is in contract, ethForLP is in contract
-                // Recover EVERYTHING using actual balances — never expected values
-                _recoverToTreasury(ethForLP);
+                // PARTIAL EXECUTION: swap succeeded, LP failed
+                // PLATE is stranded in contract — must recover to Treasury
+                // This is the one legitimate case for _recoverToTreasury
+                uint256 strandedPlate = balanceOf(address(this)) - plateBefore;
+                if (strandedPlate > 0) {
+                    _transfer(address(this), TREASURY, strandedPlate);
+                }
+                // ethForLP stays in contract for downstream use
+                emit LPFailed(ethForLP, 4);
             }
 
         } catch {
-            // Swap failed — ethForSwap still in contract, ethForLP still here
-            // Recover ALL ETH to Treasury
-            _recoverToTreasury(ethAmt);
+            // Swap failed — ethForSwap returned to contract
+            // ETH stays for downstream DAI and staking
+            emit LPFailed(ethAmt, 2);
         }
     }
 
