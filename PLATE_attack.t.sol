@@ -386,21 +386,26 @@ contract PLATEAttackTest is Test {
     // Only TREASURY Safe should be able to spend DAI reserve
     // ============================================================
     function test_Attack_DAIReserveDrain() public {
-        // Fill reserve
-        stdstore.target(address(plate)).sig("daiReserve()").checked_write(uint256(1000 * 1e18));
-        dai.mint(address(plate), 1000 * 1e18);
+        // Fill reserve via normal routing path
+        router.setDAIReturn(1000 * 1e18);
+        vm.deal(address(plate), 10 ether);
+        plate.transfer(address(plate), 5_000_000 * 1e18);
+        plate.routeETH();
+
+        uint256 reserveAmount = plate.daiReserve();
+        assertGt(reserveAmount, 0, "Reserve must have DAI");
 
         // Attacker tries to drain
         vm.prank(ATTACKER);
         vm.expectRevert("PLATE: Only Treasury Safe");
-        plate.payAPI(ATTACKER, 1000 * 1e18);
+        plate.payAPI(ATTACKER, reserveAmount);
 
         // Owner tries to drain (not treasury)
         vm.expectRevert("PLATE: Only Treasury Safe");
-        plate.payAPI(ATTACKER, 1000 * 1e18);
+        plate.payAPI(ATTACKER, reserveAmount);
 
         // Reserve must be untouched
-        assertEq(plate.daiReserve(), 1000 * 1e18,
+        assertEq(plate.daiReserve(), reserveAmount,
             "Reserve must be untouched after attack attempts");
     }
 
@@ -462,7 +467,5 @@ contract PLATEAttackTest is Test {
 
     receive() external payable {}
 
-    // Required for stdstore
-    using stdStorage for StdStorage;
-    StdStorage private stdstore;
+    
 }
