@@ -6,11 +6,6 @@ import "forge-std/console.sol";
 import "forge-std/StdStorage.sol";
 import "../src/PLATE.sol";
 
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function balanceOf(address a) external view returns (uint256);
-}
-
 // ============================================================
 //                        MOCK CONTRACTS
 // ============================================================
