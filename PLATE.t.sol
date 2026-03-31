@@ -96,14 +96,17 @@ contract MockRouter {
         // Detect which token to mint based on path destination
         address tokenOut = path.length >= 2 ? path[path.length - 1] : address(0);
 
-        if (tokenOut != address(0) && tokenOut != _dai && _dai != address(0)) {
+        if (_plate != address(0) && tokenOut == _plate) {
             // ETH -> PLATE swap (used by V2 _addLiquidity)
-            // plateReturn set by test - router transfers PLATE it holds
-            uint256 out = plateReturn > 0 ? plateReturn : 0;
+            // Router holds PLATE seeded in setUp and transfers it to recipient
+            uint256 out = plateReturn;
             require(out >= amountOutMin, "MockRouter: PLATE slippage");
             if (out > 0) {
                 // Transfer PLATE from router's own balance to recipient
-                IERC20(tokenOut).transfer(to, out);
+                (bool ok,) = _plate.call(
+                    abi.encodeWithSignature("transfer(address,uint256)", to, out)
+                );
+                require(ok, "MockRouter: PLATE transfer failed");
             }
             amounts    = new uint[](2);
             amounts[0] = msg.value;
@@ -293,15 +296,14 @@ contract PLATETest is Test {
         // Wire DAI token to router so swapExactETHForTokens mints DAI directly
         router.setDAIToken(address(dai));
 
+        // Default DAI return for tests - ensures DAI swap fallback has value
+        router.setDAIReturn(1 * 1e18);
+
         // Wire PLATE token to router for V2 _addLiquidity ETH->PLATE swaps
         router.setPlateToken(address(plate));
 
-        // Seed router with PLATE so it can transfer during ETH->PLATE swaps
-        // V2 _addLiquidity buys PLATE from the market - router simulates this
-        plate.transfer(address(router), 50_000_000 * 1e18);
-
-        // Set default plateReturn for V2 LP swaps (amount router sends back)
-        router.setPlateReturn(1_000_000 * 1e18);
+        // Default plateReturn = 0 means LP swap falls back to Treasury
+        // Tests that need LP to succeed must call _seedRouterPlate() explicitly
 
         vm.deal(address(cbETH),  100 ether);
         vm.deal(address(rETH),   100 ether);
@@ -671,16 +673,15 @@ contract PLATETest is Test {
     function test_RouteETH_AllocationsComputedUpfront() public {
         vm.deal(address(plate), 10 ether);
         router.setDAIReturn(100 * 1e18);
-        dai.mint(address(plate), 100 * 1e18);
 
-        // Seed PLATE to contract so addLiquidityETH has tokens to pair
-        plate.transfer(address(plate), 10_000_000 * 1e18);
+        // Seed router with PLATE for V2 _addLiquidity ETH->PLATE swap
+        _seedRouterPlate(5_000_000 * 1e18);
 
         uint256 total     = 10 ether;
-        uint256 toLp      = total * 25 / 100;       // 2.5 ETH
-        uint256 toT       = total - toLp;            // 7.5 ETH
-        uint256 toDAI     = toT * 20 / 100;          // 1.5 ETH
-        uint256 toStaking = toT - toDAI;             // 6.0 ETH
+        uint256 toLp      = total * 25 / 100;
+        uint256 toT       = total - toLp;
+        uint256 toDAI     = toT * 20 / 100;
+        uint256 toStaking = toT - toDAI;
 
         plate.routeETH();
 
@@ -863,10 +864,10 @@ contract PLATETest is Test {
         uint256 expWstETH = toStaking * 40 / 100;
         uint256 expRETH   = toStaking - expCbETH - expWstETH;
 
-        // Seed PLATE to contract so _addLiquidity has tokens to pair
-        plate.transfer(address(plate), 5_000_000 * 1e18);
+        // Seed router with PLATE for V2 _addLiquidity ETH->PLATE swap
+        _seedRouterPlate(5_000_000 * 1e18);
 
-        // Router mints DAI automatically now - just set the return amount
+        // Router mints DAI automatically - just set the return amount
         router.setDAIReturn(1000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
@@ -947,16 +948,16 @@ contract PLATETest is Test {
 
     function test_Harvest_ETHDeltaMeasuredCorrectly() public {
         vm.deal(address(plate), 10 ether);
-        // Seed PLATE to contract so _addLiquidity can pair correctly
-        plate.transfer(address(plate), 5_000_000 * 1e18);
+        // Seed router with PLATE for V2 _addLiquidity during routeETH
+        _seedRouterPlate(5_000_000 * 1e18);
         plate.routeETH();
 
         // Add exact known yield
         uint256 yieldAmt = 1 ether;
         cbETH.addYield(address(plate), yieldAmt);
 
-        // Seed more PLATE for harvest LP injection
-        plate.transfer(address(plate), 5_000_000 * 1e18);
+        // Seed router with more PLATE for harvest LP injection
+        _seedRouterPlate(5_000_000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
         plate.harvestYield();
@@ -969,15 +970,15 @@ contract PLATETest is Test {
 
     function test_Harvest_Splits25To75() public {
         vm.deal(address(plate), 10 ether);
+        // Seed router for routeETH LP injection
+        _seedRouterPlate(5_000_000 * 1e18);
         plate.routeETH();
 
         cbETH.addYield(address(plate), 2 ether);
         rETH.addYield(address(plate), 2 ether);
 
-        // Ensure PLATE contract has tokens for _addLiquidity pairing
-        // Otherwise addLiquidityETH falls back to sending ETH to Treasury
-        // which changes the split assertion
-        plate.transfer(address(plate), 10_000_000 * 1e18);
+        // Seed router for harvest LP injection
+        _seedRouterPlate(5_000_000 * 1e18);
 
         uint256 treasuryBefore = TREASURY.balance;
         plate.harvestYield();
@@ -1345,6 +1346,15 @@ contract PLATETest is Test {
         require(needed <= available,
             "Test setup: insufficient PLATE balance to seed target fees");
         plate.transfer(address(pool), needed);
+    }
+
+    /// @dev Seeds the mock router with PLATE so V2 _addLiquidity
+    ///      ETH->PLATE swap can transfer real tokens to the contract.
+    ///      Call in any test that exercises routeETH() or harvestYield()
+    ///      with LP injection active.
+    function _seedRouterPlate(uint256 amount) internal {
+        plate.transfer(address(router), amount);
+        router.setPlateReturn(amount);
     }
 
     function _fillDAIReserve(uint256 amount) internal {
