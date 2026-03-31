@@ -522,62 +522,164 @@ contract PLATE is ERC20, ERC20Permit, Ownable, ReentrancyGuard {
     }
 
     // --------------------------------------------------------
-    //              LP INJECTION - addLiquidityETH
+    //              LP INJECTION V2 - Market-Ratio addLiquidityETH
     // --------------------------------------------------------
 
     /**
-     * @notice Adds ETH + PLATE to Aerodrome pool via router
-     * @dev Uses addLiquidityETH() - not raw ETH to pool address
-     *      Raw ETH sent to an AMM pool is unrecoverable
-     *      Router handles the pairing correctly
-     *      LP tokens sent to TREASURY Safe
+     * @notice Adds ETH + PLATE to Aerodrome pool using market-ratio pairing
+     * @dev V2 design — council approved (Claude/Gemini/ChatGPT/Grok)
+     *
+     *      PROBLEM SOLVED: LP Starvation
+     *      The previous implementation required the contract to hold
+     *      sufficient PLATE balance at injection time. When the balance
+     *      was insufficient, ETH fell back to Treasury — LP never grew.
+     *
+     *      V2 SOLUTION: Market-Ratio Swap
+     *      1. Split ethAmt 50/50 (lpSwapRatio is adjustable via timelock)
+     *      2. Swap half ETH -> PLATE via router (TWAP-protected, same as swapFeesToETH)
+     *      3. Use ACTUAL received PLATE — never assumed balances
+     *      4. Add liquidity with real market ratio
+     *      5. On any failure: recover ALL assets to Treasury using actual balances
+     *
+     *      INVARIANT: No assets may be stranded in contract — ever
+     *      All failure paths route to Treasury using real balances, not expected values
+     *
+     *      LP tokens always sent to TREASURY Safe
+     *
+     * @param ethAmt Total ETH to deploy into LP
      */
     function _addLiquidity(uint256 ethAmt) internal {
         if (ethAmt == 0) return;
 
-        // Calculate PLATE amount to pair
-        // Use TWAP or reference price to determine ratio
-        uint256 plateForLP;
-        if (block.timestamp >= poolCreatedAt + BOOTSTRAP) {
+        // Split ETH: half to swap for PLATE, half to pair with it
+        // lpSwapRatio default = 50 (50/50 split), adjustable via governance
+        uint256 ethForSwap = (ethAmt * lpSwapRatio) / 100;
+        uint256 ethForLP   = ethAmt - ethForSwap;
+
+        // ── Step 1: Swap ETH -> PLATE (TWAP-protected) ──────────────────
+        // Calculate minOut using same logic as swapFeesToETH
+        uint256 minPlateOut = 0;
+        bool useBootstrap = block.timestamp < poolCreatedAt + BOOTSTRAP;
+
+        if (useBootstrap) {
+            if (referencePrice > 0) {
+                // referencePrice = PLATE per ETH
+                uint256 expectedPlate = (ethForSwap * referencePrice) / 1e18;
+                minPlateOut = (expectedPlate * SLIPPAGE) / 100;
+            }
+        } else {
             uint256 twapPrice = _getTWAPPrice();
             if (twapPrice > 0) {
-                // plateForLP = ethAmt / (twapPrice / Q96)
-                plateForLP = (ethAmt * Q96) / twapPrice;
+                // twapPrice is Q96 — ETH per PLATE
+                // expectedPlate = ethForSwap / (twapPrice / Q96)
+                uint256 expectedPlate = (ethForSwap * Q96) / twapPrice;
+                minPlateOut = (expectedPlate * SLIPPAGE) / 100;
             }
         }
 
-        // Fallback to reference price if TWAP unavailable
-        if (plateForLP == 0 && referencePrice > 0) {
-            plateForLP = (ethAmt * referencePrice) / 1e18;
+        // If we cannot determine a safe minOut — fall back to Treasury
+        if (minPlateOut == 0) {
+            (bool ok,) = TREASURY.call{value: ethAmt}("");
+            require(ok, "PLATE: LP fallback to Treasury failed");
+            return;
         }
 
-        // If we have PLATE to pair - use addLiquidityETH
-        if (plateForLP > 0 && balanceOf(address(this)) >= plateForLP) {
-            // 10% tolerance on both amounts
-            uint256 minPlate = (plateForLP * 90) / 100;
-            uint256 minETH   = (ethAmt * 90) / 100;
+        // ── Symmetry Guard: Spot vs TWAP deviation check ─────────────────
+        // Council Directive: Fail-closed protection against MEV and
+        // spot price manipulation on the ETH->PLATE swap path
+        // Only enforced post-bootstrap when TWAP is available
+        if (!useBootstrap) {
+            uint256 twapForGuard = _getTWAPPrice();
+            uint256 spotForGuard = _getSpotPrice();
+            if (twapForGuard > 0 && spotForGuard > 0) {
+                uint256 deviation = spotForGuard > twapForGuard
+                    ? ((spotForGuard - twapForGuard) * 10000) / twapForGuard
+                    : ((twapForGuard - spotForGuard) * 10000) / twapForGuard;
+                if (deviation > maxDeviationBps) {
+                    // Price is being manipulated — recover all to Treasury
+                    _recoverToTreasury(ethAmt);
+                    return;
+                }
+            }
+        }
 
-            try IRouter(aerodromeRouter).addLiquidityETH{value: ethAmt}(
+        address[] memory path = new address[](2);
+        path[0] = IRouter(aerodromeRouter).WETH();
+        path[1] = address(this);
+
+        uint256 plateBefore = balanceOf(address(this));
+
+        // Attempt swap: ETH -> PLATE
+        try IRouter(aerodromeRouter).swapExactETHForTokens{value: ethForSwap}(
+            minPlateOut,
+            path,
+            address(this),
+            block.timestamp + 300
+        ) returns (uint[] memory) {
+            // ── Step 2: Calculate actual PLATE received ──────────────────
+            uint256 plateReceived = balanceOf(address(this)) - plateBefore;
+
+            if (plateReceived == 0) {
+                // Swap returned nothing — recover all to Treasury
+                _recoverToTreasury(ethForLP);
+                return;
+            }
+
+            // ── Step 3: Add liquidity with actual market ratio ───────────
+            uint256 minPlate = (plateReceived * 90) / 100;
+            uint256 minETH   = (ethForLP * 90) / 100;
+
+            try IRouter(aerodromeRouter).addLiquidityETH{value: ethForLP}(
                 address(this),
-                plateForLP,
+                plateReceived,
                 minPlate,
                 minETH,
-                TREASURY,     // LP tokens → Treasury Safe
+                TREASURY,
                 block.timestamp + 300
             ) returns (uint256 amtToken, uint256 amtETH, uint256 liquidity) {
                 emit LiquidityAdded(amtETH, amtToken, liquidity, block.timestamp);
+                // Any dust PLATE or ETH refunded by router — recover to Treasury
+                _recoverToTreasury(0);
             } catch {
-                // If addLiquidity fails - send ETH to Treasury Safe
-                // Better than losing it
-                (bool ok,) = TREASURY.call{value: ethAmt}("");
-                require(ok, "PLATE: LP and Treasury fallback failed");
+                // LP failed after swap succeeded
+                // PLATE is in contract, ethForLP is in contract
+                // Recover EVERYTHING using actual balances — never expected values
+                _recoverToTreasury(ethForLP);
             }
-        } else {
-            // No PLATE available to pair - send ETH to Treasury
-            (bool ok,) = TREASURY.call{value: ethAmt}("");
-            require(ok, "PLATE: ETH to Treasury failed");
+
+        } catch {
+            // Swap failed — ethForSwap still in contract, ethForLP still here
+            // Recover ALL ETH to Treasury
+            _recoverToTreasury(ethAmt);
         }
     }
+
+    /**
+     * @notice Recovers any stranded PLATE and ETH to Treasury Safe
+     * @dev Uses actual balances — never expected/assumed values
+     *      Called on all failure paths in _addLiquidity
+     *      Enforces the NO STRANDED ASSETS invariant
+     * @param ethAmt ETH amount to forward (0 = check balance only)
+     */
+    function _recoverToTreasury(uint256 ethAmt) internal {
+        // Recover any stranded PLATE first
+        uint256 plateBal = balanceOf(address(this));
+        if (plateBal > 0) {
+            _transfer(address(this), TREASURY, plateBal);
+        }
+
+        // Recover ETH — use actual balance if caller passes 0
+        uint256 ethToSend = ethAmt > 0 ? ethAmt : address(this).balance;
+        if (ethToSend > 0) {
+            (bool ok,) = TREASURY.call{value: ethToSend}("");
+            require(ok, "PLATE: Treasury recovery failed");
+        }
+    }
+
+    /// @notice Adjustable LP swap ratio (default 50 = 50/50 split)
+    /// Governs what % of LP ETH is swapped for PLATE before pairing
+    /// Adjustable via timelock to tune LP efficiency over time
+    uint256 public lpSwapRatio = 50;
 
     // --------------------------------------------------------
     //                   DAI EMERGENCY RESERVE

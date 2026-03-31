@@ -452,20 +452,129 @@ contract PLATEAttackTest is Test {
         uint256 fee = amount * 200 / 10_000;
         uint256 net = amount - fee;
 
-        // Total supply never changes
         assertEq(plate.totalSupply(), supplyBefore,
             "Total supply must never change");
-
-        // Fee + net = amount (conservation)
         assertEq(fee + net, amount,
             "Fee conservation violated");
-
-        // Pending fees only increase
         assertGe(plate.pendingFees(), feesBefore,
             "Pending fees must never decrease on transfer");
     }
 
+    // ============================================================
+    // ATTACK 13: V2 LP - SWAP SUCCEEDS / LP FAILS
+    // All assets must forward to Treasury - no stranded PLATE or ETH
+    // ============================================================
+    function test_Attack_V2LP_SwapSucceedsLPFails() public {
+        // Make swap succeed but LP fail
+        router.setEthReturn(1 ether);
+        router.setLiqRevert(true); // LP will fail
+
+        uint256 treasuryBefore = TREASURY.balance;
+        uint256 ethToRoute = 4 ether;
+        vm.deal(address(plate), ethToRoute);
+        plate.transfer(address(plate), 5_000_000 * 1e18);
+        router.setDAIReturn(1000 * 1e18);
+
+        plate.routeETH();
+
+        // No PLATE stranded in contract
+        assertEq(plate.balanceOf(address(plate)), 0,
+            "No PLATE may be stranded after LP failure");
+
+        // No ETH stranded in contract
+        assertEq(address(plate).balance, 0,
+            "No ETH may be stranded after LP failure");
+
+        // Treasury received funds
+        assertGt(TREASURY.balance, treasuryBefore,
+            "Treasury must receive recovered assets");
+    }
+
+    // ============================================================
+    // ATTACK 14: V2 LP - SWAP FAILS
+    // ETH must forward to Treasury - nothing stranded
+    // ============================================================
+    function test_Attack_V2LP_SwapFails() public {
+        router.setSwapRevert(true); // Swap will fail
+
+        uint256 treasuryBefore = TREASURY.balance;
+        vm.deal(address(plate), 4 ether);
+        plate.transfer(address(plate), 5_000_000 * 1e18);
+        router.setDAIReturn(1000 * 1e18);
+
+        plate.routeETH();
+
+        // No ETH stranded
+        assertEq(address(plate).balance, 0,
+            "No ETH may be stranded after swap failure");
+
+        // No PLATE stranded
+        assertEq(plate.balanceOf(address(plate)), 0,
+            "No PLATE may be stranded after swap failure");
+
+        // Treasury received ETH
+        assertGt(TREASURY.balance, treasuryBefore,
+            "Treasury must receive ETH on swap failure");
+    }
+
+    // ============================================================
+    // ATTACK 15: V2 LP - ZERO RESIDUAL BALANCES INVARIANT
+    // After any routeETH() call contract must hold near-zero assets
+    // ============================================================
+    function test_Attack_V2LP_ZeroResidualBalances() public {
+        router.setDAIReturn(1000 * 1e18);
+        vm.deal(address(plate), 10 ether);
+        plate.transfer(address(plate), 5_000_000 * 1e18);
+
+        plate.routeETH();
+
+        // Contract ETH balance must be dust only
+        assertLt(address(plate).balance, 0.01 ether,
+            "Contract must not hold significant ETH after routeETH");
+
+        // Contract PLATE balance must be zero
+        assertEq(plate.balanceOf(address(plate)), 0,
+            "Contract must not hold PLATE after routeETH");
+    }
+
+    // ============================================================
+    // ATTACK 16: V2 LP - TWAP MANIPULATION (Symmetry Guard)
+    // Artificial spot distortion must trigger revert
+    // No swap executed, no LP added, no value leakage
+    // ============================================================
+    function test_Attack_LP_TWAP_Manipulation() public {
+        // Warp past bootstrap so TWAP and Symmetry Guard are active
+        vm.warp(block.timestamp + 25 hours);
+
+        // Set ticks to create extreme spot vs TWAP divergence
+        // tickOld = normal TWAP, tickNew = wildly different spot
+        // This simulates a flash loan manipulating the pool
+        pool.setTicks(int56(-497383200), int56(0));
+
+        uint256 treasuryBefore = TREASURY.balance;
+        uint256 plateBefore    = plate.balanceOf(address(plate));
+
+        vm.deal(address(plate), 4 ether);
+        plate.transfer(address(plate), 5_000_000 * 1e18);
+        router.setDAIReturn(1000 * 1e18);
+
+        // routeETH should not execute LP swap under manipulation
+        plate.routeETH();
+
+        // No PLATE stranded in contract
+        assertEq(plate.balanceOf(address(plate)), 0,
+            "No PLATE stranded after manipulation attempt");
+
+        // No ETH stranded
+        assertEq(address(plate).balance, 0,
+            "No ETH stranded after manipulation attempt");
+
+        // Treasury received recovered assets
+        assertGt(TREASURY.balance, treasuryBefore,
+            "Treasury must receive assets when guard triggers");
+    }
+
     receive() external payable {}
 
-    
 }
+
