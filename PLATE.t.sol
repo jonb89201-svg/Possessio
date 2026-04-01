@@ -1348,14 +1348,18 @@ contract PLATETest is Test {
         plate.transfer(address(pool), needed);
     }
 
-    /// @dev Seeds the mock router with PLATE so V2 _addLiquidity
-    ///      ETH->PLATE swap can transfer real tokens to the contract.
-    ///      Uses 2x expected amount to ensure slippage check passes.
+    /// @dev Seeds the mock router with PLATE for V2 _addLiquidity ETH->PLATE swap.
+    ///      plateReturn must be >= minPlateOut calculated from TWAP/referencePrice.
+    ///      With INIT_REF = 1M PLATE/ETH and 10 ETH toLp:
+    ///      ethForSwap = 1.25 ETH, expectedPlate = 1.25e24, minPlateOut = 1.125e24
+    ///      We seed 2e24 PLATE to safely exceed any slippage check.
     function _seedRouterPlate(uint256 amount) internal {
-        plate.transfer(address(router), amount);
-        // Set plateReturn to 2x amount to pass slippage check
-        // minPlateOut = expectedPlate * 90%, plateReturn must be >= minPlateOut
-        router.setPlateReturn(amount * 2);
+        // Use fixed large amount that passes slippage for all test scenarios
+        // 2e24 PLATE covers minPlateOut for up to ~1.77 ETH ethForSwap
+        uint256 seedAmount = 2e24;
+        if (amount > seedAmount) seedAmount = amount * 2;
+        plate.transfer(address(router), seedAmount);
+        router.setPlateReturn(seedAmount);
     }
 
     function _fillDAIReserve(uint256 amount) internal {
