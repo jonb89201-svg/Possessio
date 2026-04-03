@@ -147,7 +147,7 @@ forge test -vv
 | Contract | Network | Address |
 |----------|---------|---------|
 | Treasury Safe (multisig) | Base Mainnet | 0x188bE439C141c9138Bd3075f6A376F73c07F1903 |
-| PLATE.sol | Base deployment | 0xa37De136d30F9bFBD79499F392f0349548Af31FF
+| PLATE.sol | Base Sepolia | 0xa37De136d30F9bFBD79499F392f0349548Af31FF
 | PLATE.sol | Base Mainnet | Pending deployment |
 
 ---
