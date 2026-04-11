@@ -178,7 +178,7 @@ forge test -vv
 |----------|---------|---------|
 | Treasury Safe (multisig) | Base Mainnet | 0x188bE439C141c9138Bd3075f6A376F73c07F1903 |
 | PLATE.sol | Base Sepolia | 0xa37De136d30F9bFBD79499F392f0349548Af31FF |
-| PLATE.sol | Base Mainnet | Deployed April 11, 2026 | 0x726D6a7A598A4D12aDe7019Dc2598D955391E298 | 
+| PLATE.sol | Base Mainnet | Deployed | 0x726D6a7A598A4D12aDe7019Dc2598D955391E298 | 
 Aerodrome Pool | 0x031c08ca0aed0c813aca333aa4ca0025ecee6afa |
 Timelock | 0x91811800160d5BeD431B732298F2090C847E6afA
 
