@@ -7,7 +7,6 @@ The contract and framework are fully public and reusable. Deployment and full in
 All capital movement is constrained to predefined execution paths. No arbitrary transfers exist in the system.
 
 **Live site:** https://jonb89201-svg.github.io/Possessio/
-**Treasury Safe:** 0x188bE439C141c9138Bd3075f6A376F73c07F1903
 
 ---
 
