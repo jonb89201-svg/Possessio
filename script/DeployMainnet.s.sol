@@ -45,7 +45,7 @@ contract DeployMainnet is Script {
     // wstETH: planned post-launch Lido integration
 
     // rETH: https://basescan.org/token/0xb6fe221fe9eef5aba221c348ba20a1bf5e73624c
-    address constant RETH      = 0xB6fe221Fe9EEF5aBa221c348bA20A1Bf5e73624c;
+    address constant RETH      = 0xB6fe221Fe9EeF5aBa221c348bA20A1Bf5e73624c;
 
     // DAI: https://basescan.org/token/0x50c5725949a6f0c72e6c4a641f24049a917db0cb
     address constant DAI       = 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb;
