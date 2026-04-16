@@ -73,8 +73,8 @@ fetch_remote_hash() {
     echo "$RESPONSE" | sha256sum | awk '{print $1}'
 }
 
-echo "   Fetching remote hash: scripts/sal_pfg_v1.2.1.sh..."
-REMOTE_SCRIPT_HASH=$(fetch_remote_hash "scripts/sal_pfg_v1.2.1.sh") || {
+echo "   Fetching remote hash: script/sal_pfg_v1.2.1.sh..."
+REMOTE_SCRIPT_HASH=$(fetch_remote_hash "script/sal_pfg_v1.2.1.sh") || {
     echo "❌ HEARTBEAT FAIL: GitHub unreachable or auth failed."
     echo "   Hard-block engaged. Do not proceed."
     exit 1
@@ -87,7 +87,7 @@ REMOTE_PLATE_HASH=$(fetch_remote_hash "src/PLATE.sol") || {
     exit 1
 }
 
-LOCAL_SCRIPT_HASH=$(sha256sum scripts/sal_pfg_v1.2.1.sh | awk '{print $1}')
+LOCAL_SCRIPT_HASH=$(sha256sum script/sal_pfg_v1.2.1.sh | awk '{print $1}')
 LOCAL_PLATE_HASH=$(sha256sum src/PLATE.sol | awk '{print $1}')
 
 HASH_FAIL=0
