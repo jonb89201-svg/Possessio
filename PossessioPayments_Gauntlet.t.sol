@@ -1,0 +1,1081 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "forge-std/Test.sol";
+import "forge-std/console.sol";
+import "../src/PossessioPayments.sol";
+
+/*
+ * PossessioPayments — Gauntlet Adversarial Test Suite
+ *
+ * SCOPE: Active attack simulation against the Phase 2 merchant contract.
+ *        Includes Gemini's six ratified findings under Codebyte Law, plus
+ *        additional attack-surface tests covering reentrancy, role escalation,
+ *        emergency withdrawal abuse, sweep ordering, and oracle edge cases.
+ *
+ * PHILOSOPHY: If an adversary can violate an invariant, the test surfaces it.
+ *             These tests should FAIL if the contract regresses.
+ *
+ * STRUCTURE: Mirrors POSSESSIO_v2_Gauntlet.t.sol — separate file from core,
+ *            inline mocks (including malicious variants), Amendment IV
+ *            declarations per attack category.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
+//                              MOCK CONTRACTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+contract MockUSDC_G {
+    string public constant name = "USD Coin";
+    string public constant symbol = "USDC";
+    uint8  public constant decimals = 6;
+    mapping(address => uint256) public _balances;
+    mapping(address => mapping(address => uint256)) public _allowances;
+
+    function mint(address to, uint256 amt) external { _balances[to] += amt; }
+    function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
+    function approve(address s, uint256 a) external returns (bool) {
+        _allowances[msg.sender][s] = a;
+        return true;
+    }
+    function allowance(address o, address s) external view returns (uint256) {
+        return _allowances[o][s];
+    }
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_balances[msg.sender] >= a, "insuf");
+        _balances[msg.sender] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 a) external returns (bool) {
+        require(_balances[from] >= a, "insuf");
+        require(_allowances[from][msg.sender] >= a, "not approved");
+        _allowances[from][msg.sender] -= a;
+        _balances[from] -= a;
+        _balances[to] += a;
+        return true;
+    }
+}
+
+contract MockDAI_G {
+    string public constant name = "Dai Stablecoin";
+    string public constant symbol = "DAI";
+    uint8  public constant decimals = 18;
+    mapping(address => uint256) public _balances;
+    mapping(address => mapping(address => uint256)) public _allowances;
+
+    function mint(address to, uint256 amt) external { _balances[to] += amt; }
+    function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
+    function approve(address s, uint256 a) external returns (bool) {
+        _allowances[msg.sender][s] = a;
+        return true;
+    }
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_balances[msg.sender] >= a, "insuf");
+        _balances[msg.sender] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 a) external returns (bool) {
+        require(_balances[from] >= a, "insuf");
+        require(_allowances[from][msg.sender] >= a, "not approved");
+        _allowances[from][msg.sender] -= a;
+        _balances[from] -= a;
+        _balances[to] += a;
+        return true;
+    }
+}
+
+contract MockCbETH_G {
+    mapping(address => uint256) public _balances;
+    function mint(address to, uint256 amt) external { _balances[to] += amt; }
+    function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_balances[msg.sender] >= a, "insuf");
+        _balances[msg.sender] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 a) external returns (bool) {
+        require(_balances[from] >= a, "insuf");
+        _balances[from] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function approve(address, uint256) external pure returns (bool) { return true; }
+}
+
+contract MockRETH_G {
+    mapping(address => uint256) public _balances;
+    function mint(address to, uint256 amt) external { _balances[to] += amt; }
+    function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_balances[msg.sender] >= a, "insuf");
+        _balances[msg.sender] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function transferFrom(address from, address to, uint256 a) external returns (bool) {
+        require(_balances[from] >= a, "insuf");
+        _balances[from] -= a;
+        _balances[to] += a;
+        return true;
+    }
+    function approve(address, uint256) external pure returns (bool) { return true; }
+}
+
+contract MockV3Router_G {
+    MockUSDC_G  public usdc;
+    MockDAI_G   public dai;
+    MockCbETH_G public cbeth;
+    MockRETH_G  public reth;
+
+    uint256 public daiOut;
+    uint256 public cbEthOut;
+    uint256 public rEthOut;
+    bool    public daiSwapReverts;
+    bool    public lstSwapReverts;
+    bool    public consumeLessThanRequested;
+
+    constructor(address u, address d, address c, address r) {
+        usdc = MockUSDC_G(u);
+        dai  = MockDAI_G(d);
+        cbeth = MockCbETH_G(c);
+        reth  = MockRETH_G(r);
+    }
+
+    function setDaiOut(uint256 v) external { daiOut = v; }
+    function setCbEthOut(uint256 v) external { cbEthOut = v; }
+    function setREthOut(uint256 v) external { rEthOut = v; }
+    function setDaiSwapReverts(bool b) external { daiSwapReverts = b; }
+    function setLstSwapReverts(bool b) external { lstSwapReverts = b; }
+    function setConsumeLessThanRequested(bool b) external { consumeLessThanRequested = b; }
+
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24  fee;
+        address recipient;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+
+    function exactInputSingle(ExactInputSingleParams calldata p)
+        external returns (uint256 amountOut)
+    {
+        // Adversarial mode: consume less than requested (test for dangling approval)
+        uint256 toConsume = consumeLessThanRequested ? p.amountIn / 2 : p.amountIn;
+        MockUSDC_G(p.tokenIn).transferFrom(msg.sender, address(this), toConsume);
+
+        if (p.tokenOut == address(dai)) {
+            require(!daiSwapReverts, "MockV3Router: dai swap reverts");
+            require(daiOut >= p.amountOutMinimum, "MockV3Router: slippage DAI");
+            if (daiOut > 0) dai.mint(p.recipient, daiOut);
+            return daiOut;
+        } else if (p.tokenOut == address(cbeth)) {
+            require(!lstSwapReverts, "MockV3Router: lst swap reverts");
+            require(cbEthOut >= p.amountOutMinimum, "MockV3Router: slippage cbETH");
+            if (cbEthOut > 0) cbeth.mint(p.recipient, cbEthOut);
+            return cbEthOut;
+        } else if (p.tokenOut == address(reth)) {
+            require(!lstSwapReverts, "MockV3Router: lst swap reverts");
+            require(rEthOut >= p.amountOutMinimum, "MockV3Router: slippage rETH");
+            if (rEthOut > 0) reth.mint(p.recipient, rEthOut);
+            return rEthOut;
+        }
+        revert("Unknown tokenOut");
+    }
+}
+
+contract MockChainlink_G {
+    int256 public _answer;
+    uint256 public _updatedAt;
+    uint80  public _roundId;
+    uint80  public _answeredInRound;
+    bool    public _reverts;
+
+    constructor(int256 a) {
+        _answer = a;
+        _updatedAt = block.timestamp;
+        _roundId = 1;
+        _answeredInRound = 1;
+    }
+    function setAnswer(int256 a) external {
+        _answer = a;
+        _updatedAt = block.timestamp;
+        _roundId++;
+        _answeredInRound = _roundId;
+    }
+    function setStale()         external { _updatedAt = block.timestamp - 7200; }
+    function setReverts(bool r) external { _reverts = r; }
+    function setIncomplete()    external { _answeredInRound = _roundId - 1; }
+
+    function latestRoundData() external view returns (
+        uint80, int256, uint256, uint256, uint80
+    ) {
+        require(!_reverts, "MockChainlink: reverts");
+        return (_roundId, _answer, 0, _updatedAt, _answeredInRound);
+    }
+}
+
+contract MockLSTRates_G {
+    uint256 public cbEthRate;
+    uint256 public rEthRate;
+    constructor() {
+        cbEthRate = 1.05e18;
+        rEthRate  = 1.10e18;
+    }
+    function setCbEthRate(uint256 v) external { cbEthRate = v; }
+    function setREthRate(uint256 v)  external { rEthRate = v; }
+    function cbEthToEth(uint256 c) external view returns (uint256) { return (c * cbEthRate) / 1e18; }
+    function rEthToEth(uint256 r)  external view returns (uint256) { return (r * rEthRate) / 1e18; }
+}
+
+/**
+ * @notice MALICIOUS DAI mock — attempts re-entry into withdrawDAI via
+ *         transfer hook. Used to verify nonReentrant on withdrawDAI holds
+ *         even with hostile token implementation.
+ */
+contract MaliciousDAI {
+    string public constant name = "Malicious DAI";
+    string public constant symbol = "MDAI";
+    uint8  public constant decimals = 18;
+    mapping(address => uint256) public _balances;
+    mapping(address => mapping(address => uint256)) public _allowances;
+
+    address public targetContract;
+    bool    public attackArmed;
+    uint256 public reentryAttempts;
+
+    function setTarget(address t) external { targetContract = t; }
+    function armAttack() external { attackArmed = true; }
+    function disarmAttack() external { attackArmed = false; }
+
+    function mint(address to, uint256 amt) external { _balances[to] += amt; }
+    function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
+    function approve(address s, uint256 a) external returns (bool) {
+        _allowances[msg.sender][s] = a;
+        return true;
+    }
+
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_balances[msg.sender] >= a, "insuf");
+        _balances[msg.sender] -= a;
+        _balances[to] += a;
+
+        if (attackArmed && targetContract != address(0)) {
+            reentryAttempts++;
+            (bool ok,) = targetContract.call(
+                abi.encodeWithSignature("withdrawDAI(uint256,address)", 1, to)
+            );
+            ok; // suppress unused — we WANT the call to revert (nonReentrant)
+        }
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 a) external returns (bool) {
+        require(_balances[from] >= a, "insuf");
+        require(_allowances[from][msg.sender] >= a, "not approved");
+        _allowances[from][msg.sender] -= a;
+        _balances[from] -= a;
+        _balances[to] += a;
+        return true;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//                  POSSESSIO PAYMENTS GAUNTLET TEST SUITE
+// ═══════════════════════════════════════════════════════════════════════════
+
+contract PossessioPaymentsGauntlet is Test {
+    PossessioPayments payments;
+    MockUSDC_G        usdc;
+    MockDAI_G         dai;
+    MockCbETH_G       cbeth;
+    MockRETH_G        reth;
+    MockV3Router_G    router;
+    MockChainlink_G   chainlinkEth;
+    MockChainlink_G   chainlinkDai;
+    MockLSTRates_G    lstRates;
+
+    address MERCHANT = address(0xA11CE);
+    address OPERATOR = address(0xB0B);
+    address GUARDIAN = address(0xC1A0);
+    address ATTACKER = address(0xBAD);
+    address PAYEE    = address(0xD11);
+
+    uint256 constant MIN_BATCH    = 100 * 1e6;
+    uint256 constant DAI_CEILING  = 5_000 * 1e18;
+    uint256 constant DAILY_LIMIT  = 1_000 * 1e18;
+
+    function setUp() public {
+        vm.warp(1_000_000);
+
+        usdc         = new MockUSDC_G();
+        dai          = new MockDAI_G();
+        cbeth        = new MockCbETH_G();
+        reth         = new MockRETH_G();
+        router       = new MockV3Router_G(address(usdc), address(dai), address(cbeth), address(reth));
+        chainlinkEth = new MockChainlink_G(int256(3000_00000000));
+        chainlinkDai = new MockChainlink_G(int256(1_00000000));
+        lstRates     = new MockLSTRates_G();
+
+        payments = new PossessioPayments(
+            MERCHANT,
+            address(usdc),
+            address(cbeth),
+            address(reth),
+            address(dai),
+            address(router),
+            address(chainlinkEth),
+            address(chainlinkDai),
+            address(lstRates),
+            MIN_BATCH,
+            DAI_CEILING,
+            DAILY_LIMIT
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                  GEMINI'S RATIFIED ADVERSARIAL FINDINGS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #1: DUST PRECISION — fuzz 50 sweeps with random USDC amounts
+    // ───────────────────────────────────────────────────────────────────────
+
+    function testFuzz_SweepDustBounded(uint256 sweepAmount) public {
+        sweepAmount = bound(sweepAmount, MIN_BATCH, 100_000 * 1e6);
+
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        uint256 totalDust = 0;
+        uint256 sweepCount = 50;
+
+        for (uint256 i = 0; i < sweepCount; i++) {
+            usdc.mint(address(payments), sweepAmount);
+
+            uint256 expectedAlloc = (sweepAmount * 40) / 100 + (sweepAmount * 60) / 100;
+            uint256 dustThisSweep = sweepAmount - expectedAlloc;
+            totalDust += dustThisSweep;
+
+            router.setCbEthOut(1);
+            router.setREthOut(1);
+
+            vm.prank(MERCHANT);
+            payments.sweep(0, 1, 1);
+
+            uint256 usdcAfter = usdc.balanceOf(address(payments));
+            assertLe(usdcAfter, dustThisSweep + 1, "Per-sweep dust within bound");
+
+            // Advance time and refresh oracle to keep it fresh for next sweep
+            vm.warp(block.timestamp + 25 hours);
+            chainlinkEth.setAnswer(int256(3000_00000000));
+            chainlinkDai.setAnswer(int256(1_00000000));
+        }
+
+        assertLt(totalDust, sweepCount * 2, "Total dust bounded over many sweeps");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #2: LIQUID CAPITAL SEPARATION
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_OperatingCapitalNotHostage() public {
+        dai.mint(address(payments), 5000 * 1e18);
+        chainlinkEth.setStale();
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        vm.expectRevert(PossessioPayments.OracleStale.selector);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+
+        // Operating capital still accessible
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(500 * 1e18, PAYEE);
+
+        assertEq(dai.balanceOf(PAYEE), 500 * 1e18, "DAI flows even when sweep broken");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #3a: DAILY LIMIT WINDOW BOUNDARY
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_WindowBoundaryExact() public {
+        dai.mint(address(payments), 10_000 * 1e18);
+
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT, PAYEE);
+
+        vm.warp(block.timestamp + 24 hours - 1);
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(1, PAYEE);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT, PAYEE);
+
+        assertEq(dai.balanceOf(PAYEE), 2 * DAILY_LIMIT, "Two limits across boundary");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #3b: DAILY LIMIT TIMELOCK PRECISION
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_TimelockExactly24h() public {
+        vm.prank(MERCHANT);
+        payments.queueDailyLimitIncrease(2000 * 1e18);
+
+        vm.warp(block.timestamp + 24 hours - 1);
+        vm.expectRevert(PossessioPayments.TimelockNotPassed.selector);
+        vm.prank(MERCHANT);
+        payments.executeDailyLimitIncrease();
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(MERCHANT);
+        payments.executeDailyLimitIncrease();
+
+        assertEq(payments.dailyLimit(), 2000 * 1e18, "Timelock executes at exact boundary");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #4: REENTRANCY VIA MALICIOUS ERC20
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_MaliciousTokenCannotDrain() public {
+        MaliciousDAI evilDai = new MaliciousDAI();
+
+        PossessioPayments evilPayments = new PossessioPayments(
+            MERCHANT,
+            address(usdc),
+            address(cbeth),
+            address(reth),
+            address(evilDai),
+            address(router),
+            address(chainlinkEth),
+            address(chainlinkDai),
+            address(lstRates),
+            MIN_BATCH,
+            DAI_CEILING,
+            DAILY_LIMIT
+        );
+
+        evilDai.mint(address(evilPayments), 5000 * 1e18);
+        evilDai.setTarget(address(evilPayments));
+        evilDai.armAttack();
+
+        vm.prank(MERCHANT);
+        evilPayments.withdrawDAI(100 * 1e18, MERCHANT);
+
+        assertGe(evilDai.reentryAttempts(), 1, "Re-entry was attempted");
+        assertEq(evilDai.balanceOf(MERCHANT), 100 * 1e18, "Only original withdrawal");
+        assertEq(evilDai.balanceOf(address(evilPayments)), 4900 * 1e18, "Reserve unchanged");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Gemini #5: THRESHOLDREACHED IDEMPOTENT
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_ThresholdEventNoSpam() public {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        // Both legs must return non-zero to avoid ZeroOutput revert
+        router.setCbEthOut(20 ether);
+        router.setREthOut(15 ether); // Total ETH-equiv: 20*1.05 + 15*1.10 = 21 + 16.5 = 37.5 ETH (> 32 threshold)
+
+        vm.prank(MERCHANT);
+        payments.sweep(0, 20 ether, 15 ether);
+
+        assertTrue(payments.thresholdReached(), "Flag set after first crossing");
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setCbEthOut(2 ether);
+        router.setREthOut(2 ether);
+
+        vm.warp(block.timestamp + 25 hours);
+        chainlinkEth.setAnswer(int256(3000_00000000));
+        chainlinkDai.setAnswer(int256(1_00000000));
+
+        vm.recordLogs();
+        vm.prank(MERCHANT);
+        payments.sweep(0, 2 ether, 2 ether);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 thresholdEventSig = keccak256("ThresholdReached(uint256)");
+        bool foundDuplicate = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == thresholdEventSig) {
+                foundDuplicate = true;
+                break;
+            }
+        }
+        assertFalse(foundDuplicate, "ThresholdReached must NOT spam");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //              ROLE ESCALATION & UNAUTHORIZED ACCESS ATTACKS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    Attacker cannot escalate to Owner/Operator/Guardian.
+    //                 Operator cannot perform Owner-only actions.
+    //                 Guardian cannot redirect funds.
+
+    function test_Attack_AttackerCannotPause() public {
+        vm.expectRevert(PossessioPayments.InvalidAddress.selector);
+        vm.prank(ATTACKER);
+        payments.pauseUCR();
+    }
+
+    function test_Attack_AttackerCannotSetCeiling() public {
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.setDaiCeiling(0);
+    }
+
+    function test_Attack_AttackerCannotWithdrawDAI() public {
+        dai.mint(address(payments), 5000 * 1e18);
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.withdrawDAI(100 * 1e18, ATTACKER);
+    }
+
+    function test_Attack_AttackerCannotEmergencyWithdraw() public {
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.queueEmergencyWithdraw(address(dai), 100 * 1e18);
+    }
+
+    function test_Attack_OperatorCannotWithdrawDAI() public {
+        bytes32 opRole = payments.OPERATOR_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(opRole, OPERATOR);
+
+        dai.mint(address(payments), 5000 * 1e18);
+
+        vm.expectRevert();
+        vm.prank(OPERATOR);
+        payments.withdrawDAI(100 * 1e18, OPERATOR);
+    }
+
+    function test_Attack_OperatorCannotChangeCeiling() public {
+        bytes32 opRole = payments.OPERATOR_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(opRole, OPERATOR);
+
+        vm.expectRevert();
+        vm.prank(OPERATOR);
+        payments.setDaiCeiling(0);
+    }
+
+    function test_Attack_OperatorCannotChangeDailyLimit() public {
+        bytes32 opRole = payments.OPERATOR_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(opRole, OPERATOR);
+
+        vm.expectRevert();
+        vm.prank(OPERATOR);
+        payments.decreaseDailyLimit(500 * 1e18);
+    }
+
+    function test_Attack_OperatorCannotEmergencyWithdraw() public {
+        bytes32 opRole = payments.OPERATOR_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(opRole, OPERATOR);
+
+        vm.expectRevert();
+        vm.prank(OPERATOR);
+        payments.queueEmergencyWithdraw(address(dai), 100 * 1e18);
+    }
+
+    function test_Attack_GuardianCannotPauseWhenDisabled() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+
+        // Guardian disabled by default
+        vm.expectRevert(PossessioPayments.GuardianNotEnabled.selector);
+        vm.prank(GUARDIAN);
+        payments.guardianPause();
+    }
+
+    function test_Attack_GuardianCannotWithdrawAnything() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        payments.enableGuardian();
+        vm.stopPrank();
+
+        dai.mint(address(payments), 5000 * 1e18);
+
+        // Guardian can pause but cannot withdraw
+        vm.expectRevert();
+        vm.prank(GUARDIAN);
+        payments.withdrawDAI(100 * 1e18, GUARDIAN);
+
+        vm.expectRevert();
+        vm.prank(GUARDIAN);
+        payments.queueEmergencyWithdraw(address(dai), 100 * 1e18);
+    }
+
+    function test_Attack_GuardianCannotResume() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        payments.enableGuardian();
+        vm.stopPrank();
+
+        vm.prank(GUARDIAN);
+        payments.guardianPause();
+
+        // Guardian cannot unpause/resume — only Owner can
+        vm.expectRevert();
+        vm.prank(GUARDIAN);
+        payments.queueResumeUCR();
+    }
+
+    function test_Attack_GuardianCannotToggleGuardian() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        payments.enableGuardian();
+        vm.stopPrank();
+
+        // Guardian cannot disable themselves to mess with merchant's intent
+        vm.expectRevert();
+        vm.prank(GUARDIAN);
+        payments.disableGuardian();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                     EMERGENCY WITHDRAWAL ABUSE PATHS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    Compromised-key drain paths bounded. DAI emergency
+    //                 still subject to daily limit. LST emergency uses 7d delay.
+
+    function test_Attack_EmergencyDAIBypassBlocked() public {
+        dai.mint(address(payments), 5000 * 1e18);
+
+        vm.prank(MERCHANT);
+        payments.queueEmergencyWithdraw(address(dai), 5000 * 1e18);
+
+        vm.warp(block.timestamp + 7 days + 1);
+
+        // 5000 > 1000 daily limit — must revert
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.executeEmergencyWithdraw(address(dai), MERCHANT);
+
+        assertEq(dai.balanceOf(address(payments)), 5000 * 1e18, "DAI not drained");
+    }
+
+    function test_Attack_EmergencyDAIPartialOk() public {
+        dai.mint(address(payments), 5000 * 1e18);
+
+        // Queue emergency for exactly daily limit
+        vm.prank(MERCHANT);
+        payments.queueEmergencyWithdraw(address(dai), DAILY_LIMIT);
+
+        vm.warp(block.timestamp + 7 days + 1);
+
+        // At daily limit — succeeds
+        vm.prank(MERCHANT);
+        payments.executeEmergencyWithdraw(address(dai), MERCHANT);
+
+        assertEq(dai.balanceOf(MERCHANT), DAILY_LIMIT, "Partial emergency at limit succeeds");
+    }
+
+    function test_Attack_EmergencyCancelByAttacker() public {
+        vm.prank(MERCHANT);
+        payments.queueEmergencyWithdraw(address(dai), 100 * 1e18);
+
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.cancelEmergencyWithdraw(address(dai));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                       SWEEP ORDERING & STATE ATTACKS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    Sweep cooldown cannot be bypassed. Pause halts sweep
+    //                 even mid-state. Concurrent operations don't corrupt state.
+
+    function test_Attack_SweepDuringPauseBlocked() public {
+        usdc.mint(address(payments), 1000 * 1e6);
+
+        vm.prank(MERCHANT);
+        payments.pauseUCR();
+
+        vm.expectRevert(PossessioPayments.RoutingPaused.selector);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+    }
+
+    function test_Attack_SweepCooldownBypass() public {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        // Try every minute for 23 hours — must all revert
+        for (uint256 i = 0; i < 23; i++) {
+            vm.warp(block.timestamp + 1 hours);
+            usdc.mint(address(payments), 1000 * 1e6);
+
+            vm.expectRevert(PossessioPayments.SweepTooEarly.selector);
+            vm.prank(MERCHANT);
+            payments.sweep(0, 0.13 ether, 0.18 ether);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                   ORACLE EDGE CASE & ATTACK ATTEMPTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function test_Attack_OracleNegativeAnswer() public {
+        chainlinkEth.setAnswer(int256(-1));
+        usdc.mint(address(payments), 1000 * 1e6);
+
+        vm.expectRevert(PossessioPayments.OracleInvalid.selector);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+    }
+
+    function test_Attack_OracleRevertsOnRead() public {
+        chainlinkEth.setReverts(true);
+        usdc.mint(address(payments), 1000 * 1e6);
+
+        vm.expectRevert();
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+    }
+
+    function test_Attack_DAIOracleRevertsSkipsGracefully() public {
+        chainlinkDai.setReverts(true);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        // DAI oracle reverting — sweep should skip DAI and proceed with LSTs
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        // No DAI accumulated, but LSTs received
+        assertEq(dai.balanceOf(address(payments)), 0, "DAI skipped on reverting oracle");
+        assertEq(cbeth.balanceOf(address(payments)), 0.13 ether, "LSTs received");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                    DANGLING APPROVAL ATTACK SURFACE
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    Even when malicious router consumes less than approved,
+    //                 contract resets approval to 0 after swap.
+
+    function test_Attack_MaliciousRouterUndereconsumeNoApproval() public {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        // Set router to consume only half the approved amount
+        router.setConsumeLessThanRequested(true);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        // Sweep will revert because of leakage check (good — defense at multiple layers)
+        // The leakage check catches the attack before it completes.
+        vm.expectRevert(PossessioPayments.LeakageDetected.selector);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        // Even after revert, allowance should be 0 (set during the failed sweep)
+        // Actually: revert rolls state back, so allowance stays at whatever it was.
+        // The key invariant: no SUCCESSFUL sweep leaves dangling allowance.
+    }
+
+    function test_Attack_NoApprovalAfterSuccessfulSweep() public {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        uint256 allowance = usdc.allowance(address(payments), address(router));
+        assertEq(allowance, 0, "No dangling approval after successful sweep");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                   GUARDIAN STATE MACHINE ATTACKS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function test_Attack_GuardianPauseWhenDisabledAfterEnable() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        payments.enableGuardian();
+        vm.stopPrank();
+
+        // Guardian pauses while enabled
+        vm.prank(GUARDIAN);
+        payments.guardianPause();
+        assertTrue(payments.routingPaused());
+
+        // Owner disables Guardian
+        vm.prank(MERCHANT);
+        payments.disableGuardian();
+
+        // Owner queues resume
+        vm.prank(MERCHANT);
+        bytes32 id = payments.queueResumeUCR();
+        vm.warp(block.timestamp + 48 hours + 1);
+        vm.prank(MERCHANT);
+        payments.resumeUCR(id);
+
+        // Guardian tries to pause again — must revert (now disabled)
+        vm.expectRevert(PossessioPayments.GuardianNotEnabled.selector);
+        vm.prank(GUARDIAN);
+        payments.guardianPause();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                  RECOVERY & STATE-INTEGRITY ATTACKS
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    Failed sweeps recover cleanly when conditions are fixed.
+    //                 Multi-action sequences preserve state integrity. No
+    //                 double-counting on retries.
+
+    // ───────────────────────────────────────────────────────────────────────
+    // FAILURE → RECOVERY
+    //
+    // Proof Scope:    A sweep that fails (router revert, oracle bad) leaves
+    //                 USDC intact. After conditions are fixed, the next sweep
+    //                 processes that USDC normally — no funds lost, no double-
+    //                 counting.
+    // Boundary:       USDC balance preserved across failed sweep, fully consumed
+    //                 by recovery sweep, no phantom DAI/LST inflation.
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Recovery_FailureThenSuccess() public {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+
+        usdc.mint(address(payments), 1000 * 1e6);
+        uint256 usdcBefore = usdc.balanceOf(address(payments));
+
+        // First sweep: router fails
+        router.setLstSwapReverts(true);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        vm.expectRevert();
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        // USDC unchanged — no funds lost
+        uint256 usdcAfterFail = usdc.balanceOf(address(payments));
+        assertEq(usdcAfterFail, usdcBefore, "USDC preserved across failed sweep");
+
+        // Fix the condition
+        router.setLstSwapReverts(false);
+
+        // Recovery sweep — same merchant, same balance, must succeed and consume USDC
+        vm.warp(block.timestamp + 25 hours); // pass cooldown safety (no successful sweep yet)
+        chainlinkEth.setAnswer(int256(3000_00000000));
+        chainlinkDai.setAnswer(int256(1_00000000));
+
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0.13 ether, 0.18 ether);
+
+        // USDC fully consumed (minus integer-division dust)
+        uint256 usdcAfterRecovery = usdc.balanceOf(address(payments));
+        assertLe(usdcAfterRecovery, 2, "USDC consumed by recovery sweep");
+
+        // LSTs received exactly once — no double-count
+        assertEq(cbeth.balanceOf(address(payments)), 0.13 ether, "cbETH received once");
+        assertEq(reth.balanceOf(address(payments)),  0.18 ether, "rETH received once");
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // MULTI-ACTION STATE INTEGRITY
+    //
+    // Proof Scope:    Realistic merchant flow — capture, sweep, withdraw,
+    //                 capture again, sweep again — preserves state integrity.
+    //                 Daily limit, citadel gauge, DAI reserve, LST balances
+    //                 all evolve correctly across the sequence.
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Sequence_MultiActionStateIntegrity() public {
+        // Step 1: First USDC arrives, sweep refills DAI partially
+        usdc.mint(address(payments), 3000 * 1e6); // 3000 USDC -> targets 3000 DAI refill
+        router.setDaiOut(3000 * 1e18);
+        router.setCbEthOut(0);
+        router.setREthOut(0);
+
+        vm.prank(MERCHANT);
+        payments.sweep(2900 * 1e18, 0, 0);
+
+        assertEq(dai.balanceOf(address(payments)), 3000 * 1e18, "DAI partial refill");
+
+        // Step 2: Merchant withdraws operating capital
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(500 * 1e18, PAYEE);
+
+        assertEq(payments.dailyWithdrawn(), 500 * 1e18, "Daily counter tracks");
+        assertEq(dai.balanceOf(address(payments)), 2500 * 1e18, "DAI reduced by withdrawal");
+
+        // Step 3: More USDC arrives — second sweep
+        vm.warp(block.timestamp + 25 hours); // pass sweep cooldown + window roll
+        chainlinkEth.setAnswer(int256(3000_00000000));
+        chainlinkDai.setAnswer(int256(1_00000000));
+        usdc.mint(address(payments), 5000 * 1e6); // top up DAI to ceiling, remainder to LSTs
+
+        // 2500 DAI gap to reach ceiling of 5000. With 5000 USDC incoming and
+        // daiGap/1e12 = 2500 USDC needed for refill. 2500 USDC remaining for LSTs.
+        // 40% of 2500 = 1000 USDC -> cbETH, 60% = 1500 USDC -> rETH
+        router.setDaiOut(2500 * 1e18);
+        router.setCbEthOut(0.13 ether);
+        router.setREthOut(0.18 ether);
+
+        vm.prank(MERCHANT);
+        payments.sweep(2400 * 1e18, 0.13 ether, 0.18 ether);
+
+        // Final state checks
+        assertEq(dai.balanceOf(address(payments)), 5000 * 1e18, "DAI at ceiling");
+        assertEq(cbeth.balanceOf(address(payments)), 0.13 ether, "cbETH accumulated");
+        assertEq(reth.balanceOf(address(payments)),  0.18 ether, "rETH accumulated");
+
+        // Daily limit window has rolled — `dailyRemaining()` reflects full limit
+        // available even though stored `dailyWithdrawn` doesn't reset until next
+        // withdrawal call (lazy update pattern).
+        assertEq(payments.dailyRemaining(), DAILY_LIMIT, "Window rolled, full limit available");
+
+        // Citadel gauge reflects current LST value
+        uint256 expectedGauge = (0.13 ether * 1.05e18 / 1e18) + (0.18 ether * 1.10e18 / 1e18);
+        assertEq(payments.getCitadelProgress(), expectedGauge, "Gauge reflects LST holdings");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //                  REGULATORY FINALITY (GENIUS Act compliance)
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Proof Scope:    POSSESSIO Payments retains zero on-chain authority post
+    //                 deploy. No hidden upgrade paths. Merchant sovereignty
+    //                 is mathematically enforced, not policy-promised.
+
+    // ───────────────────────────────────────────────────────────────────────
+    // OWNERSHIP RENOUNCEMENT
+    //
+    // Proof Scope:    Test contract (the deployer in our test setup) has no
+    //                 OWNER_ROLE on the deployed contract. Only the MERCHANT
+    //                 address passed in constructor has authority. Deployer
+    //                 cannot perform any privileged action.
+    // Boundary:       Confirms the constructor's role grant only benefits the
+    //                 merchant, not the entity that deployed the contract.
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_OwnershipRenouncement_DeployerHasNoAuthority() public {
+        // address(this) is the deployer (test contract)
+        address deployer = address(this);
+
+        // Confirm deployer has NO roles
+        assertFalse(
+            payments.hasRole(payments.OWNER_ROLE(), deployer),
+            "Deployer must not hold OWNER_ROLE"
+        );
+        assertFalse(
+            payments.hasRole(payments.OPERATOR_ROLE(), deployer),
+            "Deployer must not hold OPERATOR_ROLE"
+        );
+        assertFalse(
+            payments.hasRole(payments.GUARDIAN_ROLE(), deployer),
+            "Deployer must not hold GUARDIAN_ROLE"
+        );
+
+        // Deployer cannot pause (no role)
+        vm.expectRevert(PossessioPayments.InvalidAddress.selector);
+        payments.pauseUCR();
+
+        // Deployer cannot withdraw DAI
+        dai.mint(address(payments), 1000 * 1e18);
+        vm.expectRevert();
+        payments.withdrawDAI(100 * 1e18, deployer);
+
+        // Deployer cannot change ceiling
+        vm.expectRevert();
+        payments.setDaiCeiling(100_000 * 1e18);
+
+        // Deployer cannot grant themselves OWNER_ROLE
+        bytes32 ownerRole = payments.OWNER_ROLE();
+        vm.expectRevert();
+        payments.grantRole(ownerRole, deployer);
+
+        // Confirms POSSESSIO Payments cannot regain authority post-deploy
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // NO HIDDEN UPGRADABILITY
+    //
+    // Proof Scope:    No upgrade-style functions are exposed. Verifies the
+    //                 contract is truly non-upgradeable per Codebyte Law.
+    //                 Practical test: known proxy/upgrade selectors revert.
+    // Boundary:       This is a defensive test — Solidity 0.8.24+ also blocks
+    //                 selfdestruct via SELFDESTRUCT removal. No proxy pattern
+    //                 inherited. No delegatecall in contract source.
+    // Non-Proven:     Does not bytecode-inspect for delegatecall opcodes
+    //                 (out of scope for unit tests; covered by source audit).
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_NoHiddenUpgradability_NoUpgradeFunctionsExposed() public {
+        // Common proxy/upgrade function selectors that should NOT be present:
+        // upgradeTo(address)            — UUPS / TransparentProxy
+        // upgradeToAndCall(address,bytes) — UUPS
+        // changeAdmin(address)          — TransparentProxy
+        // setImplementation(address)    — Custom proxy
+        // initialize(...)               — Initializable pattern
+
+        bytes4 upgradeToSig          = bytes4(keccak256("upgradeTo(address)"));
+        bytes4 upgradeToAndCallSig   = bytes4(keccak256("upgradeToAndCall(address,bytes)"));
+        bytes4 changeAdminSig        = bytes4(keccak256("changeAdmin(address)"));
+        bytes4 setImplementationSig  = bytes4(keccak256("setImplementation(address)"));
+        bytes4 initializeSig         = bytes4(keccak256("initialize()"));
+
+        // None of these selectors should match a function in the contract.
+        // Calling them should revert because the function doesn't exist.
+
+        (bool ok1,) = address(payments).call(abi.encodeWithSelector(upgradeToSig, address(0x1)));
+        assertFalse(ok1, "upgradeTo must not exist");
+
+        (bool ok2,) = address(payments).call(abi.encodeWithSelector(upgradeToAndCallSig, address(0x1), ""));
+        assertFalse(ok2, "upgradeToAndCall must not exist");
+
+        (bool ok3,) = address(payments).call(abi.encodeWithSelector(changeAdminSig, address(0x1)));
+        assertFalse(ok3, "changeAdmin must not exist");
+
+        (bool ok4,) = address(payments).call(abi.encodeWithSelector(setImplementationSig, address(0x1)));
+        assertFalse(ok4, "setImplementation must not exist");
+
+        (bool ok5,) = address(payments).call(abi.encodeWithSelector(initializeSig));
+        assertFalse(ok5, "initialize must not exist");
+    }
+
+    receive() external payable {}
+}
