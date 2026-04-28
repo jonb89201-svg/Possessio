@@ -2,7 +2,6 @@
 
 A deterministic treasury framework on Base. MIT licensed. Mobile-virgin origin.
 
-**Live site:** [https://jonb89201-svg.github.io/Possessio/](https://jonb89201-svg.github.io/Possessio/)
 
 ---
 
