@@ -1,0 +1,2198 @@
+---
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" />
+<title>POSSESSIO — Operator Console v0.4.3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<style>
+:root{
+  /* Surfaces — white-first like Coinbase, with light slate fills */
+  --bg:#ffffff; --surface:#ffffff; --surface-2:#f8fafc; --surface-3:#f1f5f9;
+  /* Lines — soft slate */
+  --line:#e2e8f0; --line-2:#cbd5e1; --line-3:#94a3b8;
+  /* Text — dark slate scale */
+  --ink:#0f172a; --ink-dim:#475569; --ink-faint:#94a3b8;
+  /* Primary accent — POSSESSIO blue (distinct from Coinbase's #0052ff) */
+  --oxide:#1d4ed8; --oxide-dim:#1e40af; --oxide-faint:#dbeafe;
+  /* Danger — universal red */
+  --danger:#dc2626; --danger-dim:#b91c1c; --danger-faint:#fef2f2;
+  /* Council — fresh green */
+  --council:#16a34a; --council-dim:#15803d; --council-faint:#dcfce7;
+  /* Treasury — calm teal */
+  --treasury:#0891b2; --treasury-dim:#0e7490; --treasury-faint:#cffafe;
+  /* Permissionless / open — soft violet */
+  --open:#7c3aed; --open-dim:#6d28d9; --open-faint:#ede9fe;
+  /* Read — slate grey */
+  --read:#64748b; --read-dim:#475569; --read-faint:#f1f5f9;
+  --pad:16px;
+  --radius:12px;
+  --radius-pill:9999px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh;overscroll-behavior:none;letter-spacing:-0.005em}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit;background:transparent;border:1px solid var(--line);outline:none}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+a{color:var(--oxide);text-decoration:none;font-weight:500}
+a:hover{text-decoration:underline}
+
+header.console-head{position:sticky;top:0;z-index:50;background:var(--bg);border-bottom:1px solid var(--line);padding:14px 16px}
+.console-head .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:18px;letter-spacing:-0.02em;color:var(--oxide)}
+.brand small{color:var(--ink-faint);font-weight:500;margin-left:8px;font-size:12px;letter-spacing:0}
+.tag{display:inline-block;background:var(--surface-3);border:none;padding:4px 10px;font-size:11px;font-weight:500;color:var(--ink-dim);border-radius:var(--radius-pill);white-space:nowrap;letter-spacing:0}
+.tag.oxide{background:var(--oxide-faint);color:var(--oxide-dim)}
+.tag.danger{background:var(--danger-faint);color:var(--danger-dim)}
+.tag.council{background:var(--council-faint);color:var(--council-dim)}
+.tag.treasury{background:var(--treasury-faint);color:var(--treasury-dim)}
+.tag.open{background:var(--open-faint);color:var(--open-dim)}
+.tag.read{background:var(--read-faint);color:var(--read-dim)}
+.spacer{flex:1}
+
+button.btn{background:var(--surface);border:1px solid var(--line);color:var(--ink);padding:9px 16px;font-size:13px;font-weight:500;border-radius:var(--radius-pill);transition:background 0.15s ease,border-color 0.15s ease,transform 0.05s ease;letter-spacing:0}
+button.btn:hover{border-color:var(--line-2);background:var(--surface-2)}
+button.btn:active{transform:translateY(1px)}
+button.btn.oxide{background:var(--oxide);border-color:var(--oxide);color:#fff}
+button.btn.oxide:hover{background:var(--oxide-dim);border-color:var(--oxide-dim)}
+button.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button.btn.danger:hover{background:var(--danger-dim);border-color:var(--danger-dim)}
+button.btn.read{background:var(--surface);border-color:var(--line);color:var(--ink)}
+button.btn.read:hover{background:var(--surface-2);border-color:var(--line-2)}
+button.btn:disabled{opacity:0.4;cursor:not-allowed}
+
+select.chain-sel{padding:8px 12px;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-pill);font-weight:500}
+.wallet-pill{padding:6px 12px;background:var(--surface-3);border:none;font-size:12px;color:var(--ink-dim);border-radius:var(--radius-pill);font-weight:500}
+.wallet-pill.live{color:var(--oxide-dim);background:var(--oxide-faint)}
+
+/* TREASURY CARD */
+.treasury-card{max-width:760px;margin:16px auto 0;padding:20px 18px;background:var(--surface);border:1px solid var(--line);border-radius:16px}
+.tc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.tc-label{font-size:13px;color:var(--ink-dim);font-weight:500}
+.tc-refresh{background:transparent;border:1px solid var(--line);color:var(--ink-dim);font-size:14px;width:30px;height:30px;border-radius:var(--radius-pill);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;transition:background 0.15s ease,transform 0.3s ease}
+.tc-refresh:hover{background:var(--surface-2);color:var(--oxide)}
+.tc-refresh.spinning{transform:rotate(360deg)}
+.tc-total{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.tc-amount{font-size:34px;font-weight:600;letter-spacing:-0.02em;color:var(--ink);line-height:1.1}
+.tc-delta{font-size:13px;font-weight:500;color:var(--ink-faint)}
+.tc-delta.up{color:var(--council)}
+.tc-delta.down{color:var(--danger)}
+.tc-breakdown{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line);padding-top:12px}
+.tc-row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0}
+.tc-row-k{font-size:13px;color:var(--ink-dim)}
+.tc-row-v{font-size:15px;font-weight:500;color:var(--ink);font-family:'Inter',system-ui,sans-serif}
+.tc-status{font-size:11px;color:var(--ink-faint);margin-top:10px;line-height:1.5}
+.tc-status.err{color:var(--danger-dim)}
+.tc-status.loading{color:var(--ink-dim)}
+
+nav.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--bg);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:0 8px}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs button{background:transparent;border:none;border-radius:0;padding:14px 14px;color:var(--ink-dim);font-size:13px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+nav.tabs button.active{color:var(--oxide);border-bottom-color:var(--oxide)}
+nav.tabs button:hover:not(.active){color:var(--ink)}
+
+main{padding:var(--pad);max-width:760px;margin:0 auto}
+section.contract-panel{display:none}
+section.contract-panel.active{display:block}
+
+.contract-meta{border:1px solid var(--line);background:var(--surface);padding:18px;margin-bottom:18px;border-radius:var(--radius)}
+.contract-meta h2{font-size:18px;font-weight:600;letter-spacing:-0.01em;margin-bottom:8px}
+.contract-meta .desc{color:var(--ink-dim);font-size:13px;margin-bottom:14px;line-height:1.55}
+.contract-meta .meta-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.contract-meta label{display:block;font-size:11px;color:var(--ink-faint);font-weight:500;margin-bottom:6px}
+.contract-meta input.addr{width:100%;padding:10px 12px;border:1px solid var(--line);background:var(--surface-2);font-size:13px;font-family:'IBM Plex Mono',monospace;border-radius:8px;color:var(--ink)}
+.contract-meta input.addr:focus{border-color:var(--oxide);background:var(--surface)}
+
+.section-head{display:flex;align-items:center;gap:10px;padding:18px 4px 10px;margin-top:8px}
+.section-head .lbl{font-size:13px;font-weight:600;color:var(--ink)}
+.section-head .lbl.writes{color:var(--ink)}
+.section-head .lbl.reads{color:var(--ink-dim)}
+.section-head .count{font-size:12px;color:var(--ink-faint);font-weight:500;background:var(--surface-3);padding:2px 8px;border-radius:var(--radius-pill)}
+.section-head .line{flex:1;height:1px;background:var(--line)}
+.subsection-label{font-size:11px;color:var(--ink-faint);font-weight:600;padding:10px 4px 6px;margin-top:4px;text-transform:uppercase;letter-spacing:0.04em}
+
+/* ── Category grid (main view under tab) ───────────────────────────────── */
+.cat-grid{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.cat-btn{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;gap:4px 12px;
+  text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 16px;cursor:pointer;transition:border-color 0.15s ease,box-shadow 0.15s ease,transform 0.05s ease}
+.cat-btn:hover{border-color:var(--oxide);box-shadow:0 0 0 3px var(--oxide-faint)}
+.cat-btn:active{transform:scale(0.995)}
+.cat-label{grid-column:1;grid-row:1;font-size:16px;font-weight:650;color:var(--ink)}
+.cat-blurb{grid-column:1;grid-row:2;font-size:13px;color:var(--ink-dim);line-height:1.4}
+.cat-counts{grid-column:1;grid-row:3;display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.cat-chevron{grid-column:2;grid-row:1 / span 3;align-self:center;font-size:26px;color:var(--ink-faint);font-weight:400;line-height:1}
+
+/* ── Sub-page (category opened) ────────────────────────────────────────── */
+.subpage-head{display:flex;align-items:center;gap:12px;margin-top:14px;padding-bottom:4px}
+.back-btn{background:transparent;border:1px solid var(--line);border-radius:var(--radius-pill);
+  padding:8px 14px;color:var(--oxide);font-size:14px;font-weight:600;cursor:pointer;transition:border-color 0.15s ease,background 0.15s ease}
+.back-btn:hover{border-color:var(--oxide);background:var(--oxide-faint)}
+.subpage-title{font-size:18px;font-weight:650;color:var(--ink)}
+.subpage-blurb{font-size:13px;color:var(--ink-dim);line-height:1.45;margin:6px 4px 4px}
+
+details.fn{border:1px solid var(--line);background:var(--surface);margin-bottom:8px;border-radius:var(--radius);transition:border-color 0.15s ease,box-shadow 0.15s ease}
+details.fn:hover{border-color:var(--line-2)}
+details.fn[open]{border-color:var(--oxide);box-shadow:0 0 0 3px var(--oxide-faint)}
+details.fn summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;user-select:none}
+details.fn summary::-webkit-details-marker{display:none}
+details.fn summary::before{content:"›";color:var(--ink-faint);font-size:18px;font-weight:300;transition:transform 0.15s ease;display:inline-block;width:14px;line-height:1}
+details.fn[open] summary::before{transform:rotate(90deg);color:var(--oxide)}
+details.fn .fn-name{font-weight:600;color:var(--ink);font-size:14px}
+details.fn .fn-sig{color:var(--ink-faint);font-size:11px;font-family:'IBM Plex Mono',monospace}
+/* ── Bilingual: plain face + (i) reveal ──────────────────────────────── */
+details.fn .fn-plain-label{font-weight:650;color:var(--ink);font-size:15px}
+details.fn .fn-desc.plain{color:var(--ink);font-size:14px}
+.fn-info{flex:0 0 auto;width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);
+  background:var(--surface);color:var(--ink-dim);font-family:Georgia,'Times New Roman',serif;
+  font-style:italic;font-size:13px;font-weight:700;line-height:1;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s ease;padding:0}
+.fn-info:hover{border-color:var(--oxide);color:var(--oxide)}
+.fn-info.on{background:var(--oxide);border-color:var(--oxide);color:#fff}
+.fn-precise{margin:4px 0 14px;padding:12px 14px;background:var(--surface-3);border:1px solid var(--line);
+  border-radius:10px;font-size:12px;display:flex;flex-direction:column;gap:8px}
+.fn-precise .precise-row{display:grid;grid-template-columns:64px 1fr;gap:10px;align-items:start}
+.fn-precise .precise-k{color:var(--ink-faint);font-weight:600;text-transform:uppercase;letter-spacing:0.03em;font-size:10px;padding-top:2px}
+.fn-precise .precise-v{color:var(--ink-dim);line-height:1.5}
+.fn-precise .precise-v.mono{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink)}
+details.fn .fn-body{padding:4px 16px 16px 30px;border-top:1px solid var(--line)}
+details.fn .fn-body .fn-desc{color:var(--ink-dim);font-size:13px;margin:14px 0 12px;line-height:1.6}
+details.fn .fn-body .fn-rationale{color:var(--ink-dim);font-size:12px;font-style:italic;margin:8px 0 12px;padding:10px 12px;border-left:3px solid var(--oxide);background:var(--oxide-faint);border-radius:0 8px 8px 0;line-height:1.55}
+details.fn.read-card{background:var(--surface-2)}
+details.fn.read-card[open]{background:var(--surface);box-shadow:0 0 0 3px var(--read-faint);border-color:var(--read-dim)}
+details.fn.read-card[open] summary::before{color:var(--read-dim)}
+
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--ink-dim);font-weight:500;margin-bottom:6px}
+.field label .ptype{color:var(--oxide);margin-left:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:400}
+.field input,.field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-family:'IBM Plex Mono',monospace;border-radius:8px}
+.field input:focus,.field textarea:focus{border-color:var(--oxide);box-shadow:0 0 0 3px var(--oxide-faint)}
+.field textarea{min-height:60px;resize:vertical}
+.field .hint{font-size:11px;color:var(--ink-faint);margin-top:6px;line-height:1.5}
+
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.actions button{padding:8px 14px;font-size:12px}
+
+.output{margin-top:12px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--line);font-size:12px;word-break:break-all;color:var(--ink-dim);white-space:pre-wrap;line-height:1.6;border-radius:8px;font-family:'IBM Plex Mono',monospace}
+.output.ok{border-color:var(--oxide);background:var(--oxide-faint);color:var(--oxide-dim)}
+.output.read-ok{border-color:var(--line);background:var(--surface-2);color:var(--ink);white-space:normal;font-family:'Inter',system-ui,sans-serif}
+.output.err{border-color:var(--danger);background:var(--danger-faint);color:var(--danger-dim)}
+.output.empty{display:none}
+.output .lbl{color:var(--ink-faint);font-size:10px;font-weight:600;display:block;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.04em;font-family:'Inter',system-ui,sans-serif}
+.output .kv{display:flex;gap:12px;padding:4px 0;align-items:baseline}
+.output .kv .k{color:var(--ink-faint);min-width:150px;font-size:11px;font-weight:500;font-family:'Inter',system-ui,sans-serif}
+.output .kv .v{color:var(--ink);flex:1;word-break:break-all;font-size:12px;font-family:'IBM Plex Mono',monospace}
+.output .kv .ty{color:var(--ink-faint);font-size:10px;margin-left:6px;font-family:'IBM Plex Mono',monospace;font-weight:400}
+
+/* TYPED-CONFIRM MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
+.modal-overlay.active{display:flex}
+.modal-box{background:var(--surface);border:1px solid var(--line);max-width:440px;width:100%;padding:24px;border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,0.25)}
+.modal-box h3{font-size:18px;font-weight:600;color:var(--danger);margin-bottom:6px;letter-spacing:-0.01em}
+.modal-box .modal-fn{font-size:12px;color:var(--ink-faint);margin-bottom:14px;font-family:'IBM Plex Mono',monospace}
+.modal-box .modal-body{font-size:14px;color:var(--ink-dim);margin-bottom:16px;line-height:1.55}
+.modal-box .modal-warn{font-size:12px;font-weight:500;color:var(--danger-dim);margin-bottom:14px;padding:12px 14px;border:1px solid var(--danger);background:var(--danger-faint);border-radius:8px}
+.modal-box input.modal-input{width:100%;padding:12px 14px;margin-bottom:16px;border:2px solid var(--line);background:var(--surface);font-size:14px;letter-spacing:0.04em;text-transform:uppercase;font-family:'IBM Plex Mono',monospace;border-radius:8px;font-weight:600}
+.modal-box input.modal-input:focus{border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-faint)}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end}
+
+footer{border-top:1px solid var(--line);padding:20px;margin-top:32px;color:var(--ink-faint);font-size:12px;text-align:center;background:var(--surface-2)}
+footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
+
+@media (max-width:480px){
+  body,html{font-size:13px}
+  .console-head{padding:12px}
+  .brand{font-size:16px}
+  .contract-meta{padding:14px}
+  .contract-meta h2{font-size:16px}
+  details.fn summary{padding:12px 14px}
+  details.fn .fn-body{padding:4px 14px 14px 26px}
+  .output .kv{flex-direction:column;gap:2px}
+  .output .kv .k{min-width:0}
+  .treasury-card{margin:12px;padding:16px 14px;border-radius:14px}
+  .tc-amount{font-size:28px}
+}
+
+/* ===== Launch rail (lr-) — inherits console palette vars ===== */
+:root{ --lr-disp:'Space Grotesk',system-ui,sans-serif; --lr-ok:#16a34a; --lr-ok-f:#dcfce7; --lr-test:#0d9488; --lr-test-f:#ccfbf1; --lr-test-l:#5eead4; --lr-warn:#b45309; --lr-warn-f:#fffbeb; --lr-warn-l:#fde68a; }
+
+/* env modal */
+.lr-modal{position:fixed;inset:0;z-index:200;background:rgba(15,23,42,.45);display:flex;align-items:flex-end;justify-content:center;padding:0}
+.lr-modal[hidden]{display:none}
+.lr-sheet{background:var(--surface);width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:22px 20px calc(env(safe-area-inset-bottom) + 24px);animation:lr-up .22s ease}
+@keyframes lr-up{from{transform:translateY(14px);opacity:.6}to{transform:translateY(0);opacity:1}}
+.lr-sheet h3{font-family:var(--lr-disp);font-weight:600;font-size:19px;margin:2px 0 4px}
+.lr-sheet .sub{color:var(--ink-dim);font-size:13.5px;margin:0 0 16px}
+.lr-envchoice{width:100%;text-align:left;border:1.5px solid var(--line);border-radius:14px;padding:15px 16px;margin-bottom:11px;background:var(--surface);cursor:pointer;display:flex;align-items:center;gap:13px;transition:border-color .15s}
+.lr-envchoice:hover{border-color:var(--line-2)}
+.lr-envchoice .ic{width:40px;height:40px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-family:var(--lr-disp);font-weight:700;font-size:12px}
+.lr-envchoice .ic.t{background:var(--lr-test)} .lr-envchoice .ic.m{background:var(--oxide)}
+.lr-envchoice .nm{font-family:var(--lr-disp);font-weight:600;font-size:15.5px}
+.lr-envchoice .ds{color:var(--ink-dim);font-size:12.5px;margin-top:2px}
+.lr-cancel{width:100%;text-align:center;padding:13px;color:var(--ink-dim);font-weight:500;font-size:14px;background:none;border:none;cursor:pointer;margin-top:4px}
+
+/* full-screen rail view */
+#lr-view{position:fixed;inset:0;z-index:150;background:var(--surface);display:flex;flex-direction:column}
+#lr-view[hidden]{display:none}
+.lr-head{position:sticky;top:0;z-index:5;background:rgba(255,255,255,.94);backdrop-filter:saturate(1.4) blur(8px);border-bottom:1px solid var(--line);
+  padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;display:flex;align-items:center;gap:11px}
+.lr-back{font-size:22px;color:var(--ink-dim);background:none;border:none;cursor:pointer;line-height:1;width:26px}
+.lr-htitle{font-family:var(--lr-disp);font-weight:700;font-size:16px}
+.lr-envtag{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:5px 10px;border-radius:9999px}
+.lr-envtag.t{background:var(--lr-test-f);color:var(--lr-test)} .lr-envtag.m{background:var(--oxide-faint);color:var(--oxide-dim)}
+.lr-scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.lr-wrap{max-width:560px;margin:0 auto;padding:0 18px calc(env(safe-area-inset-bottom) + 50px)}
+.lr-intro{padding:18px 0 0}.lr-intro h1{font-family:var(--lr-disp);font-weight:600;font-size:23px;margin:0 0 6px}.lr-intro p{color:var(--ink-dim);font-size:14px;margin:0}
+
+.lr-banner{display:flex;align-items:center;gap:9px;border-radius:10px;padding:10px 12px;font-size:12.5px;margin:14px 0 2px}
+.lr-banner b{font-weight:700;font-family:var(--lr-disp)}
+.lr-banner.t{background:var(--lr-test-f);border:1px solid var(--lr-test-l);color:var(--lr-test)}
+.lr-banner.m{background:var(--lr-warn-f);border:1px solid var(--lr-warn-l);color:var(--lr-warn)}
+
+.lr-flow{padding:10px 0 0}
+.lr-block{display:grid;grid-template-columns:34px 1fr;gap:14px;position:relative}
+.lr-gut{position:relative;display:flex;justify-content:center}
+.lr-node{width:30px;height:30px;border-radius:50%;background:var(--surface);border:2px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-family:var(--lr-disp);font-weight:600;font-size:13px;color:var(--ink-faint);z-index:2;transition:all .3s cubic-bezier(.4,0,.2,1)}
+.lr-block.done .lr-node{background:var(--oxide);border-color:var(--oxide);color:#fff}
+.lr-block.active .lr-node{border-color:var(--oxide);color:var(--oxide);box-shadow:0 0 0 5px var(--oxide-faint)}
+.lr-node svg{width:14px;height:14px;stroke:#fff;stroke-width:3;fill:none}
+.lr-node .lk{width:12px;height:12px;stroke:var(--ink-faint);stroke-width:2;fill:none}
+.lr-block:not(:last-child) .lr-gut::after{content:"";position:absolute;top:30px;bottom:-6px;width:2px;background:var(--line);z-index:1}
+.lr-block.done:not(:last-child) .lr-gut::after{background:var(--oxide)}
+.lr-bd{padding-bottom:22px;min-width:0}.lr-block.locked .lr-bd{opacity:.45}
+.lr-bt{font-family:var(--lr-disp);font-weight:600;font-size:17px;margin:3px 0 0;min-height:30px;display:flex;align-items:center}
+.lr-bs{color:var(--ink-dim);font-size:13.5px;margin:5px 0 0}.lr-bc{margin-top:14px}
+.lr-dsum{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:3px;min-height:30px}.lr-dsum .v{font-size:14.5px;font-weight:500}
+.lr-edit{font-size:12.5px;font-weight:600;color:var(--oxide);padding:5px 9px;border-radius:9999px;background:none;border:none;cursor:pointer}.lr-edit:hover{background:var(--oxide-faint)}
+
+.lr-card{text-align:left;width:100%;background:var(--surface);border:1.5px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:11px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.lr-card:hover{border-color:var(--line-2)} .lr-card.sel{border-color:var(--oxide);box-shadow:0 0 0 3px var(--oxide-faint)}
+.lr-ctop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.lr-net{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 9px;border-radius:9999px}
+.lr-net .nd{width:6px;height:6px;border-radius:50%}
+.lr-net.base{background:var(--oxide-faint);color:var(--oxide-dim)} .lr-net.base .nd{background:var(--oxide)}
+.lr-net.eth{background:#ede9fe;color:#6d28d9} .lr-net.eth .nd{background:#6d28d9}
+.lr-tick{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-2);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.lr-card.sel .lr-tick{background:var(--oxide);border-color:var(--oxide)}
+.lr-tick svg{width:12px;height:12px;stroke:#fff;stroke-width:3;fill:none;opacity:0}.lr-card.sel .lr-tick svg{opacity:1}
+.lr-cn{font-family:var(--lr-disp);font-weight:600;font-size:16px;margin:0 0 3px}.lr-cd{color:var(--ink-dim);font-size:13px;margin:0}
+
+.lr-opt{background:var(--surface);border:1.5px solid var(--line);border-radius:14px;margin-bottom:11px;overflow:hidden}
+.lr-opt.sel{border-color:var(--oxide);box-shadow:0 0 0 3px var(--oxide-faint)}
+.lr-om{cursor:pointer;padding:14px 15px}.lr-oh{display:flex;align-items:center;justify-content:space-between}
+.lr-ot{font-family:var(--lr-disp);font-weight:600;font-size:15.5px;display:flex;align-items:center;gap:8px}
+.lr-easy{font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;background:var(--lr-ok-f);color:var(--lr-ok);padding:3px 7px;border-radius:9999px}
+.lr-od{color:var(--ink-dim);font-size:13px;margin:6px 0 0}
+.lr-i{width:19px;height:19px;border-radius:50%;background:var(--surface-3);color:var(--ink-dim);font-size:11px;font-weight:700;font-family:var(--lr-disp);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer}
+.lr-i:hover{background:var(--oxide-faint);color:var(--oxide)}
+.lr-ip{margin:0 15px 14px;padding:11px 13px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--ink-dim);display:none}
+.lr-ip.open{display:block}.lr-ip .tech{margin-top:7px;padding-top:7px;border-top:1px dashed var(--line-2);font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono',monospace}
+.lr-spx{margin:0 15px 15px;border-top:1px solid var(--line);padding-top:13px}
+.lr-field{margin-bottom:14px}.lr-field label{display:block;font-size:12px;font-weight:600;color:var(--ink-dim);margin-bottom:6px}
+.lr-field input{width:100%;padding:12px 13px;border:1.5px solid var(--line);border-radius:11px;background:var(--surface);font-size:15px}
+.lr-field input:focus{border-color:var(--oxide);outline:none}.lr-hint{font-size:11.5px;color:var(--ink-faint);margin-top:5px}
+.lr-in2{display:flex;gap:11px}.lr-in2 .lr-field{flex:1}
+.lr-lo{display:inline-flex;align-items:center;gap:5px;color:var(--oxide);font-weight:600;font-size:13px;text-decoration:none}
+.lr-note{display:flex;gap:9px;padding:11px 12px;border-radius:10px;font-size:12.5px;line-height:1.45;margin-top:11px}
+.lr-note.w{background:var(--lr-warn-f);border:1px solid var(--lr-warn-l);color:var(--lr-warn)}
+.lr-note.i{background:var(--oxide-faint);color:var(--oxide-dim)}.lr-note .ni{flex-shrink:0;font-weight:700}
+.lr-lk{margin-top:15px;border:1px dashed var(--line-2);border-radius:12px;padding:13px 14px;background:var(--surface-2)}
+.lr-lkh{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink-dim);margin-bottom:8px}
+.lr-lkr{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;color:var(--ink-dim)}.lr-lkr b{color:var(--ink);font-weight:500;text-align:right}
+.lr-lki{width:13px;height:13px;opacity:.55}
+.lr-sum{border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.lr-sr{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px}.lr-sr:last-child{border:none}
+.lr-sr .k{color:var(--ink-dim)}.lr-sr .v{font-weight:600;text-align:right}
+.lr-cs{text-align:center;padding:18px 6px}
+.lr-spin{width:42px;height:42px;margin:0 auto 18px;border:3px solid var(--oxide-faint);border-top-color:var(--oxide);border-radius:50%;animation:lr-sp .9s linear infinite}
+@keyframes lr-sp{to{transform:rotate(360deg)}}
+.lr-st{font-family:var(--lr-disp);font-weight:600;font-size:19px;margin:0 0 8px}.lr-sb{color:var(--ink-dim);font-size:13.5px;max-width:330px;margin:0 auto}
+.lr-ck{width:54px;height:54px;margin:0 auto 16px;border-radius:50%;background:var(--lr-ok-f);display:flex;align-items:center;justify-content:center}
+.lr-ck svg{width:27px;height:27px;stroke:var(--lr-ok);stroke-width:3.5;fill:none}
+.lr-addr{margin:16px auto 0;max-width:380px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:12px;font-family:'IBM Plex Mono',monospace;font-size:12px;word-break:break-all;text-align:center}
+.lr-addr small{display:block;font-family:var(--lr-disp);font-size:10.5px;color:var(--ink-faint);margin-bottom:5px;letter-spacing:.03em;text-transform:uppercase}
+.lr-wsheet{border:1.5px solid var(--oxide);border-radius:14px;padding:15px}
+.lr-wh{display:flex;align-items:center;gap:9px;font-weight:600;font-size:13px;color:var(--oxide-dim);margin-bottom:10px}
+.lr-wh .bd{width:18px;height:18px;border-radius:5px;background:var(--oxide);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-family:var(--lr-disp);font-weight:700}
+.lr-go{width:100%;background:var(--oxide);color:#fff;font-family:var(--lr-disp);font-weight:600;font-size:15.5px;padding:14px;border:none;border-radius:12px;margin-top:16px;cursor:pointer;transition:background .15s,transform .05s}
+.lr-go:hover{background:var(--oxide-dim)}.lr-go:active{transform:scale(.99)}.lr-go:disabled{background:var(--line-2);cursor:not-allowed}
+.lr-go.t{background:var(--lr-test)}.lr-go.t:hover{background:#0f766e}
+@media (prefers-reduced-motion:reduce){#lr-view *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+</style>
+</head>
+<body>
+
+<header class="console-head">
+  <div class="row">
+    <div class="brand">Possessio <small>Operator Console</small></div>
+    <span class="tag oxide" id="status-tag">Pre-deploy</span>
+    <div class="spacer"></div>
+    <select class="chain-sel" id="chain-sel">
+      <option value="8453">Base</option>
+      <option value="1">Ethereum L1</option>
+    </select>
+    <button class="btn oxide" id="connect-btn">Connect Wallet</button>
+    <button class="btn oxide" id="lr-launch-btn">Launch</button>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <span class="wallet-pill" id="wallet-pill">No wallet</span>
+    <span class="wallet-pill" id="chain-pill">Chain 8453</span>
+    <div class="spacer"></div>
+    <span class="tag">v0.5.0 · 2026-05-27</span>
+  </div>
+</header>
+
+<section class="treasury-card" id="treasury-card">
+  <div class="tc-head">
+    <span class="tc-label">Your Treasury</span>
+    <button class="tc-refresh" id="tc-refresh" title="Refresh">↻</button>
+  </div>
+  <div class="tc-total">
+    <span class="tc-amount" id="tc-amount">$—</span>
+    <span class="tc-delta" id="tc-delta"></span>
+  </div>
+  <div class="tc-breakdown">
+    <div class="tc-row">
+      <span class="tc-row-k">Liquid</span>
+      <span class="tc-row-v" id="tc-liquid">$—</span>
+    </div>
+    <div class="tc-row">
+      <span class="tc-row-k">Earning</span>
+      <span class="tc-row-v" id="tc-earning">$—</span>
+    </div>
+  </div>
+  <div class="tc-status" id="tc-status">Connect a wallet or paste an L1Anchor address to see live values.</div>
+</section>
+
+<nav class="tabs" id="tabs"></nav>
+
+<main id="panels"></main>
+
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal-box">
+    <h3 id="modal-title">Irreversible operation</h3>
+    <div class="modal-fn" id="modal-fn"></div>
+    <p class="modal-body" id="modal-body"></p>
+    <div class="modal-warn">This action cannot be undone. Type the confirmation phrase to proceed.</div>
+    <input class="modal-input" id="modal-input" placeholder="" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn danger" id="modal-confirm" disabled>Confirm</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div>POSSESSIO PROTOCOL · OPERATOR CONSOLE · ARCHITECT-RATIFIED</div>
+  <div class="arch">Per Amendment VII — terminal output substantiates state. This console encodes calldata, submits transactions, and reads on-chain state via eth_call; it does not certify deployments.</div>
+</footer>
+
+<script>
+"use strict";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fallback RPCs — used for reads when wallet is absent or on the wrong chain.
+// ─────────────────────────────────────────────────────────────────────────────
+const RPC_BY_CHAIN = {
+  1:    "https://eth.llamarpc.com",
+  8453: "https://mainnet.base.org",
+};
+
+const STORAGE_KEY = "possessio_console_addresses_v0_4_3";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTRACT DEFINITIONS — v0.4 merge baseline
+//
+// Verified against canonical sources (V3 substrate as of 2026-05-27):
+//   POSSESSIO_v2-6-1.sol      — STEEL + PossessioHook (V3 architectural identity:
+//                               Aerodrome Slipstream WETH→cbETH venue, 18-decimal
+//                               exchange-rate oracle, X-LINK dispatch pattern,
+//                               StakingDeployed/StakingRetained dual-emit events)
+//   PossessioPayments_v2-4-1.sol — V3 dual-acquisition (cbETH leg + Morpho USDC leg)
+//                                  with merchant-configurable cbEthBps split
+//   L1Anchor.sol              — includes resetDepeg() (Grok finding, Architect-ratified May 9 2026)
+//   L1AnchorFactory.sol
+//
+// PLATE v1 deliberately excluded — dormant, reference-only per Architect directive.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONTRACTS = [
+
+  // 1. PossessioHook — v2 Uniswap V4 hook
+  {
+    key:"HOOK", label:"V3", title:"POSSESSIO V3",
+    chain:"Base", chainId:8453,
+    desc:"POSSESSIO V3 — one contract combining three parts: the STEEL ERC20 token, the Uniswap V4 fee-capture/routing hook, and the SAV council vault. It is NOT a deposit or custody account for user funds — it captures the 2% L.A.T.E. fee on STEEL/WETH swaps and routes it onward (25% LP / 75% Treasury → cbETH staking via Aerodrome Slipstream). Your funds and the stable reserve are custodied elsewhere: the Treasury Safe and PossessioPayments (Tier-1). The DAI reserve leg was removed in v3. Hook address must satisfy uint160(addr) & 0x3FFF == 0x08C8. Inherits IUnlockCallback, ReentrancyGuard, Ownable2Step, AutomationCompatibleInterface.",
+    access:"Ownable2Step + onlyTreasury + onlyCouncilMember",
+    categories:[
+      { id:"treasury", label:"Treasury Ops", blurb:"Route accumulated ETH, harvest cbETH rewards, check state",
+        names:["routeETH","harvestRewards","getState","getClaimable","TREASURY_SAFE","HARVEST_DUST_FLOOR"] },
+      { id:"steel", label:"STEEL Token", blurb:"The protocol's ERC20 — V3 is the token (name, symbol, supply, balances)",
+        names:["name","symbol","totalSupply","balanceOf"] },
+      { id:"automation", label:"Automation", blurb:"Chainlink keeper config and upkeep status",
+        names:["setForwarder","setUpkeepID","queueForwarderUpdate","executeForwarderUpdate","pauseUpkeep","unpauseUpkeep","automationForwarder","upkeepID","upkeepPaused","executedUpkeepCount","executedUpkeeps","UPKEEP_HYSTERESIS_BPS","checkUpkeep"] },
+      { id:"council", label:"Council / SAV", blurb:"Service Accountability Vault — deposits, burns, invent proposals",
+        names:["savDeposit","savBurn","savPause","savUnpause","savSlash","proposeInvent","approveInvent","executeInvent","getProposalStatus","COUNCIL_0","COUNCIL_1","COUNCIL_2","COUNCIL_3"] },
+      { id:"pool", label:"Pool Setup", blurb:"One-time pool registration and liquidity seeding",
+        names:["registerPool","seedInitialLiquidity","poolInitialized","getHookPermissions","pauseRouting","queueResumeRouting","resumeRouting"] },
+      { id:"admin", label:"Ownership & Rescue", blurb:"Ownership transfer and stuck-token rescue",
+        names:["transferOwnership","acceptOwnership","renounceOwnership","rescueToken","owner","pendingOwner"] },
+    ],
+    functions:[
+
+      // Ownership
+      { kind:"write", name:"transferOwnership", gated:["onlyOwner"],
+        desc:"Step 1 of Ownable2Step transfer. Used during deployment-and-rotate custody pattern: deployer registers pool and seeds liquidity, then transfers ownership to the merchant.",
+        inputs:[{name:"newOwner",type:"address"}], outputs:[] },
+      { kind:"write", name:"acceptOwnership", gated:["pendingOwner"],
+        desc:"Step 2 of Ownable2Step. The new owner's first cryptographic action establishing their control.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"renounceOwnership", gated:["onlyOwner"], danger:true, typedConfirm:"RENOUNCE",
+        desc:"Permanently renounce ownership. IRREVERSIBLE. Hook owner controls registerPool and seedInitialLiquidity. After both have been called, renunciation removes that lever. Typed confirmation required.",
+        inputs:[], outputs:[] },
+
+      // Pool lifecycle
+      { kind:"write", name:"registerPool", gated:["onlyOwner"], struct:"PoolKey",
+        desc:"One-time pool registration. Binds the hook to its target PoolKey. Reverts PoolAlreadyRegistered on second call. The `hooks` field MUST equal this contract's own address — register reverts InvalidAddress otherwise.",
+        inputs:[
+          {name:"currency0",type:"address",hint:"lower-sorted token; usually address(0) for native ETH on V4"},
+          {name:"currency1",type:"address",hint:"higher-sorted token; STEEL address"},
+          {name:"fee",type:"uint24",hint:"V4 pool fee tier (e.g. 3000 for 0.3%)"},
+          {name:"tickSpacing",type:"int24",hint:"tick spacing for the fee tier (60 for 0.3%)"},
+          {name:"hooks",type:"address",hint:"MUST equal address(this) — this hook contract's own address"},
+        ], outputs:[] },
+      { kind:"write", name:"seedInitialLiquidity", gated:["onlyOwner","payable"], valueField:"ethAmount",
+        desc:"Seed initial liquidity. ethAmount must equal msg.value. Requires preceding registerPool(). Pre-approve steelAmount of STEEL to this hook before calling.",
+        inputs:[
+          {name:"ethAmount",type:"uint256",hint:"wei; must equal value sent"},
+          {name:"steelAmount",type:"uint256",hint:"STEEL wei (18 decimals); approve to hook first"},
+        ], outputs:[] },
+
+      // Keeper / permissionless
+      { kind:"write", name:"routeETH", gated:["Treasury | permissionless@threshold+cooldown","notPaused"],
+        desc:"Main keeper function — distributes accumulated ETH per protocol splits: 25%→LP, 75%→Treasury (full portion routes to cbETH via Aerodrome Slipstream WETH→cbETH multi-hop, tickSpacing=1). Treasury Safe may call anytime; any other caller must wait until accumulatedETH ≥ 0.05 ETH (ROUTE_THRESHOLD) AND 6h since lastRouteTime (ROUTE_COOLDOWN). Permissionless caller receives 0.1% reward (Position B: forwarder + internal dispatcher exempt). V3 substrate: failure branches emit StakingRetained with reason code (1=depeg-pause, 2=oracle-invalid, 3=wrap-failed, 4=swap-failed-unwrap-success, 5=swap-failed-unwrap-stuck). Reverts BelowThreshold or RouteTooEarly if threshold/cooldown not met.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"harvestRewards", gated:["permissionless","notPaused"],
+        desc:"Harvest cbETH staking rewards. Reads cbETH balance above tracked principal, swaps the excess cbETH→WETH (Aerodrome Slipstream) → ETH (WETH unwrap), then distributes 25%→LP, 75%→Treasury per REWARDS splits. V3 substrate: cbETH on Base is bridged OptimismMintableERC20 with no payable withdraw — swap-not-withdraw is the canonical exit path. Subject to HARVEST_DUST_FLOOR (0.001 ETH) minimum. Permissionless. Reverts ZeroAmount if no rewards above principal+floor.",
+        inputs:[], outputs:[] },
+
+      // Treasury — circuit breaker
+      { kind:"write", name:"pauseRouting", gated:["onlyTreasury"], danger:true,
+        desc:"Pause fee routing immediately. Reversible only via queueResumeRouting + 48h timelock.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"queueResumeRouting", gated:["onlyTreasury"],
+        desc:"Step 1 of resume. Queues a timelock id. The id is emitted in the event log — retrieve from tx receipt.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"resumeRouting", gated:["onlyTreasury","tlPassed"],
+        desc:"Step 2 of resume. Requires id from queueResumeRouting AND 48h timelock elapsed.",
+        inputs:[{name:"id",type:"bytes32"}], outputs:[] },
+
+      // Treasury — SAV
+      { kind:"write", name:"savDeposit", gated:["onlyTreasury","notSlashed"],
+        desc:"Deposit STEEL into Service Accountability Vault on behalf of treasury allocation. Splits evenly across the 4 council members; remainder returns to Treasury. Pre-approve STEEL to this hook before calling.",
+        inputs:[{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"savPause", gated:["onlyTreasury"], danger:true,
+        desc:"Pause SAV. Halts council Burn / Invent paths.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"savUnpause", gated:["onlyTreasury"],
+        desc:"Resume SAV operations.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"savSlash", gated:["onlyTreasury"], danger:true, typedConfirm:"SLASH",
+        desc:"NUCLEAR OPTION — burns the entire SAV STEEL balance, zeros all four council claimables, sets notSlashed=false PERMANENTLY. Hook fee capture continues; council allocation permanently lost. IRREVERSIBLE. Typed confirmation required.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"executeInvent", gated:["onlyTreasury","savNotPaused","notSlashed"],
+        desc:"Step 3 of council Invent. Executes once 3-of-4 approvals met. Deducts equally from all four council claimable balances.",
+        inputs:[
+          {name:"amount",type:"uint256"},
+          {name:"proposalHash",type:"bytes32"},
+          {name:"metadata",type:"bytes",hint:"0x-prefixed hex encoding invent justification. ABI-encode a string or struct off-chain (e.g. ethers.toUtf8Bytes(justification)) then paste the resulting 0x… here. Use 0x for empty."},
+        ], outputs:[] },
+
+      // Treasury — rescue
+      { kind:"write", name:"rescueToken", gated:["onlyTreasury"],
+        desc:"Rescue an errant token to the Treasury Safe. Reverts on STEEL / cbETH / WETH (the protected set).",
+        inputs:[{name:"token",type:"address"},{name:"amount",type:"uint256"}], outputs:[] },
+
+      // Council
+      { kind:"write", name:"savBurn", gated:["onlyCouncilMember","savNotPaused","notSlashed"],
+        desc:"Council Burn mechanic. Caller burns from their own claimable balance — sent to dead address. Visible signal of cost-bearing.",
+        inputs:[{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"proposeInvent", gated:["onlyCouncilMember","savNotPaused","notSlashed"],
+        desc:"Step 1 of council Invent — any council member registers a proposal hash. 30-day expiry. Re-proposing an expired hash resets approvals.",
+        inputs:[{name:"proposalHash",type:"bytes32"}], outputs:[] },
+      { kind:"write", name:"approveInvent", gated:["onlyCouncilMember","savNotPaused","notSlashed"],
+        desc:"Step 2 of council Invent — one approval per council member address. Threshold is 3-of-4 before executeInvent succeeds.",
+        inputs:[{name:"proposalHash",type:"bytes32"}], outputs:[] },
+
+      // Reads — ownership
+      { kind:"read", name:"owner", gated:["read"], desc:"Current owner (Ownable2Step).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"pendingOwner", gated:["read"], desc:"Pending owner (Ownable2Step transfer in-flight).",
+        inputs:[], outputs:[{type:"address"}] },
+
+      // Reads — fixed substrate
+      { kind:"read", name:"TREASURY_SAFE", gated:["read"], desc:"Treasury Safe address (immutable, constructor-set).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"COUNCIL_0", gated:["read"], desc:"Council seat 0 — Gemini (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"COUNCIL_1", gated:["read"], desc:"Council seat 1 — ChatGPT (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"COUNCIL_2", gated:["read"], desc:"Council seat 2 — Claude (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"COUNCIL_3", gated:["read"], desc:"Council seat 3 — Grok (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+
+      // Reads — state
+      { kind:"read", name:"getState", gated:["read"],
+        desc:"Consolidated state snapshot.",
+        inputs:[], outputs:[
+          {name:"accumulated",type:"uint256"},
+          {name:"cbPrincipal",type:"uint256"},
+          {name:"routingPaused",type:"bool"},
+          {name:"cbPaused",type:"bool"},
+          {name:"nextRouteAllowed",type:"uint256"},
+        ] },
+      { kind:"read", name:"poolInitialized", gated:["read"], desc:"True once registerPool() has been called.",
+        inputs:[], outputs:[{type:"bool"}] },
+
+      // Reads — permission flags
+      { kind:"read", name:"getHookPermissions", gated:["read"],
+        desc:"V4 hook permission flags. Ratified for v2: beforeAddLiquidity, beforeSwap, afterSwap, beforeSwapReturnDelta all true; rest false. Verifies hook address bits match implemented permissions.",
+        inputs:[], outputs:[
+          {name:"beforeInitialize",type:"bool"},{name:"afterInitialize",type:"bool"},
+          {name:"beforeAddLiquidity",type:"bool"},{name:"afterAddLiquidity",type:"bool"},
+          {name:"beforeRemoveLiquidity",type:"bool"},{name:"afterRemoveLiquidity",type:"bool"},
+          {name:"beforeSwap",type:"bool"},{name:"afterSwap",type:"bool"},
+          {name:"beforeDonate",type:"bool"},{name:"afterDonate",type:"bool"},
+          {name:"beforeSwapReturnDelta",type:"bool"},{name:"afterSwapReturnDelta",type:"bool"},
+          {name:"afterAddLiquidityReturnDelta",type:"bool"},{name:"afterRemoveLiquidityReturnDelta",type:"bool"},
+        ] },
+
+      // Reads — SAV
+      { kind:"read", name:"getClaimable", gated:["read"], desc:"SAV claimable STEEL balance for a council member.",
+        inputs:[{name:"member",type:"address"}], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getProposalStatus", gated:["read"], desc:"Invent proposal state.",
+        inputs:[{name:"proposalHash",type:"bytes32"}], outputs:[
+          {name:"approvals",type:"uint8"},
+          {name:"expiry",type:"uint256"},
+          {name:"executed",type:"bool"},
+        ] },
+
+      // ── Writes — Chainlink Automation (council-ratified 2026-05-12) ──
+      { kind:"write", name:"setForwarder", gated:["onlyOwner"],
+        desc:"One-time registration of Chainlink Automation Forwarder address. After this, automationForwarder mutable only via queueForwarderUpdate + 48h timelock (Treasury).",
+        inputs:[{name:"forwarder",type:"address",hint:"address of the Chainlink Automation Forwarder for this upkeep"}], outputs:[] },
+      { kind:"write", name:"setUpkeepID", gated:["onlyOwner"],
+        desc:"Record the Chainlink Automation Upkeep ID after registration. Owner-only, idempotent.",
+        inputs:[{name:"newUpkeepID",type:"uint256",hint:"Chainlink registry-assigned upkeep ID"}], outputs:[] },
+      { kind:"write", name:"queueForwarderUpdate", gated:["onlyTreasury"],
+        desc:"IV.8 Step 1 — queue forwarder address update via 48h Treasury timelock. For Chainlink Registry migrations.",
+        inputs:[{name:"newForwarder",type:"address"}], outputs:[] },
+      { kind:"write", name:"executeForwarderUpdate", gated:["onlyTreasury","tlPassed"],
+        desc:"IV.8 Step 2 — execute forwarder update after 48h timelock elapsed.",
+        inputs:[{name:"id",type:"bytes32",hint:"timelock id from queueForwarderUpdate event"}], outputs:[] },
+      { kind:"write", name:"pauseUpkeep", gated:["onlyTreasury"], danger:true,
+        desc:"IV.7 Position B — pause Chainlink Automation execution. Independent of routingPaused; halts upkeep without halting manual routing.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"unpauseUpkeep", gated:["onlyTreasury"],
+        desc:"Resume Chainlink Automation execution.",
+        inputs:[], outputs:[] },
+
+      // ── Reads — Chainlink Automation ──
+      { kind:"read", name:"automationForwarder", gated:["read"],
+        desc:"Current Chainlink Automation Forwarder address. address(0) if not yet registered.",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"upkeepID", gated:["read"],
+        desc:"Chainlink Automation Upkeep ID. 0 if not yet registered.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"upkeepPaused", gated:["read"],
+        desc:"Whether automation upkeep is currently paused (IV.7 Position B).",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"executedUpkeepCount", gated:["read"],
+        desc:"Monotonic counter of automated executions to date.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"executedUpkeeps", gated:["read"],
+        desc:"Replay map lookup — true if the given replayKey has been executed.",
+        inputs:[{name:"replayKey",type:"bytes32"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"HARVEST_DUST_FLOOR", gated:["read"],
+        desc:"IV.1 — minimum cbETH excess before harvest upkeep triggers. Constant 0.001 ether.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"UPKEEP_HYSTERESIS_BPS", gated:["read"],
+        desc:"IV.4 — hysteresis multiplier (basis 100). Constant 120 (= 20% buffer over canonical threshold).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"checkUpkeep", gated:["read"],
+        desc:"Chainlink off-chain view — returns whether and which task to execute. Pass 0x as checkData.",
+        inputs:[{name:"checkData",type:"bytes",hint:"pass 0x"}], outputs:[
+          {name:"upkeepNeeded",type:"bool"},
+          {name:"performData",type:"bytes"},
+        ] },
+
+      // STEEL token reads (V3 IS the token — same contract)
+      { kind:"read", name:"name", gated:["read"], desc:"Token name string.",
+        inputs:[], outputs:[{type:"string"}] },
+      { kind:"read", name:"symbol", gated:["read"], desc:"Token symbol string.",
+        inputs:[], outputs:[{type:"string"}] },
+      { kind:"read", name:"totalSupply", gated:["read"], desc:"ERC20 total supply (1B * 1e18 at construction).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"balanceOf", gated:["read"], desc:"STEEL balance of an account (wei, 18 decimals).",
+        inputs:[{name:"account",type:"address"}], outputs:[{type:"uint256"}] },
+    ],
+  },
+
+  // 3. PossessioPayments — Tier 1 inbound payment rails
+  {
+    key:"PAY", label:"PossessioPayments", title:"PossessioPayments (Tier 1)",
+    chain:"Base", chainId:8453,
+    desc:"Inbound payment rails complementing PayPal-class providers. AccessControl with OWNER_ROLE / OPERATOR_ROLE / GUARDIAN_ROLE. Pools USDC, refills DAI working-capital reserve to merchant ceiling, then splits remainder via cbEthBps (default 50/50, configurable 10%-90%): cbETH leg (USDC→WETH→cbETH multi-hop via Uniswap V3 + Aerodrome Slipstream) and Morpho USDC leg (Bitwise-curated Morpho Blue ERC4626 vault).",
+    access:"AccessControl (OWNER_ROLE self-admin; OPERATOR / GUARDIAN granted by OWNER)",
+    categories:[
+      { id:"policy", label:"Inflow Policy", blurb:"Set how incoming USDC flows — yield split, reserve target, batch size",
+        names:["setCbEthBps","setDaiCeiling","setMinSwapBatch","setSweepSlippageGuards","cbEthBps","daiCeiling","minSwapBatch","sweepSlippageMinDai","sweepSlippageMinCbEth","morphoDepositedPrincipal"] },
+      { id:"operations", label:"Operations", blurb:"Run sweeps, check status, pause and resume the engine",
+        names:["sweep","pauseUCR","queueResumeUCR","resumeUCR","getTreasuryGauge","getUSDCBalance","getDAIBalance","getCbETHBalance","getMorphoBalance","lastSweepTime","nextSweepAllowed","isDaiReserveFull","checkUpkeep"] },
+      { id:"reserve", label:"Reserve & Withdrawals", blurb:"Manage DAI working capital and daily withdrawal limits",
+        names:["withdrawDAI","decreaseDailyLimit","queueDailyLimitIncrease","executeDailyLimitIncrease","cancelDailyLimitIncrease","dailyRemaining","dailyLimit"] },
+      { id:"security", label:"Security", blurb:"Guardian protection, role management, emergency controls",
+        names:["enableGuardian","disableGuardian","guardianPause","guardianEnabled","armorLevelDays","grantRole","revokeRole","renounceRole","hasRole","getRoleAdmin","OWNER_ROLE","OPERATOR_ROLE","GUARDIAN_ROLE","DEFAULT_ADMIN_ROLE","queueEmergencyWithdraw","executeEmergencyWithdraw","cancelEmergencyWithdraw","isEmergencyQueued","emergencyReady"] },
+      { id:"automation", label:"Automation", blurb:"Chainlink keeper config — forwarder, upkeep, pause",
+        names:["setForwarder","setUpkeepID","queueForwarderUpdate","executeForwarderUpdate","pauseUpkeep","unpauseUpkeep","automationForwarder","upkeepID","upkeepPaused","executedUpkeepCount","UPKEEP_HYSTERESIS_BPS"] },
+    ],
+    functions:[
+
+      // Keeper (OWNER or OPERATOR)
+      { kind:"write", name:"sweep", gated:["OWNER_ROLE | OPERATOR_ROLE","notPaused"],
+        desc:"Execute periodic sweep. Refills DAI reserve to ceiling, then splits remaining USDC per cbEthBps between cbETH leg (USDC→WETH via Uniswap V3 0.05%, then WETH→cbETH via Aerodrome Slipstream tickSpacing=1) and Morpho USDC leg (direct ERC4626 deposit to Bitwise Morpho Blue vault). Subject to SWEEP_DELAY (24h) since lastSweepTime. Validates Chainlink cbETH/ETH 18-decimal exchange-rate oracle freshness (90,000s window for 24h-heartbeat feed). Reverts BatchTooSmall if balance < minSwapBatch.",
+        rationale:"Vary call timing within window to avoid MEV pattern-matching. v2.3 multi-hop architecture: USDC→WETH leg has its own slippage guard distinct from the WETH→cbETH leg.",
+        inputs:[
+          {name:"minDaiOut",type:"uint256",hint:"slippage guard on USDC→DAI hop; 0 if no DAI refill needed"},
+          {name:"minWethOut",type:"uint256",hint:"slippage guard on USDC→WETH leg (Uniswap V3 0.05%)"},
+          {name:"minCbEthOut",type:"uint256",hint:"slippage guard on WETH→cbETH leg (Aerodrome Slipstream)"},
+        ], outputs:[] },
+      { kind:"write", name:"pauseUCR", gated:["OWNER_ROLE | OPERATOR_ROLE"], danger:true,
+        desc:"Pause sweep mechanism immediately. Callable by OWNER or OPERATOR. Reversible only via queueResumeUCR + 48h timelock (OWNER-only).",
+        inputs:[], outputs:[] },
+
+      // OWNER — resume
+      { kind:"write", name:"queueResumeUCR", gated:["OWNER_ROLE"],
+        desc:"Step 1 of resume. Queues timelock id. Retrieve id from event log in tx receipt.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"resumeUCR", gated:["OWNER_ROLE","tlPassed"],
+        desc:"Step 2 of resume. Requires id and 48h timelock elapsed.",
+        inputs:[{name:"id",type:"bytes32"}], outputs:[] },
+
+      // OWNER — guardian path
+      { kind:"write", name:"enableGuardian", gated:["OWNER_ROLE"],
+        desc:"Enable guardian pause path. While enabled, GUARDIAN_ROLE may invoke guardianPause().",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"disableGuardian", gated:["OWNER_ROLE"],
+        desc:"Disable guardian path.",
+        inputs:[], outputs:[] },
+
+      // GUARDIAN
+      { kind:"write", name:"guardianPause", gated:["GUARDIAN_ROLE"], danger:true,
+        desc:"Guardian-only emergency pause. Requires enableGuardian() to have been called first. Guardian can ONLY pause; cannot withdraw, unpause, or sweep.",
+        inputs:[], outputs:[] },
+
+      // OWNER — DAI reserve management
+      { kind:"write", name:"withdrawDAI", gated:["OWNER_ROLE"],
+        desc:"Withdraw DAI from contract to a destination address. Subject to daily limit.",
+        inputs:[{name:"amount",type:"uint256"},{name:"to",type:"address"}], outputs:[] },
+      { kind:"write", name:"setDaiCeiling", gated:["OWNER_ROLE"],
+        plain:{ label:"Set your cash cushion",
+          desc:"Decide how much money to keep on hand as a steady dollar reserve before the rest gets put to work earning. Think of it as your working-capital buffer — money you want ready, not invested.",
+          inputHint:"Dollar amount to hold in reserve" },
+        desc:"Set ceiling on DAI balance held before sweep routes remainder to cbETH.",
+        inputs:[{name:"newCeiling",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"decreaseDailyLimit", gated:["OWNER_ROLE"],
+        desc:"Decrease daily withdraw limit. Immediate (no timelock). newLimit must be lower than current.",
+        inputs:[{name:"newLimit",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"queueDailyLimitIncrease", gated:["OWNER_ROLE"],
+        desc:"Step 1 of limit increase. Queues new limit; 24h delay before executable. newLimit must be higher than current.",
+        inputs:[{name:"newLimit",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"executeDailyLimitIncrease", gated:["OWNER_ROLE"],
+        desc:"Step 2 of limit increase. Requires queued increase + 24h timelock elapsed.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"cancelDailyLimitIncrease", gated:["OWNER_ROLE"],
+        desc:"Cancel queued daily limit increase.",
+        inputs:[], outputs:[] },
+
+      // OWNER — emergency withdraw
+      { kind:"write", name:"queueEmergencyWithdraw", gated:["OWNER_ROLE"],
+        desc:"Step 1 of emergency withdraw. Queues token+amount. 7-day delay before executable.",
+        inputs:[{name:"token",type:"address"},{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"executeEmergencyWithdraw", gated:["OWNER_ROLE"],
+        desc:"Step 2 of emergency withdraw. Sends queued amount to `to` after 7-day elapsed. DAI withdrawals also enforce daily limit.",
+        inputs:[{name:"token",type:"address"},{name:"to",type:"address"}], outputs:[] },
+      { kind:"write", name:"cancelEmergencyWithdraw", gated:["OWNER_ROLE"],
+        desc:"Cancel queued emergency withdraw for a token.",
+        inputs:[{name:"token",type:"address"}], outputs:[] },
+      { kind:"write", name:"setMinSwapBatch", gated:["OWNER_ROLE"],
+        plain:{ label:"Set minimum batch size",
+          desc:"The smallest amount of incoming money that's worth processing at once. Set it higher to wait for bigger batches (fewer, larger moves); lower to process more often. Keeps tiny amounts from being moved before they're worth the fees.",
+          inputHint:"Smallest dollar amount worth processing" },
+        desc:"Set minimum swap batch threshold. Reverts ZeroAmount if 0.",
+        inputs:[{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"setCbEthBps", gated:["OWNER_ROLE"],
+        plain:{ label:"Adjust your savings mix",
+          desc:"Choose how much of your incoming money grows as ETH versus stays steady as dollars. Move toward ETH for more growth potential; toward dollars for more stability. You can change this any time — it takes effect on your next scheduled sweep.",
+          inputHint:"Percent kept as ETH — anywhere from 10% to 90%" },
+        desc:"Set the cbETH vs Morpho USDC allocation ratio in basis points (10000 = 100%). Default 5000 = 50/50 split. Bounded [1000, 9000] — neither leg can be fully zeroed. Applied immediately; next sweep executes against the new ratio. This is the merchant's primary inflow-allocation dial: higher = more cbETH yield exposure; lower = more stable USDC yield via Morpho.",
+        rationale:"Range bounds force at least 10% diversification across yield mechanics and prevent single-leg routing via a compromised key. Merchants requiring 0% or 100% single-leg routing must redeploy with an amended contract.",
+        inputs:[{name:"newBps",type:"uint16",hint:"basis points 1000-9000; 5000 = 50/50 baseline (10%-90% range as percentage)"}], outputs:[] },
+
+      // AccessControl management
+      { kind:"write", name:"grantRole", gated:["OWNER_ROLE (self-admin)"],
+        desc:"Grant a role to an account. PossessioPayments calls _setRoleAdmin(OWNER_ROLE, OWNER_ROLE) at construction — OWNER_ROLE is its own admin and therefore gates grantRole/revokeRole for OPERATOR and GUARDIAN. Use the role hash reads below as the bytes32 role argument — do NOT hardcode role hashes.",
+        inputs:[
+          {name:"role",type:"bytes32",hint:"call OWNER_ROLE() / OPERATOR_ROLE() / GUARDIAN_ROLE() reads below to fetch the canonical bytes32 hash. Do not type a hash by hand."},
+          {name:"account",type:"address"},
+        ], outputs:[] },
+      { kind:"write", name:"revokeRole", gated:["OWNER_ROLE (self-admin)"],
+        desc:"Revoke a role from an account. Same admin pattern as grantRole.",
+        inputs:[
+          {name:"role",type:"bytes32"},
+          {name:"account",type:"address"},
+        ], outputs:[] },
+      { kind:"write", name:"renounceRole", gated:["self"],
+        desc:"Self-renounce a role. callerConfirmation MUST equal msg.sender (OZ v5 enforces). Use to step down from OPERATOR or GUARDIAN.",
+        inputs:[
+          {name:"role",type:"bytes32",hint:"the role you want to renounce; call the role hash reads below"},
+          {name:"callerConfirmation",type:"address",hint:"must equal your connected wallet address"},
+        ], outputs:[] },
+
+      // Reads — role hashes (canonical, read from contract — never hardcode)
+      { kind:"read", name:"OWNER_ROLE", gated:["read"],
+        desc:"Returns the canonical OWNER_ROLE bytes32 hash. Use this output as the `role` argument to grantRole / revokeRole / renounceRole. NEVER hardcode this value — fetch it from the contract.",
+        inputs:[], outputs:[{type:"bytes32"}] },
+      { kind:"read", name:"OPERATOR_ROLE", gated:["read"],
+        desc:"Returns the canonical OPERATOR_ROLE bytes32 hash.",
+        inputs:[], outputs:[{type:"bytes32"}] },
+      { kind:"read", name:"GUARDIAN_ROLE", gated:["read"],
+        desc:"Returns the canonical GUARDIAN_ROLE bytes32 hash.",
+        inputs:[], outputs:[{type:"bytes32"}] },
+      { kind:"read", name:"DEFAULT_ADMIN_ROLE", gated:["read"],
+        desc:"Returns DEFAULT_ADMIN_ROLE (0x00…00). Not used here for OWNER/OPERATOR/GUARDIAN gating — PossessioPayments overrides the admin of OWNER_ROLE to OWNER_ROLE itself.",
+        inputs:[], outputs:[{type:"bytes32"}] },
+      { kind:"read", name:"hasRole", gated:["read"], desc:"Check whether an account holds a role.",
+        inputs:[{name:"role",type:"bytes32"},{name:"account",type:"address"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"getRoleAdmin", gated:["read"], desc:"Returns the role hash that admins a given role. For PossessioPayments: getRoleAdmin(OWNER_ROLE) returns OWNER_ROLE itself.",
+        inputs:[{name:"role",type:"bytes32"}], outputs:[{type:"bytes32"}] },
+
+      // Reads — balances and policy state
+      { kind:"read", name:"getTreasuryGauge", gated:["read"], desc:"ETH-equivalent of cbETH treasury at current exchange rate.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getUSDCBalance", gated:["read"], desc:"USDC held by contract (6 decimals).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getDAIBalance", gated:["read"], desc:"DAI held by contract (18 decimals).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getCbETHBalance", gated:["read"], desc:"cbETH held by contract (18 decimals).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getMorphoBalance", gated:["read"], desc:"Morpho leg position: vault shares held and their current USDC redemption value. currentUSDCValue rises with vault yield even when shares are unchanged — that is the dual-acquisition design working, not a stale read. Defensive try/catch: if the vault reverts, currentUSDCValue returns 0 while shares still reflects holdings (shares>0 && value==0 signals vault state unclear).",
+        inputs:[], outputs:[{name:"shares",type:"uint256"},{name:"currentUSDCValue",type:"uint256"}] },
+      { kind:"read", name:"dailyRemaining", gated:["read"], desc:"DAI remaining in current 24h withdraw window.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"armorLevelDays", gated:["read"], desc:"Days of operating runway the DAI reserve covers at a given daily burn rate.",
+        inputs:[{name:"dailyBurnRate",type:"uint256",hint:"daily burn in DAI base units (18 decimals)"}], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"isDaiReserveFull", gated:["read"], desc:"True once DAI balance ≥ daiCeiling.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"nextSweepAllowed", gated:["read"], desc:"Unix timestamp at which sweep() becomes callable again.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"isEmergencyQueued", gated:["read"], desc:"True if an emergency withdraw is currently queued for the given token.",
+        inputs:[{name:"token",type:"address"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"emergencyReady", gated:["read"], desc:"True if queued emergency withdraw for token has passed its 7d timelock.",
+        inputs:[{name:"token",type:"address"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"guardianEnabled", gated:["read"], desc:"Whether guardian pause path is currently enabled.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"daiCeiling", gated:["read"], desc:"Merchant-set DAI reserve target.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"dailyLimit", gated:["read"], desc:"Current daily DAI withdrawal limit.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"minSwapBatch", gated:["read"], desc:"Minimum USDC balance before sweep allowed.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"cbEthBps", gated:["read"], desc:"Current cbETH allocation in basis points (out of 10000). Divide by 100 for percentage: 5000 = 50%, 8000 = 80%. Bounded [1000, 9000] enforced by setCbEthBps. The Morpho USDC leg receives the complement (10000 - cbEthBps).",
+        inputs:[], outputs:[{type:"uint16"}] },
+      { kind:"read", name:"morphoDepositedPrincipal", gated:["read"], desc:"Cumulative USDC principal deposited to Bitwise Morpho Blue USDC vault. Tracks deposits, not current value (which fluctuates with vault yield). For current redemption value, call convertToAssets(shares) on the MORPHO_VAULT off-contract.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"lastSweepTime", gated:["read"], desc:"Timestamp of last successful sweep.",
+        inputs:[], outputs:[{type:"uint256"}] },
+
+      // ── Writes — Chainlink Automation (council-ratified 2026-05-12) ──
+      { kind:"write", name:"setForwarder", gated:["OWNER_ROLE"],
+        desc:"One-time registration of Chainlink Automation Forwarder. After this, mutable only via queueForwarderUpdate + 48h timelock.",
+        inputs:[{name:"forwarder",type:"address"}], outputs:[] },
+      { kind:"write", name:"setUpkeepID", gated:["OWNER_ROLE"],
+        desc:"Record the Chainlink Automation Upkeep ID after registration.",
+        inputs:[{name:"newUpkeepID",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"setSweepSlippageGuards", gated:["OWNER_ROLE"],
+        desc:"Set the minDai, minWeth, and minCbEth values that Automation passes to sweep() in performData. Operator-tunable, instant (no timelock — tighter guards revert sweep; looser guards accept worse prices).",
+        inputs:[
+          {name:"minDai",type:"uint256",hint:"slippage guard on USDC→DAI hop"},
+          {name:"minWeth",type:"uint256",hint:"slippage guard on USDC→WETH leg (Uniswap V3 0.05%)"},
+          {name:"minCbEth",type:"uint256",hint:"slippage guard on WETH→cbETH leg (Aerodrome Slipstream)"},
+        ], outputs:[] },
+      { kind:"write", name:"queueForwarderUpdate", gated:["OWNER_ROLE"],
+        desc:"IV.8 Step 1 — queue forwarder update via 48h timelock.",
+        inputs:[{name:"newForwarder",type:"address"}], outputs:[] },
+      { kind:"write", name:"executeForwarderUpdate", gated:["OWNER_ROLE","tlPassed"],
+        desc:"IV.8 Step 2 — execute forwarder update after 48h elapsed.",
+        inputs:[{name:"id",type:"bytes32"}], outputs:[] },
+      { kind:"write", name:"pauseUpkeep", gated:["OWNER_ROLE"], danger:true,
+        desc:"IV.7 Position A — pause automation upkeep. Owner-only.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"unpauseUpkeep", gated:["OWNER_ROLE"],
+        desc:"Resume automation upkeep.",
+        inputs:[], outputs:[] },
+
+      // ── Reads — Chainlink Automation ──
+      { kind:"read", name:"automationForwarder", gated:["read"],
+        desc:"Current Chainlink Automation Forwarder address.",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"upkeepID", gated:["read"],
+        desc:"Chainlink Automation Upkeep ID. 0 if not yet registered.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"upkeepPaused", gated:["read"],
+        desc:"Whether automation upkeep is currently paused.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"executedUpkeepCount", gated:["read"],
+        desc:"Monotonic counter of automated sweeps to date.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"sweepSlippageMinDai", gated:["read"],
+        desc:"Current minDai slippage guard for automated sweep.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"sweepSlippageMinCbEth", gated:["read"],
+        desc:"Current minCbEth slippage guard for automated sweep.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"UPKEEP_HYSTERESIS_BPS", gated:["read"],
+        desc:"IV.4 — hysteresis multiplier (basis 100). Constant 120.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"checkUpkeep", gated:["read"],
+        desc:"Chainlink off-chain view — returns whether sweep should run.",
+        inputs:[{name:"checkData",type:"bytes",hint:"pass 0x"}], outputs:[
+          {name:"upkeepNeeded",type:"bool"},
+          {name:"performData",type:"bytes"},
+        ] },
+    ],
+  },
+
+  // 4. L1Anchor — Tier 2 per-merchant treasury
+  {
+    key:"L1A", label:"L1Anchor", title:"L1Anchor (Tier 2 — per-merchant)",
+    chain:"Ethereum L1", chainId:1,
+    desc:"Per-merchant treasury anchor on Ethereum L1. Routes capital between Bitmine MAVAN (cbETH staking) and Bitwise-curated Morpho Blue (USDC lending). Caller of L1AnchorFactory.deployAnchor() becomes MERCHANT_OWNER. Stateful Symmetry Guard pattern preserves last-known state on oracle failures. Identity Primitive surface for institutional partner verification.",
+    access:"onlyMerchantOwner",
+    categories:[
+      { id:"routing", label:"Routing", blurb:"Move funds to MAVAN staking or Morpho yield",
+        names:["routeToMavan","routeToMorpho","liquidCbEth","liquidUsdc","mavanShares","morphoShares","morphoUsdcValue","treasurySnapshot"] },
+      { id:"withdraw", label:"Withdrawals", blurb:"Pull funds back from MAVAN or Morpho",
+        names:["withdrawFromMavan","withdrawFromMorpho"] },
+      { id:"recovery", label:"Safety & Recovery", blurb:"Depeg checks, reset, emergency unwind",
+        names:["checkSymmetry","getSymmetryStatus","resetDepeg","emergencyUnwind","rescue"] },
+      { id:"identity", label:"Identity", blurb:"Anchor provenance and attestation",
+        names:["attestIdentity","isPossessioAnchor","merchantOwner","factoryDeployer","deploymentTimestamp","anchorVersion"] },
+    ],
+    subsections:{
+      writes:[
+        { label:"Position routing", names:["routeToMavan","routeToMorpho","withdrawFromMavan","withdrawFromMorpho"] },
+        { label:"Symmetry Guard",   names:["checkSymmetry","resetDepeg"] },
+        { label:"Identity primitive", names:["attestIdentity"] },
+        { label:"Emergency / rescue", names:["emergencyUnwind","rescue"] },
+      ],
+      reads:[
+        { label:"Identity primitive", names:["isPossessioAnchor","merchantOwner","factoryDeployer","deploymentTimestamp","anchorVersion"] },
+        { label:"Liquid balances",    names:["liquidCbEth","liquidUsdc"] },
+        { label:"Partner-held positions", names:["mavanShares","morphoShares","morphoUsdcValue"] },
+        { label:"Symmetry Guard state", names:["getSymmetryStatus"] },
+        { label:"Aggregate snapshot", names:["treasurySnapshot"] },
+      ],
+    },
+    functions:[
+      { kind:"write", name:"routeToMavan", gated:["onlyMerchantOwner"],
+        desc:"Stake cbETH into MAVAN validator network for institutional yield. Pre-approve cbETH to this anchor.",
+        rationale:"Gated by Symmetry Guard — reverts DepegPaused if the latch is set. Use resetDepeg to attempt clear if oracle recovered.",
+        inputs:[{name:"cbEthAmount",type:"uint256",hint:"cbETH wei (18 decimals)"}], outputs:[] },
+      { kind:"write", name:"routeToMorpho", gated:["onlyMerchantOwner"],
+        desc:"Deposit USDC into Bitwise-curated Morpho Blue vault. Pre-approve USDC to this anchor.",
+        inputs:[{name:"usdcAmount",type:"uint256",hint:"USDC base units (6 decimals)"}], outputs:[] },
+      { kind:"write", name:"withdrawFromMavan", gated:["onlyMerchantOwner"],
+        desc:"Unstake MAVAN shares back to cbETH.",
+        rationale:"NOT gated by Symmetry Guard — merchant must always be able to exit positions, especially during depeg events.",
+        inputs:[{name:"sharesAmount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"withdrawFromMorpho", gated:["onlyMerchantOwner"],
+        desc:"Redeem Morpho vault shares back to USDC.",
+        inputs:[{name:"sharesAmount",type:"uint256"}], outputs:[] },
+
+      { kind:"write", name:"resetDepeg", gated:["onlyMerchantOwner"],
+        desc:"Sole clear path on the one-way Symmetry Guard latch. Performs its own oracle verification: try/catch on latestRoundData, with staleness, future-timestamp, round-mismatch, non-positive, and below-threshold checks. If oracle is now healthy, clears depegPaused and emits SymmetryGuardResumed. If oracle is still unhealthy, the call reverts and the latch remains set.",
+        rationale:"Closes the UX gap where merchant would otherwise need to attempt routeToMavan (with funds at risk) just to test latch state. Adversarial finding by Grok (Council seat 3); Architect-ratified May 9, 2026. Behavior corrected to match post-2026-05-17 ratified one-way latch semantics (own oracle verification, sole clear path).",
+        inputs:[], outputs:[] },
+
+      { kind:"write", name:"checkSymmetry", gated:["permissionless"],
+        desc:"Permissionless Symmetry Guard check. Runs oracle verification in its own transaction so the latch state persists across subsequent calls. No auth, no fund movement, no return value — anyone can request the contract evaluate its own oracle.",
+        rationale:"Guarded-wrapper / internal-core split: external entry calls internal _checkSymmetry(), allowing the latch to be set in a standalone transaction. Also gives offchain monitoring infrastructure a direct way to drive the latch on observed oracle health. Architect-ratified 2026-05-17.",
+        inputs:[], outputs:[] },
+
+      { kind:"write", name:"attestIdentity", gated:["permissionless"],
+        desc:"Emit a canonical IdentityAttested event recording msg.sender as a recognizer of this Anchor as legitimate POSSESSIO substrate. No state change beyond event emission.",
+        rationale:"Used by MAVAN, Bitwise, custody providers, or auditors to leave a non-spoofable on-chain recognition breadcrumb. Costs only event-emission gas.",
+        inputs:[], outputs:[] },
+
+      { kind:"write", name:"emergencyUnwind", gated:["onlyMerchantOwner"], danger:true,
+        desc:"Full unwind — pulls all positions back to merchant owner in cbETH and USDC. Amounts returned in event log (cbEthReturned, usdcReturned).",
+        rationale:"No timelock per Architect ratification: merchant is sole authority and should not be caged from saving their own capital.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"rescue", gated:["onlyMerchantOwner"],
+        desc:"Rescue an arbitrary ERC20 token from the anchor to the merchant.",
+        inputs:[{name:"token",type:"address"},{name:"amount",type:"uint256"}], outputs:[] },
+
+      // Reads — Identity primitive
+      { kind:"read", name:"isPossessioAnchor", gated:["read"],
+        desc:"Identity primitive. Always true on a genuine Anchor. Trivially forgeable in isolation — combine with factoryDeployer + canonical factory address check for real verification.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"merchantOwner", gated:["read"], desc:"The merchant who deployed this anchor (fixed at construction).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"factoryDeployer", gated:["read"], desc:"The L1AnchorFactory address that deployed this anchor. Pair with isPossessioAnchorFactory check against canonical factory address.",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"deploymentTimestamp", gated:["read"], desc:"Block timestamp at construction.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"anchorVersion", gated:["read"], desc:"Version string of this Anchor template.",
+        inputs:[], outputs:[{type:"string"}] },
+
+      // Reads — Liquid balances
+      { kind:"read", name:"liquidCbEth", gated:["read"], desc:"cbETH held directly by the anchor (not in MAVAN).",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"liquidUsdc", gated:["read"], desc:"USDC held directly by the anchor (not in Morpho).",
+        inputs:[], outputs:[{type:"uint256"}] },
+
+      // Reads — Partner-held positions
+      { kind:"read", name:"mavanShares", gated:["read"], desc:"MAVAN validator shares held by the anchor.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"morphoShares", gated:["read"], desc:"Morpho vault shares held by the anchor.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"morphoUsdcValue", gated:["read"], desc:"Current USDC value of morphoShares via Morpho convertToAssets().",
+        inputs:[], outputs:[{type:"uint256"}] },
+
+      // Reads — Symmetry Guard
+      { kind:"read", name:"getSymmetryStatus", gated:["read"], desc:"Depeg pause status + current cbETH/ETH deviation in bps.",
+        inputs:[], outputs:[
+          {name:"isPaused",type:"bool"},
+          {name:"currentBps",type:"uint256"},
+        ] },
+
+      // Reads — Aggregate snapshot
+      { kind:"read", name:"treasurySnapshot", gated:["read"], desc:"Full consolidated position snapshot for offchain UX.",
+        inputs:[], outputs:[
+          {name:"cbEthLiquid",type:"uint256"},
+          {name:"cbEthMavanShares",type:"uint256"},
+          {name:"cbEthMavanPrincipal",type:"uint256"},
+          {name:"usdcLiquid",type:"uint256"},
+          {name:"usdcMorphoShares",type:"uint256"},
+          {name:"usdcMorphoValue",type:"uint256"},
+          {name:"usdcMorphoPrincipal",type:"uint256"},
+          {name:"isDepegPaused",type:"bool"},
+        ] },
+    ],
+  },
+
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+const state = {
+  activeKey: "PAY",
+  activeCategory: null,
+  walletAddr: null,
+  provider: null,
+  signer: null,
+  walletChainId: null,
+  selectedChainId: 8453,
+  addresses: {},
+};
+
+// Merchant-first tab order: PAY and L1A (the merchant's own contracts) lead;
+// STEEL / HOOK / L1F (protocol-level, mostly read/reference) follow.
+const TAB_ORDER = ["PAY", "L1A", "HOOK"];
+
+function loadAddresses() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) state.addresses = JSON.parse(raw) || {};
+  } catch (_) { state.addresses = {}; }
+}
+function persistAddresses() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.addresses)); }
+  catch (_) { /* private mode or quota — silent */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function short(a) { return a ? a.slice(0, 6) + "…" + a.slice(-4) : ""; }
+
+function fnSignature(fn) {
+  if (fn.struct === "PoolKey") return `${fn.name}((address,address,uint24,int24,address))`;
+  return `${fn.name}(${fn.inputs.map(i => i.type).join(",")})`;
+}
+
+function buildAbiEntry(fn) {
+  const stateMutability =
+    fn.kind === "read" ? "view" :
+    (fn.gated || []).includes("payable") ? "payable" : "nonpayable";
+
+  let inputs;
+  if (fn.struct === "PoolKey") {
+    inputs = [{
+      name: "key", type: "tuple",
+      components: [
+        { name: "currency0",   type: "address" },
+        { name: "currency1",   type: "address" },
+        { name: "fee",         type: "uint24"  },
+        { name: "tickSpacing", type: "int24"   },
+        { name: "hooks",       type: "address" },
+      ],
+    }];
+  } else {
+    inputs = fn.inputs.map(i => ({ name: i.name, type: i.type }));
+  }
+  const outputs = (fn.outputs || []).map(o => ({ name: o.name || "", type: o.type }));
+  return { type: "function", name: fn.name, stateMutability, inputs, outputs };
+}
+
+function parseArg(type, raw) {
+  if (raw == null || raw === "") throw new Error("empty input");
+  if (type.endsWith("[]")) {
+    const base = type.slice(0, -2);
+    return raw.split(/[\s,]+/).filter(Boolean).map(s => parseArg(base, s));
+  }
+  if (type === "address") {
+    if (!ethers.isAddress(raw)) throw new Error("invalid address");
+    return ethers.getAddress(raw);
+  }
+  if (type === "bytes32") {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) throw new Error("bytes32 must be 0x + 64 hex chars");
+    return raw;
+  }
+  if (type === "bytes") {
+    if (!/^0x[0-9a-fA-F]*$/.test(raw)) throw new Error("bytes must be 0x-prefixed hex");
+    return raw;
+  }
+  if (type === "bool") {
+    if (raw === "true")  return true;
+    if (raw === "false") return false;
+    throw new Error("bool must be true|false");
+  }
+  if (type === "string") return raw;
+  if (type.startsWith("uint") || type.startsWith("int")) {
+    // Fix 2 (Code Integrity 2026-05-14) — invariant: integer arg lies within
+    // the declared ABI type domain. See ProposedFixes MD, Finding 2.
+    const signed = type.startsWith("int");
+    const bits = parseInt((signed ? type.slice(3) : type.slice(4)) || "256", 10);
+    if (!Number.isInteger(bits) || bits < 8 || bits > 256 || bits % 8 !== 0) {
+      throw new Error(`unsupported integer type: ${type}`);
+    }
+    let v;
+    try { v = BigInt(raw); }
+    catch (_) { throw new Error(`${type} must be an integer: ${raw}`); }
+    const min = signed ? -(1n << BigInt(bits - 1)) : 0n;
+    const max = signed ? (1n << BigInt(bits - 1)) - 1n : (1n << BigInt(bits)) - 1n;
+    if (v < min || v > max) {
+      throw new Error(`${type} out of range: ${v.toString()} (domain ${min.toString()} … ${max.toString()})`);
+    }
+    return v;
+  }
+  return raw;
+}
+
+function gatherInputs(fn, fnEl) {
+  const values = fn.inputs.map(p => {
+    const el = fnEl.querySelector(`[data-param="${p.name}"]`);
+    return parseArg(p.type, el.value.trim());
+  });
+  if (fn.struct === "PoolKey") {
+    return [{
+      currency0: values[0],
+      currency1: values[1],
+      fee: values[2],
+      tickSpacing: values[3],
+      hooks: values[4],
+    }];
+  }
+  return values;
+}
+
+function valueFor(fn, fnEl) {
+  if (!fn.valueField) return 0n;
+  const el = fnEl.querySelector(`[data-param="${fn.valueField}"]`);
+  return BigInt(el.value.trim() || "0");
+}
+
+function encodeCall(fn, args) {
+  const iface = new ethers.Interface([buildAbiEntry(fn)]);
+  return iface.encodeFunctionData(fn.name, fn.struct === "PoolKey" ? [args] : args);
+}
+
+async function getReadProvider(targetChainId) {
+  if (state.provider && state.walletChainId === targetChainId) return state.provider;
+  const url = RPC_BY_CHAIN[targetChainId];
+  if (!url) throw new Error(`no RPC configured for chain ${targetChainId}`);
+  return new ethers.JsonRpcProvider(url);
+}
+
+function formatValue(v) {
+  if (v === null || v === undefined) return "null";
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return "[ ]";
+    return "[\n  " + v.map(formatValue).join(",\n  ") + "\n]";
+  }
+  return String(v);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+
+function formatReadResult(fn, decoded) {
+  const outputs = fn.outputs || [];
+  if (outputs.length === 0) return "(no return)";
+  if (outputs.length === 1) {
+    return `<div class="kv"><span class="k">${escapeHtml(outputs[0].name || outputs[0].type)}<span class="ty">${escapeHtml(outputs[0].type)}</span></span><span class="v">${escapeHtml(formatValue(decoded[0]))}</span></div>`;
+  }
+  return outputs.map((o, i) =>
+    `<div class="kv"><span class="k">${escapeHtml(o.name || ("[" + i + "]"))}<span class="ty">${escapeHtml(o.type)}</span></span><span class="v">${escapeHtml(formatValue(decoded[i]))}</span></div>`
+  ).join("");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────────────────
+
+function orderedContracts() {
+  // Return CONTRACTS sorted by TAB_ORDER; any key not listed falls to the end.
+  return [...CONTRACTS].sort((a, b) => {
+    const ia = TAB_ORDER.indexOf(a.key), ib = TAB_ORDER.indexOf(b.key);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+}
+
+function renderTabs() {
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  orderedContracts().forEach(c => {
+    const b = document.createElement("button");
+    b.textContent = c.label;
+    b.classList.toggle("active", c.key === state.activeKey);
+    b.onclick = () => {
+      state.activeKey = c.key;
+      state.activeCategory = null;   // reset to category list when switching contracts
+      renderTabs();
+      renderPanels();
+    };
+    tabs.appendChild(b);
+  });
+}
+
+function tagClass(g) {
+  if (g === "read") return "tag read";
+  if (g.includes("Treasury") || g === "onlyTreasury") return "tag treasury";
+  if (g.includes("Council") || g === "onlyCouncilMember") return "tag council";
+  if (g === "GUARDIAN_ROLE") return "tag danger";
+  if (g === "permissionless" || g.includes("permissionless") || g === "self") return "tag open";
+  if (g === "OWNER_ROLE" || g === "onlyOwner" || g === "onlyMerchantOwner" || g.includes("OWNER")) return "tag oxide";
+  return "tag";
+}
+
+function buildFnCard(c, fn) {
+  const el = document.createElement("details");
+  el.className = "fn" + (fn.kind === "read" ? " read-card" : "");
+
+  const tags = fn.gated.map(g => `<span class="${tagClass(g)}">${escapeHtml(g)}</span>`).join(" ");
+  const hasPlain = !!fn.plain;
+
+  // Summary face: plain label if available, else the precise function name.
+  const faceTitle = hasPlain
+    ? `<span class="fn-plain-label">${escapeHtml(fn.plain.label)}</span>`
+    : `<span class="fn-name">${escapeHtml(fn.name)}</span>`;
+  const faceSig = hasPlain ? "" : `<span class="fn-sig">${escapeHtml(fnSignature(fn))}</span>`;
+
+  // The (i) info button — only shown when a plain layer exists to toggle away from.
+  const infoBtn = hasPlain
+    ? `<button class="fn-info" data-act="info" title="Show technical detail" aria-label="Show technical detail">i</button>`
+    : "";
+
+  // Input fields: plain hint on the face when available; precise type hint lives in the (i) block.
+  const fields = fn.inputs.map(p => {
+    const plainHint = hasPlain && fn.plain.inputHint ? fn.plain.inputHint : (hasPlain ? "" : (p.hint || ""));
+    const labelText = hasPlain ? (fn.plain.inputLabel || prettyParam(p.name)) : p.name;
+    const typeBadge = hasPlain ? "" : `<span class="ptype">${escapeHtml(p.type)}</span>`;
+    return `
+    <div class="field">
+      <label>${escapeHtml(labelText)}${typeBadge}</label>
+      ${p.type === "bytes" ? `<textarea data-param="${escapeHtml(p.name)}" placeholder="0x…"></textarea>` : `<input data-param="${escapeHtml(p.name)}" placeholder="${escapeHtml(hasPlain ? "" : p.type)}" />`}
+      ${plainHint ? `<div class="hint">${escapeHtml(plainHint)}</div>` : ""}
+    </div>`;
+  }).join("");
+
+  const actions = fn.kind === "read"
+    ? `<button class="btn read" data-act="call">${hasPlain ? "Check" : "Call (eth_call)"}</button>`
+    : `<button class="btn" data-act="encode">${hasPlain ? "Preview" : "Encode Calldata"}</button>
+       <button class="btn ${fn.danger ? "danger" : "oxide"}" data-act="send">${hasPlain ? "Confirm in Wallet" : "Send via Wallet"}</button>`;
+
+  // Plain description on the face (when present), else the precise desc.
+  const faceDesc = hasPlain
+    ? `<div class="fn-desc plain">${escapeHtml(fn.plain.desc)}</div>`
+    : `<div class="fn-desc">${escapeHtml(fn.desc)}</div>`;
+
+  // The precise (technical) block — always built, hidden by default when a plain layer exists.
+  const rationale = fn.rationale ? `<div class="fn-rationale">${escapeHtml(fn.rationale)}</div>` : "";
+  const preciseInputs = fn.inputs.length
+    ? `<div class="precise-row"><span class="precise-k">Inputs</span><span class="precise-v">${fn.inputs.map(p => `${escapeHtml(p.name)}: ${escapeHtml(p.type)}${p.hint ? ` — ${escapeHtml(p.hint)}` : ""}`).join("<br>")}</span></div>`
+    : "";
+  const preciseBlock = hasPlain
+    ? `<div class="fn-precise" data-precise hidden>
+         <div class="precise-row"><span class="precise-k">Function</span><span class="precise-v mono">${escapeHtml(fnSignature(fn))}</span></div>
+         <div class="precise-row"><span class="precise-k">Access</span><span class="precise-v">${fn.gated.map(escapeHtml).join(", ")}</span></div>
+         ${preciseInputs}
+         <div class="precise-row"><span class="precise-k">Detail</span><span class="precise-v">${escapeHtml(fn.desc)}</span></div>
+         ${fn.rationale ? `<div class="precise-row"><span class="precise-k">Why</span><span class="precise-v">${escapeHtml(fn.rationale)}</span></div>` : ""}
+       </div>`
+    : "";
+
+  el.innerHTML = `
+    <summary>
+      ${faceTitle}
+      ${faceSig}
+      <span style="flex:1"></span>
+      ${infoBtn}
+      ${tags}
+    </summary>
+    <div class="fn-body">
+      ${faceDesc}
+      ${hasPlain ? "" : rationale}
+      ${preciseBlock}
+      <div class="fields">${fields}</div>
+      <div class="actions">${actions}</div>
+      <div class="output empty" data-output></div>
+    </div>
+  `;
+
+  // (i) toggle — reveals/hides the precise block, prevents the <details> from toggling.
+  const info = el.querySelector("[data-act=info]");
+  if (info) {
+    info.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const block = el.querySelector("[data-precise]");
+      if (!block) return;
+      const showing = !block.hasAttribute("hidden");
+      if (showing) { block.setAttribute("hidden", ""); info.classList.remove("on"); }
+      else { block.removeAttribute("hidden"); info.classList.add("on"); }
+    });
+  }
+
+  if (fn.kind === "read") {
+    el.querySelector("[data-act=call]").onclick = () => handleRead(c, fn, el);
+  } else {
+    el.querySelector("[data-act=encode]").onclick = () => handleEncode(c, fn, el);
+    el.querySelector("[data-act=send]").onclick   = () => handleSend(c, fn, el);
+  }
+  return el;
+}
+
+// Turn a camelCase / snake param name into a friendlier label for the plain face.
+function prettyParam(name) {
+  return name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/^./, s => s.toUpperCase());
+}
+
+function renderPanels() {
+  const panels = document.getElementById("panels");
+  panels.innerHTML = "";
+
+  const c = CONTRACTS.find(x => x.key === state.activeKey);
+  if (!c) return;
+
+  const section = document.createElement("section");
+  section.className = "contract-panel active";
+
+  const writes = c.functions.filter(f => f.kind === "write");
+  const reads  = c.functions.filter(f => f.kind === "read");
+
+  // Contract meta header + address input (always visible at top of panel)
+  const meta = document.createElement("div");
+  meta.className = "contract-meta";
+  meta.innerHTML = `
+    <h2>${escapeHtml(c.title)}</h2>
+    <div class="meta-row">
+      <span class="tag">${escapeHtml(c.chain)}</span>
+      <span class="tag oxide">${escapeHtml(c.access)}</span>
+      <span class="tag">${writes.length} writes</span>
+      <span class="tag read">${reads.length} reads</span>
+    </div>
+    <div class="desc">${escapeHtml(c.desc)}</div>
+    <label>Deployed address (chain ${c.chainId})</label>
+    <input class="addr" data-contract="${c.key}" placeholder="0x… (not yet deployed)" value="${escapeHtml(state.addresses[c.key] || "")}" />
+  `;
+  meta.querySelector("input.addr").addEventListener("input", e => {
+    state.addresses[c.key] = e.target.value.trim();
+    persistAddresses();
+    if (c.key === "L1A" || c.key === "PAY") scheduleTreasuryRefresh(800);
+  });
+  section.appendChild(meta);
+
+  const fnByName = n => c.functions.find(f => f.name === n);
+
+  if (!c.categories || !c.categories.length) {
+    // No categories defined — fall back to flat render (legacy behavior).
+    if (writes.length) renderFlatGroup(section, c, "write", writes);
+    if (reads.length)  renderFlatGroup(section, c, "read",  reads);
+  } else if (state.activeCategory == null) {
+    // CATEGORY LIST VIEW — show one tappable button per category.
+    const grid = document.createElement("div");
+    grid.className = "cat-grid";
+    c.categories.forEach(cat => {
+      const present = cat.names.map(fnByName).filter(Boolean);
+      if (!present.length) return;
+      const wc = present.filter(f => f.kind === "write").length;
+      const rc = present.filter(f => f.kind === "read").length;
+      const btn = document.createElement("button");
+      btn.className = "cat-btn";
+      btn.innerHTML = `
+        <span class="cat-label">${escapeHtml(cat.label)}</span>
+        <span class="cat-blurb">${escapeHtml(cat.blurb || "")}</span>
+        <span class="cat-counts">
+          ${wc ? `<span class="tag oxide">${wc} action${wc===1?"":"s"}</span>` : ""}
+          ${rc ? `<span class="tag read">${rc} view${rc===1?"":"s"}</span>` : ""}
+        </span>
+        <span class="cat-chevron">›</span>
+      `;
+      btn.onclick = () => { state.activeCategory = cat.id; renderPanels(); };
+      grid.appendChild(btn);
+    });
+    section.appendChild(grid);
+  } else {
+    // SUB-PAGE VIEW — show the selected category's functions with a back arrow.
+    const cat = c.categories.find(x => x.id === state.activeCategory);
+    if (!cat) { state.activeCategory = null; renderPanels(); return; }
+
+    const subhead = document.createElement("div");
+    subhead.className = "subpage-head";
+    subhead.innerHTML = `
+      <button class="back-btn" aria-label="Back">‹ Back</button>
+      <span class="subpage-title">${escapeHtml(cat.label)}</span>
+    `;
+    subhead.querySelector(".back-btn").onclick = () => { state.activeCategory = null; renderPanels(); };
+    section.appendChild(subhead);
+
+    if (cat.blurb) {
+      const b = document.createElement("div");
+      b.className = "subpage-blurb";
+      b.textContent = cat.blurb;
+      section.appendChild(b);
+    }
+
+    const present = cat.names.map(fnByName).filter(Boolean);
+    const subWrites = present.filter(f => f.kind === "write");
+    const subReads  = present.filter(f => f.kind === "read");
+
+    if (subWrites.length) {
+      const h = document.createElement("div");
+      h.className = "section-head";
+      h.innerHTML = `<span class="lbl writes">Actions</span><span class="count">${subWrites.length}</span><span class="line"></span>`;
+      section.appendChild(h);
+      subWrites.forEach(fn => section.appendChild(buildFnCard(c, fn)));
+    }
+    if (subReads.length) {
+      const h = document.createElement("div");
+      h.className = "section-head";
+      h.innerHTML = `<span class="lbl reads">Views</span><span class="count">${subReads.length}</span><span class="line"></span>`;
+      section.appendChild(h);
+      subReads.forEach(fn => section.appendChild(buildFnCard(c, fn)));
+    }
+  }
+
+  panels.appendChild(section);
+}
+
+// Legacy flat render — used only for panels without a categories definition.
+function renderFlatGroup(section, c, kind, list) {
+  const head = document.createElement("div");
+  head.className = "section-head";
+  head.innerHTML = `<span class="lbl ${kind}s">${kind === "write" ? "Writes" : "Reads"}</span><span class="count">${list.length}</span><span class="line"></span>`;
+  section.appendChild(head);
+  list.forEach(fn => section.appendChild(buildFnCard(c, fn)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HANDLERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function setOutput(el, kind, label, content) {
+  const out = el.querySelector("[data-output]");
+  out.classList.remove("empty", "ok", "err", "read-ok");
+  out.classList.add(kind);
+  out.innerHTML = `<span class="lbl">${escapeHtml(label)}</span>${content}`;
+}
+
+function handleEncode(c, fn, el) {
+  try {
+    const args = gatherInputs(fn, el);
+    const data = encodeCall(fn, args);
+    const value = valueFor(fn, el);
+    let out = `${fnSignature(fn)}\n\ncalldata:\n${data}`;
+    if (value > 0n) out += `\n\nvalue (wei): ${value.toString()}`;
+    if (state.addresses[c.key]) out += `\n\nto: ${state.addresses[c.key]}`;
+    setOutput(el, "ok", "ENCODED", escapeHtml(out));
+  } catch (e) {
+    setOutput(el, "err", "ENCODE ERROR", escapeHtml(e.message || String(e)));
+  }
+}
+
+async function handleSend(c, fn, el) {
+  try {
+    if (fn.typedConfirm) {
+      const ok = await typedConfirm(fn.name, fnSignature(fn), fn.desc, fn.typedConfirm);
+      if (!ok) return;
+    } else if (fn.danger) {
+      if (!confirm(`${fn.name} is destructive. Proceed?`)) return;
+    }
+    if (!state.signer) throw new Error("wallet not connected");
+    const addr = state.addresses[c.key];
+    if (!addr || !ethers.isAddress(addr)) throw new Error("contract address not set");
+    if (state.walletChainId !== c.chainId) {
+      throw new Error(`wallet on chain ${state.walletChainId}; contract requires ${c.chainId} (${c.chain}). Switch network.`);
+    }
+
+    // Fix 3 (Code Integrity 2026-05-14) — invariant: a write is dispatched only
+    // to an address carrying contract code. A write to a codeless address
+    // confirms with status 1 (false success). See ProposedFixes MD, Finding 3.
+    setOutput(el, "ok", "CHECKING", "verifying contract code at target address…");
+    const code = await state.provider.getCode(addr);
+    if (!code || code === "0x") {
+      throw new Error(`no contract code at ${addr} on chain ${c.chainId} — refusing to send`);
+    }
+
+    const args = gatherInputs(fn, el);
+    const data = encodeCall(fn, args);
+    const value = valueFor(fn, el);
+
+    setOutput(el, "ok", "SUBMITTING", "awaiting wallet confirmation…");
+    const tx = await state.signer.sendTransaction({ to: addr, data, value });
+    setOutput(el, "ok", "BROADCAST", escapeHtml(`tx: ${tx.hash}\n\nwaiting for confirmation…`));
+    const r = await tx.wait();
+    setOutput(el, "ok", "CONFIRMED", escapeHtml(`tx: ${tx.hash}\nblock: ${r.blockNumber}\nstatus: ${r.status === 1 ? "success" : "reverted"}`));
+  } catch (e) {
+    setOutput(el, "err", "SEND ERROR", escapeHtml(e.message || e.shortMessage || String(e)));
+  }
+}
+
+async function handleRead(c, fn, el) {
+  try {
+    const addr = state.addresses[c.key];
+    if (!addr || !ethers.isAddress(addr)) throw new Error("contract address not set");
+
+    const args = gatherInputs(fn, el);
+    const data = encodeCall(fn, args);
+    const provider = await getReadProvider(c.chainId);
+
+    setOutput(el, "read-ok", "CALLING", "eth_call dispatched…");
+    const raw = await provider.call({ to: addr, data });
+
+    const iface = new ethers.Interface([buildAbiEntry(fn)]);
+    const decoded = iface.decodeFunctionResult(fn.name, raw);
+
+    setOutput(el, "read-ok", "RESULT", formatReadResult(fn, decoded));
+  } catch (e) {
+    setOutput(el, "err", "READ ERROR", escapeHtml(e.message || e.shortMessage || String(e)));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPED-CONFIRM MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+
+function typedConfirm(fnName, fnSig, fnDesc, phrase) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById("confirm-modal");
+    const title   = document.getElementById("modal-title");
+    const sig     = document.getElementById("modal-fn");
+    const body    = document.getElementById("modal-body");
+    const input   = document.getElementById("modal-input");
+    const cancel  = document.getElementById("modal-cancel");
+    const confirm = document.getElementById("modal-confirm");
+
+    title.textContent = `${fnName} — IRREVERSIBLE`;
+    sig.textContent   = fnSig;
+    body.textContent  = fnDesc;
+    input.value       = "";
+    input.placeholder = `Type ${phrase} to enable Confirm`;
+    confirm.disabled  = true;
+    overlay.classList.add("active");
+    setTimeout(() => input.focus(), 50);
+
+    function check() { confirm.disabled = input.value.toUpperCase() !== phrase; }
+    function cleanup(result) {
+      overlay.classList.remove("active");
+      input.removeEventListener("input", check);
+      cancel.removeEventListener("click", onCancel);
+      confirm.removeEventListener("click", onConfirm);
+      overlay.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    }
+    function onCancel()   { cleanup(false); }
+    function onConfirm()  { cleanup(input.value.toUpperCase() === phrase); }
+    function onBackdrop(e){ if (e.target === overlay) cleanup(false); }
+    function onKey(e)     { if (e.key === "Escape") cleanup(false); }
+
+    input.addEventListener("input", check);
+    cancel.addEventListener("click", onCancel);
+    confirm.addEventListener("click", onConfirm);
+    overlay.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WALLET
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function connectWallet() {
+  try {
+    if (!window.ethereum) {
+      alert("No injected wallet detected. Open this page in a wallet browser (MetaMask, Rabby, etc.).");
+      return;
+    }
+    state.provider = new ethers.BrowserProvider(window.ethereum);
+    const accounts = await state.provider.send("eth_requestAccounts", []);
+    state.walletAddr = accounts[0];
+    state.signer = await state.provider.getSigner();
+    const net = await state.provider.getNetwork();
+    state.walletChainId = Number(net.chainId);
+    updateWalletUI();
+
+    window.ethereum.on?.("chainChanged", hex => {
+      state.walletChainId = parseInt(hex, 16);
+      updateWalletUI();
+    });
+    window.ethereum.on?.("accountsChanged", accs => {
+      state.walletAddr = accs[0] || null;
+      updateWalletUI();
+    });
+  } catch (e) {
+    alert("Wallet connect failed: " + (e.message || e));
+  }
+}
+
+function updateWalletUI() {
+  const pill = document.getElementById("wallet-pill");
+  const chainPill = document.getElementById("chain-pill");
+  const btn = document.getElementById("connect-btn");
+  if (state.walletAddr) {
+    pill.textContent = short(state.walletAddr);
+    pill.classList.add("live");
+    btn.textContent = "Disconnect";
+    btn.onclick = () => {
+      state.walletAddr = null; state.signer = null; state.walletChainId = null; state.provider = null;
+      btn.textContent = "Connect Wallet";
+      btn.onclick = connectWallet;
+      updateWalletUI();
+    };
+  } else {
+    pill.textContent = "no wallet";
+    pill.classList.remove("live");
+    btn.textContent = "Connect Wallet";
+    btn.onclick = connectWallet;
+  }
+  chainPill.textContent = state.walletChainId ? `chain ${state.walletChainId}` : `chain ${state.selectedChainId}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONNECTION GATE OVERLAY CONTROLLER
+// Reuses connectWallet() (populates shared `state`) + a live read to gate Done.
+// ─────────────────────────────────────────────────────────────────────────────
+(function(){
+  var BASE = 8453;
+  var detected = false;   // a contract was detected + live-read OK
+  function g(id){ return document.getElementById(id); }
+
+  function openGate(){ g("gate-overlay").classList.add("active"); refreshGate(); }
+  function closeGate(){ g("gate-overlay").classList.remove("active"); }
+
+  // Reflect shared `state` into the overlay UI + recompute Done enablement.
+  function refreshGate(){
+    var wp = g("gate-wallet-pill"), detail = g("gate-wallet-detail"), warn = g("gate-chain-warn");
+    if (state.walletAddr){
+      wp.className = "gate-pill " + (state.walletChainId === BASE ? "ok" : "danger");
+      wp.textContent = state.walletChainId === BASE ? "connected" : "wrong chain";
+      detail.classList.remove("gate-hidden");
+      g("gate-acct").textContent = short(state.walletAddr);
+      g("gate-chain").textContent = state.walletChainId + (state.walletChainId === BASE ? " (Base)" : " (NOT Base)");
+      if (state.walletChainId === BASE){ warn.classList.add("gate-hidden"); g("gate-detect").disabled = false; }
+      else { warn.classList.remove("gate-hidden"); g("gate-detect").disabled = true; }
+    } else {
+      wp.className = "gate-pill idle"; wp.textContent = "not connected";
+      detail.classList.add("gate-hidden"); warn.classList.add("gate-hidden");
+      g("gate-detect").disabled = true;
+    }
+    // Done enables ONLY when: wallet on Base AND a contract was detected/read-OK.
+    g("gate-done").disabled = !(state.walletAddr && state.walletChainId === BASE && detected);
+  }
+
+  // Connect via the console's own connectWallet(), then reflect into overlay.
+  async function gateConnect(){
+    await connectWallet();
+    refreshGate();
+  }
+
+  async function gateSwitch(){
+    try {
+      await window.ethereum.request({ method:"wallet_switchEthereumChain", params:[{ chainId:"0x2105" }] });
+    } catch(e){
+      if (e && e.code === 4902){
+        await window.ethereum.request({ method:"wallet_addEthereumChain", params:[{
+          chainId:"0x2105", chainName:"Base", nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},
+          rpcUrls:["https://mainnet.base.org"], blockExplorerUrls:["https://basescan.org"]
+        }]});
+      }
+    }
+    // chainChanged listener (set in connectWallet) updates state; reflect it.
+    setTimeout(refreshGate, 400);
+  }
+
+  // Verify a live read against the pasted address. Confirms the connection works
+  // end to end (real eth_call to a real contract) before unlocking the console.
+  async function gateDetect(){
+    var addr = g("gate-addr").value.trim();
+    var pill = g("gate-detect-pill");
+    if (!ethers.isAddress(addr)){ pill.className="gate-pill danger"; pill.textContent="invalid address"; return; }
+    if (!state.provider){ pill.className="gate-pill danger"; pill.textContent="connect first"; return; }
+    pill.className="gate-pill idle"; pill.textContent="reading...";
+    try {
+      // Confirm there is code at the address, then read two stable getters.
+      var code = await state.provider.getCode(addr);
+      if (code === "0x"){ pill.className="gate-pill danger"; pill.textContent="no contract"; detected=false; refreshGate(); return; }
+      var abi = [
+        "function minSwapBatch() view returns (uint256)",
+        "function daiCeiling() view returns (uint256)",
+        "function owner() view returns (address)"
+      ];
+      var c = new ethers.Contract(addr, abi, state.provider);
+      var msb = await c.minSwapBatch();
+      var own = await c.owner();
+      pill.className="gate-pill ok"; pill.textContent="live read OK";
+      g("gate-read-step").classList.remove("gate-hidden");
+      g("gate-read-pill").className="gate-pill ok"; g("gate-read-pill").textContent="OK";
+      g("gate-read-body").innerHTML =
+        '<div class="gate-kv"><span class="k">minSwapBatch</span><span>'+msb.toString()+'</span></div>' +
+        '<div class="gate-kv"><span class="k">owner</span><span>'+short(own)+'</span></div>';
+      detected = true;
+      // Persist the verified address into the console's address store for PAY.
+      try { state.addresses["PAY"] = addr; } catch(_){}
+      refreshGate();
+    } catch(e){
+      pill.className="gate-pill danger"; pill.textContent="read failed";
+      detected = false; refreshGate();
+    }
+  }
+
+  // Wire the overlay's own buttons.
+  g("gate-connect").onclick = gateConnect;
+  g("gate-switch").onclick  = gateSwitch;
+  g("gate-detect").onclick  = gateDetect;
+  g("gate-done").onclick    = function(){ closeGate(); };
+
+  // The MAIN console "Connect Wallet" button now OPENS THE GATE instead of
+  // connecting directly. (Overrides the earlier onclick = connectWallet.)
+  var mainBtn = document.getElementById("connect-btn");
+  if (mainBtn) mainBtn.onclick = openGate;
+
+  // Expose for debugging / external triggers.
+  window.PossessioGate = { open: openGate, close: closeGate };
+})();
+
+// Chainlink ETH/USD feeds per chain
+const ETH_USD_FEED = {
+  1:    "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", // Ethereum L1
+  8453: "0x71041dDdaD3595F9CEd3DcCFBE3D1F4b0a16Bb70", // Base
+};
+
+// minimal AggregatorV3 ABI fragment
+const FEED_ABI = [{
+  type:"function", name:"latestRoundData", stateMutability:"view",
+  inputs:[],
+  outputs:[
+    {name:"roundId",type:"uint80"},
+    {name:"answer",type:"int256"},
+    {name:"startedAt",type:"uint256"},
+    {name:"updatedAt",type:"uint256"},
+    {name:"answeredInRound",type:"uint80"},
+  ],
+}, {
+  type:"function", name:"decimals", stateMutability:"view",
+  inputs:[], outputs:[{type:"uint8"}],
+}];
+
+// L1Anchor treasurySnapshot ABI fragment
+const SNAPSHOT_ABI = [{
+  type:"function", name:"treasurySnapshot", stateMutability:"view",
+  inputs:[],
+  outputs:[
+    {name:"cbEthLiquid",type:"uint256"},
+    {name:"cbEthMavanShares",type:"uint256"},
+    {name:"cbEthMavanPrincipal",type:"uint256"},
+    {name:"usdcLiquid",type:"uint256"},
+    {name:"usdcMorphoShares",type:"uint256"},
+    {name:"usdcMorphoValue",type:"uint256"},
+    {name:"usdcMorphoPrincipal",type:"uint256"},
+    {name:"isDepegPaused",type:"bool"},
+  ],
+}];
+
+// PossessioPayments balance ABI fragments
+const PAY_ABI = [
+  { type:"function", name:"getUSDCBalance", stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
+  { type:"function", name:"getDAIBalance",  stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
+  { type:"function", name:"getCbETHBalance",stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
+  { type:"function", name:"getMorphoBalance",stateMutability:"view", inputs:[], outputs:[{name:"shares",type:"uint256"},{name:"currentUSDCValue",type:"uint256"}] },
+];
+
+const SNAPSHOT_STORAGE_KEY = "possessio_console_treasury_history_v0_4_3";
+
+// fetch ETH/USD price (USD per 1e18 wei of ETH), returned as JS number (USD float)
+async function fetchEthUsd(chainId) {
+  const feedAddr = ETH_USD_FEED[chainId];
+  if (!feedAddr) throw new Error(`no ETH/USD feed for chain ${chainId}`);
+  const provider = await getReadProvider(chainId);
+  const iface = new ethers.Interface(FEED_ABI);
+  const [decRaw, dataRaw] = await Promise.all([
+    provider.call({ to: feedAddr, data: iface.encodeFunctionData("decimals", []) }),
+    provider.call({ to: feedAddr, data: iface.encodeFunctionData("latestRoundData", []) }),
+  ]);
+  const decimals = Number(iface.decodeFunctionResult("decimals", decRaw)[0]);
+  const decoded = iface.decodeFunctionResult("latestRoundData", dataRaw);
+  const answer = decoded[1]; // bigint
+  if (answer <= 0n) throw new Error("feed returned non-positive answer");
+  return Number(answer) / Math.pow(10, decimals);
+}
+
+// Read treasurySnapshot from an L1Anchor address
+async function fetchAnchorSnapshot(anchorAddr) {
+  const provider = await getReadProvider(1); // L1Anchor is on Ethereum L1
+  const iface = new ethers.Interface(SNAPSHOT_ABI);
+  const raw = await provider.call({
+    to: anchorAddr,
+    data: iface.encodeFunctionData("treasurySnapshot", []),
+  });
+  return iface.decodeFunctionResult("treasurySnapshot", raw);
+}
+
+// Read PossessioPayments balances
+async function fetchPaymentsBalances(paymentsAddr) {
+  const provider = await getReadProvider(8453); // Base
+  const iface = new ethers.Interface(PAY_ABI);
+  const [usdcRaw, daiRaw, cbethRaw] = await Promise.all([
+    provider.call({ to: paymentsAddr, data: iface.encodeFunctionData("getUSDCBalance", []) }),
+    provider.call({ to: paymentsAddr, data: iface.encodeFunctionData("getDAIBalance",  []) }),
+    provider.call({ to: paymentsAddr, data: iface.encodeFunctionData("getCbETHBalance",[]) }),
+  ]);
+  return {
+    usdc:  iface.decodeFunctionResult("getUSDCBalance",  usdcRaw)[0],
+    dai:   iface.decodeFunctionResult("getDAIBalance",   daiRaw)[0],
+    cbeth: iface.decodeFunctionResult("getCbETHBalance", cbethRaw)[0],
+  };
+}
+
+// USD formatter
+function fmtUsd(n) {
+  if (!Number.isFinite(n)) return "$—";
+  if (n === 0) return "$0.00";
+  if (Math.abs(n) < 0.01) return "<$0.01";
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// 24h history — snapshot total to localStorage on each refresh, prune > 7 days
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function appendHistory(total) {
+  const now = Date.now();
+  let h = loadHistory();
+  h.push({ t: now, v: total });
+  // prune older than 7 days
+  const cutoff = now - 7*24*60*60*1000;
+  h = h.filter(p => p.t >= cutoff);
+  try { localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(h)); } catch {}
+  return h;
+}
+function compute24hDelta(currentTotal, history) {
+  if (!history.length) return null;
+  const cutoff = Date.now() - 24*60*60*1000;
+  // find the oldest point >= 24h ago; if none, use the oldest point we have
+  const eligible = history.filter(p => p.t <= cutoff);
+  const reference = eligible.length ? eligible[eligible.length-1] : history[0];
+  if (!reference || reference.v === 0) return null;
+  // require at least 1h of history before we surface a delta
+  if (Date.now() - reference.t < 60*60*1000) return null;
+  const pct = ((currentTotal - reference.v) / reference.v) * 100;
+  return { pct, fromTs: reference.t };
+}
+
+// Main refresh — aggregates across all set L1Anchor addresses + Payments
+async function refreshTreasury(opts) {
+  const amountEl  = document.getElementById("tc-amount");
+  const deltaEl   = document.getElementById("tc-delta");
+  const liquidEl  = document.getElementById("tc-liquid");
+  const earningEl = document.getElementById("tc-earning");
+  const statusEl  = document.getElementById("tc-status");
+  const refreshBtn= document.getElementById("tc-refresh");
+
+  const anchorAddr   = state.addresses["L1A"];
+  const paymentsAddr = state.addresses["PAY"];
+
+  if ((!anchorAddr || !ethers.isAddress(anchorAddr)) && (!paymentsAddr || !ethers.isAddress(paymentsAddr))) {
+    amountEl.textContent  = "$—";
+    deltaEl.textContent   = "";
+    deltaEl.className     = "tc-delta";
+    liquidEl.textContent  = "$—";
+    earningEl.textContent = "$—";
+    statusEl.className    = "tc-status";
+    statusEl.textContent  = "Paste an L1Anchor or PossessioPayments address to see live values.";
+    return;
+  }
+
+  statusEl.className   = "tc-status loading";
+  statusEl.textContent = "Reading on-chain state…";
+  refreshBtn.classList.add("spinning");
+
+  let liquidUsd = 0;
+  let earningUsd = 0;
+  const errors = [];
+  let priceUsed = null;
+
+  try {
+    // Anchor on L1
+    if (anchorAddr && ethers.isAddress(anchorAddr)) {
+      try {
+        const [snap, ethUsd] = await Promise.all([
+          fetchAnchorSnapshot(anchorAddr),
+          fetchEthUsd(1),
+        ]);
+        priceUsed = ethUsd;
+        const cbEthLiquid = Number(ethers.formatUnits(snap[0], 18));
+        const cbEthMavan  = Number(ethers.formatUnits(snap[2], 18)); // principal — staked balance proxy
+        const usdcLiquid  = Number(ethers.formatUnits(snap[3], 6));
+        const morphoValue = Number(ethers.formatUnits(snap[5], 6));  // current USDC value of shares
+        liquidUsd  += cbEthLiquid * ethUsd + usdcLiquid;
+        earningUsd += cbEthMavan  * ethUsd + morphoValue;
+      } catch (e) {
+        errors.push("Anchor: " + (e.shortMessage || e.message || String(e)));
+      }
+    }
+
+    // Payments on Base
+    if (paymentsAddr && ethers.isAddress(paymentsAddr)) {
+      try {
+        const [bal, ethUsdBase] = await Promise.all([
+          fetchPaymentsBalances(paymentsAddr),
+          fetchEthUsd(8453),
+        ]);
+        // prefer Base price if Anchor wasn't read, else keep L1 price
+        if (priceUsed === null) priceUsed = ethUsdBase;
+        const usdc  = Number(ethers.formatUnits(bal.usdc,  6));
+        const dai   = Number(ethers.formatUnits(bal.dai,   18));
+        const cbeth = Number(ethers.formatUnits(bal.cbeth, 18));
+        liquidUsd  += usdc + dai;
+        earningUsd += cbeth * ethUsdBase;
+      } catch (e) {
+        errors.push("Payments: " + (e.shortMessage || e.message || String(e)));
+      }
+    }
+  } finally {
+    refreshBtn.classList.remove("spinning");
+  }
+
+  const total = liquidUsd + earningUsd;
+
+  amountEl.textContent  = fmtUsd(total);
+  liquidEl.textContent  = fmtUsd(liquidUsd);
+  earningEl.textContent = fmtUsd(earningUsd);
+
+  // 24h delta (skip if we got no successful read)
+  if (errors.length === 0 || total > 0) {
+    const history = appendHistory(total);
+    const delta = compute24hDelta(total, history);
+    if (delta) {
+      const sign = delta.pct >= 0 ? "↗ +" : "↘ ";
+      deltaEl.textContent = `${sign}${delta.pct.toFixed(2)}% (24h)`;
+      deltaEl.className = "tc-delta " + (delta.pct >= 0 ? "up" : "down");
+    } else {
+      deltaEl.textContent = "Tracking 24h…";
+      deltaEl.className = "tc-delta";
+    }
+  }
+
+  if (errors.length) {
+    statusEl.className = "tc-status err";
+    statusEl.textContent = errors.join(" · ");
+  } else {
+    statusEl.className = "tc-status";
+    const parts = [];
+    if (anchorAddr   && ethers.isAddress(anchorAddr))   parts.push("Anchor");
+    if (paymentsAddr && ethers.isAddress(paymentsAddr)) parts.push("Payments");
+    statusEl.textContent = `Live · ${parts.join(" + ")} · ETH ≈ ${fmtUsd(priceUsed)}`;
+  }
+}
+
+// debounce util for address-input triggers
+let _refreshTimer = null;
+function scheduleTreasuryRefresh(delayMs) {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(() => refreshTreasury(), delayMs || 600);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+document.getElementById("chain-sel").addEventListener("change", async e => {
+  state.selectedChainId = parseInt(e.target.value, 10);
+  if (window.ethereum && state.provider) {
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x" + state.selectedChainId.toString(16) }],
+      });
+    } catch (err) {
+      console.warn("chain switch declined:", err.message);
+    }
+  }
+  updateWalletUI();
+});
+
+document.getElementById("connect-btn").onclick = function(){ window.PossessioGate.open(); };
+document.getElementById("tc-refresh").onclick = () => refreshTreasury();
+
+loadAddresses();
+renderTabs();
+renderPanels();
+updateWalletUI();
+refreshTreasury();
+</script>
+
+<!-- env chooser -->
+<div class="lr-modal" id="lr-envmodal" hidden>
+  <div class="lr-sheet">
+    <h3>Where do you want to launch?</h3>
+    <p class="sub">Practice on a testnet first — it's free and safe. Go to mainnet when you're ready for the real thing.</p>
+    <button class="lr-envchoice" onclick="LaunchRail.open('test')">
+      <span class="ic t">TEST</span>
+      <span><div class="nm">Testnet</div><div class="ds">A practice run. No real funds, no real fee. Safe to forge-test.</div></span>
+    </button>
+    <button class="lr-envchoice" onclick="LaunchRail.open('main')">
+      <span class="ic m">MAIN</span>
+      <span><div class="nm">Mainnet</div><div class="ds">The real network. Real funds, real fee, real ownership.</div></span>
+    </button>
+    <button class="lr-cancel" onclick="LaunchRail.closeEnv()">Cancel</button>
+  </div>
+</div>
+
+<!-- launch rail subpage -->
+<!-- ============ CONNECTION GATE OVERLAY ============ -->
+<!-- Opens when the user taps "Connect Wallet". Reuses the console's own
+     connectWallet() (which populates the shared `state`), adds contract
+     detect + live-read, and a Done button that enables only once the wallet
+     is on Base (8453) AND a contract has been detected with a live read.
+     Closing the overlay leaves `state` populated so the console cards work. -->
+<style>
+#gate-overlay{position:fixed;inset:0;z-index:300;background:rgba(15,23,42,.55);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;overflow-y:auto;padding:24px 16px}
+#gate-overlay.active{display:flex}
+.gate-box{background:var(--surface);border:1px solid var(--line);max-width:460px;width:100%;padding:22px;border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.3);margin:auto}
+.gate-box h2{font-size:17px;font-weight:600;letter-spacing:-0.01em;margin:0 0 4px}
+.gate-box .gate-step{border:1px solid var(--line);background:var(--surface-2);padding:14px;margin-bottom:12px;border-radius:11px}
+.gate-box .gate-step h3{font-size:14px;font-weight:600;margin:0 0 10px}
+.gate-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;margin-left:6px;vertical-align:middle}
+.gate-pill.idle{background:var(--surface-2);color:var(--ink-faint);border:1px solid var(--line)}
+.gate-pill.ok{background:#dcfce7;color:#166534}
+.gate-pill.danger{background:#fee2e2;color:#991b1b}
+.gate-kv{display:flex;justify-content:space-between;font-size:12px;padding:5px 0;font-family:'IBM Plex Mono',monospace}
+.gate-kv .k{color:var(--ink-faint)}
+.gate-box input.gate-addr{width:100%;padding:10px 12px;border:1px solid var(--line);background:var(--surface);font-size:12px;font-family:'IBM Plex Mono',monospace;border-radius:8px;color:var(--ink);margin-bottom:8px}
+.gate-box button{font-family:inherit;font-size:13px;font-weight:600;padding:9px 16px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.gate-box button.primary{background:var(--oxide,#2563eb);color:#fff;border-color:transparent}
+.gate-box button:disabled{opacity:.45;cursor:not-allowed}
+.gate-hidden{display:none}
+.gate-note{font-size:12px;padding:10px 12px;border-radius:8px;margin-top:10px;line-height:1.5}
+.gate-note.warn{background:#fef9c3;color:#854d0e;border:1px solid #fde047}
+.gate-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.gate-done-row{display:flex;justify-content:flex-end;margin-top:6px}
+#gate-read-body{font-size:12px;font-family:'IBM Plex Mono',monospace}
+</style>
+<div id="gate-overlay">
+  <div class="gate-box">
+    <h2>Connect to Base</h2>
+    <p style="font-size:12px;color:var(--ink-dim);margin:0 0 14px">Connect your wallet, confirm the network, and verify a live contract read. Done unlocks the console.</p>
+
+    <div class="gate-step">
+      <h3>1 &middot; Wallet <span id="gate-wallet-pill" class="gate-pill idle">not connected</span></h3>
+      <div class="gate-row"><button id="gate-connect" class="primary">Connect wallet</button></div>
+      <div id="gate-wallet-detail" class="gate-hidden" style="margin-top:10px">
+        <div class="gate-kv"><span class="k">Account</span><span id="gate-acct">&mdash;</span></div>
+        <div class="gate-kv"><span class="k">Chain</span><span id="gate-chain">&mdash;</span></div>
+      </div>
+      <div id="gate-chain-warn" class="gate-note warn gate-hidden">
+        Wrong network. The console only operates on Base mainnet (8453).
+        <div class="gate-row" style="margin-top:8px"><button id="gate-switch">Switch to Base</button></div>
+      </div>
+    </div>
+
+    <div class="gate-step">
+      <h3>2 &middot; Contract <span id="gate-detect-pill" class="gate-pill idle">&mdash;</span></h3>
+      <input id="gate-addr" class="gate-addr" placeholder="0x&hellip;" autocomplete="off" spellcheck="false" value="0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91">
+      <div class="gate-row"><button id="gate-detect" disabled>Verify live read</button></div>
+    </div>
+
+    <div id="gate-read-step" class="gate-step gate-hidden">
+      <h3>3 &middot; Live state <span id="gate-read-pill" class="gate-pill idle">reading&hellip;</span></h3>
+      <div id="gate-read-body"></div>
+    </div>
+
+    <div class="gate-done-row">
+      <button id="gate-done" class="primary" disabled>Done</button>
+    </div>
+  </div>
+</div>
+<!-- ============ END CONNECTION GATE OVERLAY ============ -->
+
+<div id="lr-view" hidden>
+  <div class="lr-head">
+    <button class="lr-back" onclick="LaunchRail.close()" aria-label="Back to console">‹</button>
+    <span class="lr-htitle">Launch</span>
+    <span class="lr-envtag" id="lr-envtag"></span>
+  </div>
+  <div class="lr-scroll"><div class="lr-wrap" id="lr-wrap"></div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var C={
+    v3:{name:"POSSESSIO V3",short:"V3",net:"base",desc:"Your own token, fee engine, and council vault — the full protocol in one contract.",config:"token"},
+    pay:{name:"Payments",short:"PAY",net:"base",desc:"Inbound payment rails with a working reserve. Take payments, hold a stable buffer.",config:"payments"},
+    anchor:{name:"Anchor",short:"ANC",net:"eth",desc:"A per-merchant treasury that stakes and holds on Ethereum. Ready to run, nothing to set.",config:"none"}
+  };
+  var NET={ base:{main:"Base",test:"Base Sepolia",cls:"base"}, eth:{main:"Ethereum",test:"Ethereum Sepolia",cls:"eth"} };
+  var STEPS=["Choose","Own","Set up","Deploy"], TITLES=["What do you want to launch?","How do you want to own it?","Set it up","Deploy"];
+  var L={env:"test",step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+
+  function esc(x){return String(x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+  function isAddr(a){return /^0x[a-fA-F0-9]{40}$/.test(a);}
+  function shrt(a){return a&&a.length>10?a.slice(0,6)+"\u2026"+a.slice(-4):a||"";}
+  function mock(){var h="0123456789abcdef",x="";for(var i=0;i<37;i++)x+=h[Math.floor(Math.random()*16)];return "0x8C8"+x;}
+  function nlabel(k){return L.env==="test"?NET[C[k].net].test:NET[C[k].net].main;}
+  function ncls(k){return NET[C[k].net].cls;}
+  var W=function(){return document.getElementById("lr-wrap");};
+
+  function lockI(){return '<svg class="lr-lki" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';}
+  function lockedP(rows,id){var r=rows.map(function(x){return '<div class="lr-lkr"><span>'+esc(x[0])+'</span><b>'+esc(x[1])+'</b></div>';}).join("");
+    return '<div class="lr-lk"><div class="lr-lkh">'+lockI()+' Set for you, locked <span class="lr-i" role="button" tabindex="0" onclick="LaunchRail.info(\''+id+'\')" style="margin-left:auto">i</span></div>'+r+'<div class="lr-ip" id="'+id+'" style="margin:10px 0 0">Fixed so no one can deploy a broken or unsafe version — including by mistake.</div></div>';}
+  function nodeH(i){ if(i<L.step)return '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>'; if(i===L.step)return (i+1);
+    return '<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
+  function sumF(i){ if(i===0){return esc(C[L.contract].name)+" \u00b7 "+nlabel(L.contract);}
+    if(i===1)return L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
+    if(i===2){var c=C[L.contract]; if(c.config==="none")return "Ready to go"; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
+    return ""; }
+  function tcls(){return L.env==="test"?"t":"";}
+
+  function cChoose(){
+    var cards=Object.keys(C).map(function(k){var c=C[k],sel=L.contract===k?"sel":"";
+      return '<button class="lr-card '+sel+'" onclick="LaunchRail.pickC(\''+k+'\')"><div class="lr-ctop"><span class="lr-net '+ncls(k)+'"><span class="nd"></span>'+nlabel(k)+'</span><span class="lr-tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span></div><p class="lr-cn">'+esc(c.name)+'</p><p class="lr-cd">'+esc(c.desc)+'</p></button>';}).join("");
+    return cards+'<button class="lr-go '+tcls()+'" id="lr-go" onclick="LaunchRail.next()" '+(L.contract?"":"disabled")+'>Continue</button>';
+  }
+  function cOwn(){
+    var lab=nlabel(L.contract), bs=L.owner==="baseAccount"?"sel":"", ss=L.owner==="safe"?"sel":"";
+    var sp=L.owner==="safe"?('<div class="lr-spx"><div class="lr-field" style="margin-bottom:10px"><label>Your Safe address (on '+lab+')</label><input id="lr-safe" placeholder="0x\u2026" value="'+esc(L.safe)+'" oninput="LaunchRail.setSafe(this.value)" autocomplete="off" spellcheck="false"><div class="lr-hint">Must be a Safe on <b>'+lab+'</b> — the same network this deploys to.</div></div><a class="lr-lo" href="https://app.safe.global" target="_blank" rel="noopener">Don\'t have one? Create a Safe \u2192</a><div class="lr-note w"><span class="ni">!</span><span><b>Set 2+ signers and require 2 approvals</b> if this holds real value. A 1-of-1 Safe is just one key with extra steps.</span></div><div class="lr-note i"><span class="ni">i</span><span>You\'ll reconnect your wallet at Safe — that\'s normal. No site acts for you without you connecting directly.</span></div></div>'):"";
+    var ok=L.owner==="baseAccount"||(L.owner==="safe"&&isAddr(L.safe));
+    return '<div class="lr-opt '+bs+'"><div class="lr-om" role="button" tabindex="0" onclick="LaunchRail.pickO(\'baseAccount\')" onkeydown="if(event.key===\'Enter\')LaunchRail.pickO(\'baseAccount\')"><div class="lr-oh"><span class="lr-ot">Base Account <span class="lr-easy">Easiest</span></span><span class="lr-i" role="button" tabindex="0" onclick="event.stopPropagation();LaunchRail.info(\'lr-iba\')">i</span></div><p class="lr-od">The account you\'re already signed in with. Passkey, no setup.</p></div><div class="lr-ip" id="lr-iba">Your Base App account holds the keys; you sign with your passkey. Any one key can act alone.<div class="tech">single-owner smart account \u00b7 ERC-4337 \u00b7 Base &amp; Ethereum</div></div></div>'
+      +'<div class="lr-opt '+ss+'"><div class="lr-om" role="button" tabindex="0" onclick="LaunchRail.pickO(\'safe\')" onkeydown="if(event.key===\'Enter\')LaunchRail.pickO(\'safe\')"><div class="lr-oh"><span class="lr-ot">Safe (multisig)</span><span class="lr-i" role="button" tabindex="0" onclick="event.stopPropagation();LaunchRail.info(\'lr-isafe\')">i</span></div><p class="lr-od">Multiple owners; a set number must approve before anything moves.</p></div><div class="lr-ip" id="lr-isafe">You choose how many owners and how many must approve — so no single key moves funds alone.<div class="tech">M-of-N threshold \u00b7 one Safe per network \u00b7 EIP-1271</div></div>'+sp+'</div>'
+      +'<button class="lr-go '+tcls()+'" id="lr-go" onclick="LaunchRail.next()" '+(ok?"":"disabled")+'>Continue</button>';
+  }
+  function cSetup(){
+    var c=C[L.contract],t=tcls();
+    if(c.config==="none")
+      return '<p class="lr-bs" style="margin-top:0">The Anchor deploys ready to run — its venues are fixed so you can\'t misconfigure it.</p><div class="lr-lk"><div class="lr-lkh">'+lockI()+' Set for you, locked</div><div class="lr-lkr"><span>Staking venue</span><b>MAVAN (cbETH)</b></div><div class="lr-lkr"><span>Reserve venue</span><b>Morpho (USDC)</b></div></div><button class="lr-go '+t+'" onclick="LaunchRail.next()">Looks good — continue</button>';
+    if(c.config==="payments")
+      return '<div class="lr-field"><label>Stable reserve ceiling (USD)</label><input inputmode="numeric" placeholder="e.g. 2280" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">Working capital the contract holds as a buffer.</div></div>'+lockedP([["Token / oracle / router","Set for you"],["Sweep slippage guard","Set for you"]],"lr-lp")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(L.cfg.supply.trim()?"":"disabled")+'>Continue</button>';
+    var ok=L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim();
+    return '<div class="lr-in2"><div class="lr-field"><label>Token name</label><input placeholder="e.g. Riverside Dollar" value="'+esc(L.cfg.name)+'" oninput="LaunchRail.setCfg(\'name\',this.value)" maxlength="32"></div><div class="lr-field" style="max-width:120px"><label>Ticker</label><input placeholder="RIV" value="'+esc(L.cfg.ticker)+'" oninput="LaunchRail.setCfg(\'ticker\',this.value.toUpperCase())" maxlength="6"></div></div><div class="lr-field"><label>Total supply</label><input inputmode="numeric" placeholder="1,000,000,000" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">All minted to you at launch.</div></div><div class="lr-field"><label>Starting liquidity (ETH)</label><input inputmode="decimal" placeholder="0.05" value="'+esc(L.cfg.liq)+'" oninput="LaunchRail.setCfg(\'liq\',this.value)"><div class="lr-hint">Seeds the pool so people can trade it.</div></div>'+lockedP([["Fee","2% L.A.T.E."],["Split","25% LP \u00b7 75% \u2192 cbETH"],["Hook flags","0x08C8 (mined for you)"]],"lr-lv")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(ok?"":"disabled")+'>Continue</button>';
+  }
+  function cDeploy(){
+    var c=C[L.contract],lab=nlabel(L.contract),isT=L.env==="test",t=tcls();
+    var own=L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
+    if(L.dep==="ready")
+      return '<div class="lr-sum"><div class="lr-sr"><span class="k">Contract</span><span class="v">'+esc(c.name)+'</span></div><div class="lr-sr"><span class="k">Network</span><span class="v">'+lab+(isT?" (testnet)":"")+'</span></div>'+(c.config==="token"?'<div class="lr-sr"><span class="k">Token</span><span class="v">'+esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"")+'</span></div>':"")+'<div class="lr-sr"><span class="k">Owned by</span><span class="v">'+esc(own)+'</span></div><div class="lr-sr"><span class="k">Fee</span><span class="v">'+(isT?"test ETH only":"included")+'</span></div></div><div class="lr-note i" style="margin-top:14px"><span class="ni">i</span><span>We prepare your contract\'s address, then your wallet confirms. Deploy and fee happen in one transaction — together, or not at all.</span></div><button class="lr-go '+t+'" onclick="LaunchRail.deploy()">'+(isT?"Deploy to testnet":"Prepare &amp; deploy")+'</button>';
+    if(L.dep==="prep")
+      return '<div class="lr-cs"><div class="lr-spin"></div><p class="lr-st">Preparing your contract</p><p class="lr-sb">This can take a few minutes — keep this open. We\'re mining your contract\'s unique address. <b>Nothing has been charged.</b></p></div>';
+    if(L.dep==="confirm")
+      return '<p class="lr-bs" style="margin-top:0">Your address is ready. Sign once to deploy'+(isT?" on testnet":" and pay the fee")+' — in a single transaction.</p><div class="lr-wsheet" style="margin-top:13px"><div class="lr-wh"><span class="bd">B</span> Base App wallet \u00b7 '+lab+'</div><div class="lr-sum" style="border:none"><div class="lr-sr" style="padding:8px 0"><span class="k">Deploy</span><span class="v">'+esc(c.name)+'</span></div><div class="lr-sr" style="padding:8px 0"><span class="k">Fee</span><span class="v">'+(isT?"test ETH":"included")+'</span></div><div class="lr-sr" style="padding:8px 0;border:none"><span class="k">To</span><span class="v">'+esc(own)+'</span></div></div></div><div class="lr-note w" style="margin-top:12px"><span class="ni">!</span><span>You\'re signing in Base App — that signature is what makes this yours.</span></div><button class="lr-go '+t+'" onclick="LaunchRail.sign()">Sign in Base App</button>';
+    return '<div class="lr-cs"><div class="lr-ck"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><p class="lr-st">Deployed. You own it.</p><p class="lr-sb">'+esc(c.name)+' is live on '+lab+', owned by your '+(L.owner==="safe"?"Safe":"Base Account")+'.</p><div class="lr-addr"><small>Your contract address \u00b7 '+lab+'</small>'+L.addr+'</div><button class="lr-go" onclick="LaunchRail.close()">Done — back to console</button></div>';
+  }
+  var CT=[cChoose,cOwn,cSetup,cDeploy];
+
+  function render(){
+    document.getElementById("lr-envtag").className="lr-envtag "+(L.env==="test"?"t":"m");
+    document.getElementById("lr-envtag").textContent=L.env==="test"?"Testnet":"Mainnet";
+    var banner=L.env==="test"
+      ?'<div class="lr-banner t"><b>TESTNET</b><span>A practice run — no real funds, no real fee. Safe to deploy and forge-test against.</span></div>'
+      :'<div class="lr-banner m"><b>MAINNET</b><span>Real network — this deploy uses real funds and charges a real fee.</span></div>';
+    var blocks="";
+    for(var i=0;i<STEPS.length;i++){
+      var st=i<L.step?"done":i===L.step?"active":"locked",inner;
+      if(st==="done") inner='<div class="lr-bt">'+STEPS[i]+'</div><div class="lr-dsum"><span class="v">'+sumF(i)+'</span><button class="lr-edit" onclick="LaunchRail.edit('+i+')">Edit</button></div>';
+      else if(st==="active"){var sub=i===0?"Pick one. You'll own it the moment it deploys.":i===1?"You hold the keys and sign every action.":i===2?"Just the parts that are yours to choose.":"";
+        inner='<div class="lr-bt">'+TITLES[i]+'</div>'+(sub?'<p class="lr-bs">'+sub+'</p>':'')+'<div class="lr-bc">'+CT[i]()+'</div>';}
+      else inner='<div class="lr-bt">'+STEPS[i]+'</div>';
+      blocks+='<div class="lr-block '+st+'" id="lr-blk'+i+'"><div class="lr-gut"><div class="lr-node">'+nodeH(i)+'</div></div><div class="lr-bd">'+inner+'</div></div>';
+    }
+    W().innerHTML='<section class="lr-intro"><h1>Launch a contract</h1><p>Four steps. Each opens the next.</p></section>'+banner+'<div class="lr-flow">'+blocks+'</div>';
+  }
+  function scrollA(){requestAnimationFrame(function(){var el=document.getElementById("lr-blk"+Math.min(L.step,3));if(el)el.scrollIntoView({behavior:"smooth",block:"start"});});}
+  function goOk(ok){var g=document.getElementById("lr-go");if(g)g.disabled=!ok;}
+
+  window.LaunchRail={
+    askEnv:function(){document.getElementById("lr-envmodal").hidden=false;},
+    closeEnv:function(){document.getElementById("lr-envmodal").hidden=true;},
+    open:function(env){L={env:env,step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+      document.getElementById("lr-envmodal").hidden=true;document.getElementById("lr-view").hidden=false;document.body.style.overflow="hidden";render();},
+    close:function(){document.getElementById("lr-view").hidden=true;document.body.style.overflow="";},
+    info:function(id){var p=document.getElementById(id);if(p)p.classList.toggle("open");},
+    pickC:function(k){L.contract=k;render();},
+    pickO:function(o){L.owner=o;render();},
+    setSafe:function(v){L.safe=v.trim();goOk(isAddr(L.safe));},
+    setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
+    edit:function(i){L.step=i;if(i<3)L.dep="ready";render();scrollA();},
+    next:function(){L.step++;render();scrollA();},
+    deploy:function(){L.dep="prep";render();scrollA();setTimeout(function(){L.addr=mock();L.dep="confirm";render();scrollA();},2600);},
+    sign:function(){L.dep="done";render();scrollA();}
+  };
+  document.getElementById("lr-launch-btn").addEventListener("click",function(){LaunchRail.askEnv();});
+})();
+</script>
+</body>
+</html>
