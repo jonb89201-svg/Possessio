@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 663 tests pass across 29 suites. Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 648 tests run across 28 suites (646 passing; 1 intentional `vm.skip`; 1 fork suite gated on a `BASE_RPC_URL`). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,35 +35,40 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result (June 2026): 663 tests passed · 0 failed · 0 skipped across 29 suites**
+**Result (June 2026): 28 suites · 648 tests · 646 passed · 1 skipped · 1 fork-harness failure**
 
-*(Suite table below reflects the pre-restructure baseline and is being regenerated to the current 29-suite layout; the 663/0/0 total is current and terminal-confirmed.)*
+The skip is an intentional `vm.skip` (a mock-mode-only path). The single non-pass is `PossessioHookCreate3Fork::setUp` requiring a Base RPC (`BASE_RPC_URL` env var) — a fork-test harness gap, not a contract defect. Set `BASE_RPC_URL` and the fork suites (`PossessioHookCreate3Fork`, `PaymentsFork`, `LSTExchangeRateFork`) execute live against Base mainnet and the harness failure clears. Terminal-confirmed; substrate verified (646 `[PASS]` markers == 646 reported).
 
 Build verified: `forge build` succeeds with current Solc, compiling all source files with 0 errors. Pre-existing informational notices (forge-std `error` keyword future-deprecation, test mock unchecked transfers, V4 hook math typecasts, hour-scale timelock timestamp checks) -- none block compilation or test execution.
 
-| Suite | Tests |
+| Suite (file : contract) | Tests |
 |---|---|
-| `PLATE.t.sol` | 98 |
-| `Gauntlet.t.sol` (PLATE adversarial) | 29 |
+| `PLATE.t.sol` : PLATETest | 98 |
+| `Gauntlet.t.sol` : PLATEAttackTest (PLATE adversarial) | 29 |
 | `PLATELaunchV2.t.sol` | 3 |
-| `SAV.t.sol` (PLATEStakingTest) | 24 |
-| `SAV.t.sol` (SAVTest) | 76 |
+| `SAV.t.sol` : PLATEStakingTest | 24 |
+| `SAV.t.sol` : SAVTest | 76 |
 | `SAVGauntlet.t.sol` | 42 |
-| `POSSESSIO_v2.t.sol` | 46 |
-| `POSSESSIO_v2_Gauntlet.t.sol` | 34 |
+| `POSSESSIO_v2_Gauntlet.t.sol` : POSSESSIOv2Gauntlet | 32 |
 | `POSSESSIO_v2_Invariants.t.sol` | 17 |
-| `PossessioPayments.t.sol` (PossessioPaymentsTest) | 86 |
-| `PossessioPayments.t.sol` (Automation) | 28 |
+| `PossessioPayments_t.sol` : PossessioPaymentsTest | 108 (107 + 1 skip) |
+| `PossessioPayments_t.sol` : PossessioPaymentsAutomationTest | 28 |
 | `PossessioPayments_Gauntlet.t.sol` | 32 |
-| `AutomationInvariants.t.sol` (HookAutomation) | 27 |
-| `AutomationInvariants.t.sol` (PaymentsAutomation) | 7 |
+| `PossessioPayments_H1Slippage.t.sol` | 4 |
+| `AutomationInvariants.t.sol` : AutomationInvariants (hook) | 27 |
+| `AutomationInvariants.t.sol` : PaymentsAutomationInvariants | 4 |
+| `PossessioHook_M1Overflow.t.sol` | 5 |
+| `PossessioHookCreate3Fork.t.sol` (fork — needs `BASE_RPC_URL`) | 1 † |
+| `PaymentsFork_t.sol` : PaymentsForkTest (fork) | 21 |
+| `LSTExchangeRateFork.t.sol` (fork) | 5 |
 | `L1AnchorFactory.t.sol` | 35 |
-| `L1AnchorAdversarial.t.sol` (Oracle / Reentrancy / SilentFailure / Sovereignty / EmergencyUnwind / Identity) | 31 |
+| `L1AnchorAdversarial.t.sol` (6 suites: Oracle 6 / Reentrancy 3 / SilentFailure 3 / Sovereignty 7 / EmergencyUnwind 5 / Identity 7) | 31 |
 | `L1AnchorReentrancyMocks.sol` (Behavioral) | 5 |
 | `L1AnchorInvariant.t.sol` | 1 |
-| **Total (pre-restructure baseline)** | **621** |
+| `SymmetryGuardCore.t.sol` : SymmetryGuardCoreGauntlet **(new — typed additive MEV toll + sha256 Merkle handshake)** | 20 |
+| **Total (28 suites)** | **648** |
 
-*Current terminal-confirmed total: **663 passing / 0 failed across 29 suites**. The per-suite breakdown above predates the v2.6.3 restructure (DAI removal, LSTExchangeRate + Payments mainnet fork certifications) and is being regenerated.*
+*Terminal-confirmed: **646 passed · 1 skipped · 1 fork-harness failure across 28 suites (648 total)**, June 2026. † `PossessioHookCreate3Fork` fails its `setUp` only when `BASE_RPC_URL` is unset (fork-harness gap, not a contract defect); with the RPC set it runs live. The new `SymmetryGuardCore` suite passes 20/20, including `test_ffi_leaf_matches_onchain` — on-chain confirmation that the off-chain proof generator (`script/gen_proof.py`) matches `HandshakeLib` byte-for-byte.*
 
 ---
 
