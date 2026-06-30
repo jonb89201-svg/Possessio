@@ -145,6 +145,8 @@ details.fn summary::-webkit-details-marker{display:none}
 details.fn summary::before{content:"›";color:var(--ink-faint);font-size:18px;font-weight:300;transition:transform 0.15s ease;display:inline-block;width:14px;line-height:1}
 details.fn[open] summary::before{transform:rotate(90deg);color:var(--oxide)}
 details.fn .fn-name{font-weight:600;color:var(--ink);font-size:14px}
+details.fn .fn-plain-label{font-weight:600;color:var(--ink);font-size:14px}
+details.fn .fn-sub{display:block;font-weight:400;color:var(--ink-faint,#94a3b8);font-size:11px;font-family:ui-monospace,monospace;margin-top:1px}
 details.fn .fn-sig{color:var(--ink-faint);font-size:11px;font-family:'IBM Plex Mono',monospace}
 /* ── Bilingual: plain face + (i) reveal ──────────────────────────────── */
 details.fn .fn-plain-label{font-weight:650;color:var(--ink);font-size:15px}
@@ -325,12 +327,43 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
 .lr-go.t{background:var(--lr-test)}.lr-go.t:hover{background:#0f766e}
 @media (prefers-reduced-motion:reduce){#lr-view *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 
+
+/* Split slider (invisible-seesaw) */
+.split-slider-field{padding:4px 0}
+.split-readout{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:14px}
+.split-readout .split-left-pct,.split-readout .split-right-pct{font-weight:700;font-size:18px;color:var(--ink,#0f172a)}
+.split-readout .split-left-lbl,.split-readout .split-right-lbl{color:var(--ink-faint,#64748b);font-size:12px}
+.split-range{-webkit-appearance:none;appearance:none;width:100%;height:14px;border-radius:999px;outline:none;cursor:pointer;background:var(--line,#e2e8f0)}
+.split-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:30px;height:30px;border-radius:50%;background:#fff;border:3px solid var(--oxide,#2563eb);box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:grab}
+.split-range::-webkit-slider-thumb:active{cursor:grabbing}
+.split-range::-moz-range-thumb{width:30px;height:30px;border-radius:50%;background:#fff;border:3px solid var(--oxide,#2563eb);box-shadow:0 2px 6px rgba(0,0,0,.25);cursor:grab}
+.split-ends{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--ink-faint,#94a3b8)}
+
+/* Treasury card — positions with send */
+.tc-positions{margin-top:18px;padding-top:16px;border-top:1px solid var(--line,#e2e8f0)}
+.tc-pos-title{font-size:12px;font-weight:600;color:var(--ink-faint,#64748b);text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px}
+.tc-pos{margin-bottom:18px}
+.tc-pos-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.tc-pos-name{font-size:15px;font-weight:600;color:var(--ink,#0f172a)}
+.tc-pos-sub{font-size:11px;font-weight:400;color:var(--ink-faint,#94a3b8);font-family:ui-monospace,monospace}
+.tc-pos-bal{font-size:17px;font-weight:700;color:var(--ink,#0f172a)}
+.tc-pos-bar{height:8px;border-radius:999px;background:var(--line,#e2e8f0);overflow:hidden;margin-bottom:8px}
+.tc-pos-fill{display:block;height:100%;width:0%;background:var(--oxide,#2563eb);border-radius:999px;transition:width .3s ease}
+.tc-pos-send{display:flex;gap:8px}
+.tc-pos-addr{flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--line,#e2e8f0);border-radius:8px;font-family:ui-monospace,monospace;font-size:12px;background:var(--surface,#fff)}
+.tc-pos-addr:focus{border-color:var(--oxide,#2563eb);outline:none}
+.tc-pos-btn{padding:10px 18px;background:var(--oxide,#2563eb);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap}
+.tc-pos-btn:disabled{opacity:.5;cursor:not-allowed}
+.tc-pos-status{margin-top:6px;font-size:12px;min-height:1px}
+.tc-pos-status.ok{color:#16a34a}
+.tc-pos-status.err{color:#dc2626}
+.tc-pos-status.info{color:var(--ink-faint,#64748b)}
 </style>
 </head>
 <body>
 <div id="mib-debug" style="position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow:auto;background:#1a1a1a;color:#0f0;font:11px/1.4 monospace;padding:8px;z-index:2147483647;pointer-events:auto;border-top:2px solid #0f0;display:none;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><strong style="color:#0f0;">MIB DEBUG</strong><span><button onclick="document.getElementById('mib-log').innerHTML='';" style="background:#333;color:#0f0;border:1px solid #0f0;padding:2px 8px;font:11px monospace;">clear</button><button onclick="document.getElementById('mib-debug').style.display='none';" style="background:#333;color:#f55;border:1px solid #f55;padding:2px 8px;font:11px monospace;margin-left:4px;">x</button></span></div><div id="mib-log"></div></div>
 <button onclick="document.getElementById('mib-debug').style.display='block';" style="position:fixed;bottom:70px;right:8px;z-index:2147483647;background:#0f0;color:#000;border:3px solid #000;border-radius:50%;width:52px;height:52px;font:bold 14px monospace;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,.4);">DBG</button>
-<script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});mibLog('MIB bridge active. await-fix build.','#0ff');})();</script>
+<script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});mibLog('MIB bridge active.','#0ff');})();</script>
 
 
 <header class="console-head">
@@ -372,6 +405,41 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
       <span class="tc-row-v" id="tc-earning">$—</span>
     </div>
   </div>
+
+  <div class="tc-positions" id="tc-positions" hidden>
+    <div class="tc-pos-title">Your positions — send to your wallet</div>
+
+    <div class="tc-pos" data-pos="usdc">
+      <div class="tc-pos-head"><span class="tc-pos-name">Money Waiting <span class="tc-pos-sub">(USDC)</span></span><span class="tc-pos-bal" id="pos-usdc-bal">$—</span></div>
+      <div class="tc-pos-bar"><span class="tc-pos-fill" id="pos-usdc-fill"></span></div>
+      <div class="tc-pos-send">
+        <input class="tc-pos-addr" id="pos-usdc-addr" placeholder="0x… send to" autocomplete="off" spellcheck="false" />
+        <button class="tc-pos-btn" id="pos-usdc-btn" data-fn="sendUSDC" data-dec="6">Send</button>
+      </div>
+      <div class="tc-pos-status" id="pos-usdc-status"></div>
+    </div>
+
+    <div class="tc-pos" data-pos="cbeth">
+      <div class="tc-pos-head"><span class="tc-pos-name">My Savings <span class="tc-pos-sub">(cbETH)</span></span><span class="tc-pos-bal" id="pos-cbeth-bal">$—</span></div>
+      <div class="tc-pos-bar"><span class="tc-pos-fill" id="pos-cbeth-fill"></span></div>
+      <div class="tc-pos-send">
+        <input class="tc-pos-addr" id="pos-cbeth-addr" placeholder="0x… send to" autocomplete="off" spellcheck="false" />
+        <button class="tc-pos-btn" id="pos-cbeth-btn" data-fn="sendCbETH" data-dec="18">Send</button>
+      </div>
+      <div class="tc-pos-status" id="pos-cbeth-status"></div>
+    </div>
+
+    <div class="tc-pos" data-pos="morpho">
+      <div class="tc-pos-head"><span class="tc-pos-name">My Lending <span class="tc-pos-sub">(Morpho)</span></span><span class="tc-pos-bal" id="pos-morpho-bal">$—</span></div>
+      <div class="tc-pos-bar"><span class="tc-pos-fill" id="pos-morpho-fill"></span></div>
+      <div class="tc-pos-send">
+        <input class="tc-pos-addr" id="pos-morpho-addr" placeholder="0x… send to" autocomplete="off" spellcheck="false" />
+        <button class="tc-pos-btn" id="pos-morpho-btn" data-fn="redeemMorpho" data-dec="0">Cash Out</button>
+      </div>
+      <div class="tc-pos-status" id="pos-morpho-status"></div>
+    </div>
+  </div>
+
   <div class="tc-status" id="tc-status">Connect a wallet or paste an L1Anchor address to see live values.</div>
 </section>
 
@@ -672,6 +740,7 @@ const CONTRACTS = [
 
       // Keeper (OWNER or OPERATOR)
       { kind:"write", name:"sweep", gated:["OWNER_ROLE | OPERATOR_ROLE","notPaused"],
+        plain:{ label:"Split Execution", blurb:"Takes the payments that have come in and splits them where they belong \u2014 your reserve, your savings, and lending. Runs once a day." },
         desc:"Execute periodic sweep. Refills DAI reserve to ceiling, then splits remaining USDC per cbEthBps between cbETH leg (USDC→WETH via Uniswap V3 0.05%, then WETH→cbETH via Aerodrome Slipstream tickSpacing=1) and Morpho USDC leg (direct ERC4626 deposit to Bitwise Morpho Blue vault). Subject to SWEEP_DELAY (24h) since lastSweepTime. Validates Chainlink cbETH/ETH 18-decimal exchange-rate oracle freshness (90,000s window for 24h-heartbeat feed). Reverts BatchTooSmall if balance < minSwapBatch.",
         rationale:"Vary call timing within window to avoid MEV pattern-matching. v2.3 multi-hop architecture: USDC→WETH leg has its own slippage guard distinct from the WETH→cbETH leg.",
         inputs:[
@@ -680,6 +749,7 @@ const CONTRACTS = [
           {name:"minCbEthOut",type:"uint256",hint:"slippage guard on WETH→cbETH leg (Aerodrome Slipstream)"},
         ], outputs:[] },
       { kind:"write", name:"pauseUCR", gated:["OWNER_ROLE | OPERATOR_ROLE"], danger:true,
+        plain:{ label:"Pause Everything", blurb:"Stop the automatic splitting right away. You can turn it back on later." },
         desc:"Pause sweep mechanism immediately. Callable by OWNER or OPERATOR. Reversible only via queueResumeUCR + 48h timelock (OWNER-only).",
         inputs:[], outputs:[] },
 
@@ -706,9 +776,11 @@ const CONTRACTS = [
 
       // OWNER — DAI reserve management
       { kind:"write", name:"withdrawDAI", gated:["OWNER_ROLE"],
+        plain:{ label:"Take Money Out", blurb:"Move money from your reserve to your own wallet." },
         desc:"Withdraw DAI from contract to a destination address. Subject to daily limit.",
         inputs:[{name:"amount",type:"uint256"},{name:"to",type:"address"}], outputs:[] },
       { kind:"write", name:"setDaiCeiling", gated:["OWNER_ROLE"],
+        plain:{ label:"Set My Spending Reserve", blurb:"Set how much spending money to keep on hand before the rest is saved." },
         plain:{ label:"Set your cash cushion",
           desc:"Decide how much money to keep on hand as a steady dollar reserve before the rest gets put to work earning. Think of it as your working-capital buffer — money you want ready, not invested.",
           inputHint:"Dollar amount to hold in reserve" },
@@ -738,12 +810,15 @@ const CONTRACTS = [
         desc:"Cancel queued emergency withdraw for a token.",
         inputs:[{name:"token",type:"address"}], outputs:[] },
       { kind:"write", name:"setMinSwapBatch", gated:["OWNER_ROLE"],
+        plain:{ label:"Set Minimum Before Splitting", blurb:"Set how much money needs to pile up before it splits automatically." },
         plain:{ label:"Set minimum batch size",
           desc:"The smallest amount of incoming money that's worth processing at once. Set it higher to wait for bigger batches (fewer, larger moves); lower to process more often. Keeps tiny amounts from being moved before they're worth the fees.",
           inputHint:"Smallest dollar amount worth processing" },
         desc:"Set minimum swap batch threshold. Reverts ZeroAmount if 0.",
         inputs:[{name:"amount",type:"uint256"}], outputs:[] },
       { kind:"write", name:"setCbEthBps", gated:["OWNER_ROLE"],
+        slider:{ param:"newBps", minPct:10, maxPct:90, step:5, leftLabel:"My Lending", rightLabel:"My Savings", readName:"cbEthBps" },
+        plain:{ label:"Set My Split", blurb:"Slide right for more Savings, left for more Lending. The two always add up to 100%." },
         plain:{ label:"Adjust your savings mix",
           desc:"Choose how much of your incoming money grows as ETH versus stays steady as dollars. Move toward ETH for more growth potential; toward dollars for more stability. You can change this any time — it takes effect on your next scheduled sweep.",
           inputHint:"Percent kept as ETH — anywhere from 10% to 90%" },
@@ -790,15 +865,19 @@ const CONTRACTS = [
         inputs:[{name:"role",type:"bytes32"}], outputs:[{type:"bytes32"}] },
 
       // Reads — balances and policy state
-      { kind:"read", name:"getTreasuryGauge", gated:["read"], desc:"ETH-equivalent of cbETH treasury at current exchange rate.",
+      { kind:"read", name:"getTreasuryGauge", gated:["read"],
+        plain:{ label:"My Total", blurb:"The total value of your savings." }, desc:"ETH-equivalent of cbETH treasury at current exchange rate.",
         inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"getUSDCBalance", gated:["read"], desc:"USDC held by contract (6 decimals).",
+      { kind:"read", name:"getUSDCBalance", gated:["read"],
+        plain:{ label:"Money Waiting", blurb:"Money that has come in and is waiting to be split." }, desc:"USDC held by contract (6 decimals).",
         inputs:[], outputs:[{type:"uint256"}] },
       { kind:"read", name:"getDAIBalance", gated:["read"], desc:"DAI held by contract (18 decimals).",
         inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"getCbETHBalance", gated:["read"], desc:"cbETH held by contract (18 decimals).",
+      { kind:"read", name:"getCbETHBalance", gated:["read"],
+        plain:{ label:"My Savings", blurb:"Your money that is earning staking rewards." }, desc:"cbETH held by contract (18 decimals).",
         inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"getMorphoBalance", gated:["read"], desc:"Morpho leg position: vault shares held and their current USDC redemption value. currentUSDCValue rises with vault yield even when shares are unchanged — that is the dual-acquisition design working, not a stale read. Defensive try/catch: if the vault reverts, currentUSDCValue returns 0 while shares still reflects holdings (shares>0 && value==0 signals vault state unclear).",
+      { kind:"read", name:"getMorphoBalance", gated:["read"],
+        plain:{ label:"My Lending", blurb:"Your money earning interest in the lending vault." }, desc:"Morpho leg position: vault shares held and their current USDC redemption value. currentUSDCValue rises with vault yield even when shares are unchanged — that is the dual-acquisition design working, not a stale read. Defensive try/catch: if the vault reverts, currentUSDCValue returns 0 while shares still reflects holdings (shares>0 && value==0 signals vault state unclear).",
         inputs:[], outputs:[{name:"shares",type:"uint256"},{name:"currentUSDCValue",type:"uint256"}] },
       { kind:"read", name:"dailyRemaining", gated:["read"], desc:"DAI remaining in current 24h withdraw window.",
         inputs:[], outputs:[{type:"uint256"}] },
@@ -806,7 +885,8 @@ const CONTRACTS = [
         inputs:[{name:"dailyBurnRate",type:"uint256",hint:"daily burn in DAI base units (18 decimals)"}], outputs:[{type:"uint256"}] },
       { kind:"read", name:"isDaiReserveFull", gated:["read"], desc:"True once DAI balance ≥ daiCeiling.",
         inputs:[], outputs:[{type:"bool"}] },
-      { kind:"read", name:"nextSweepAllowed", gated:["read"], desc:"Unix timestamp at which sweep() becomes callable again.",
+      { kind:"read", name:"nextSweepAllowed", gated:["read"],
+        plain:{ label:"Next Split Time", blurb:"When your money can be split again." }, desc:"Unix timestamp at which sweep() becomes callable again.",
         inputs:[], outputs:[{type:"uint256"}] },
       { kind:"read", name:"isEmergencyQueued", gated:["read"], desc:"True if an emergency withdraw is currently queued for the given token.",
         inputs:[{name:"token",type:"address"}], outputs:[{type:"bool"}] },
@@ -1226,7 +1306,7 @@ function buildFnCard(c, fn) {
 
   // Summary face: plain label if available, else the precise function name.
   const faceTitle = hasPlain
-    ? `<span class="fn-plain-label">${escapeHtml(fn.plain.label)}</span>`
+    ? `<span class="fn-plain-label">${escapeHtml(fn.plain.label)}</span><span class="fn-sub">(${escapeHtml(fn.name)})</span>`
     : `<span class="fn-name">${escapeHtml(fn.name)}</span>`;
   const faceSig = hasPlain ? "" : `<span class="fn-sig">${escapeHtml(fnSignature(fn))}</span>`;
 
@@ -1237,6 +1317,22 @@ function buildFnCard(c, fn) {
 
   // Input fields: plain hint on the face when available; precise type hint lives in the (i) block.
   const fields = fn.inputs.map(p => {
+    // SLIDER MODE: invisible-seesaw split control (e.g. setCbEthBps)
+    if (fn.slider && fn.slider.param === p.name) {
+      const s = fn.slider, def = Math.round((s.minPct + s.maxPct) / 2);
+      return `
+    <div class="field split-slider-field" data-slider="1">
+      <div class="split-readout">
+        <span class="split-left"><span class="split-left-pct">${100-def}%</span> <span class="split-left-lbl">${escapeHtml(s.leftLabel)}</span></span>
+        <span class="split-right"><span class="split-right-lbl">${escapeHtml(s.rightLabel)}</span> <span class="split-right-pct">${def}%</span></span>
+      </div>
+      <input type="range" class="split-range" min="${s.minPct}" max="${s.maxPct}" step="${s.step}" value="${def}"
+             data-slider-min="${s.minPct}" data-slider-max="${s.maxPct}" />
+      <div class="split-ends"><span>← more ${escapeHtml(s.leftLabel)}</span><span>more ${escapeHtml(s.rightLabel)} →</span></div>
+      <input type="hidden" data-param="${escapeHtml(p.name)}" value="${def*100}" />
+      <div class="hint">The two sides always add up to 100%. Move one and the other follows.</div>
+    </div>`;
+    }
     const plainHint = hasPlain && fn.plain.inputHint ? fn.plain.inputHint : (hasPlain ? "" : (p.hint || ""));
     const labelText = hasPlain ? (fn.plain.inputLabel || prettyParam(p.name)) : p.name;
     const typeBadge = hasPlain ? "" : `<span class="ptype">${escapeHtml(p.type)}</span>`;
@@ -1311,6 +1407,43 @@ function buildFnCard(c, fn) {
     el.querySelector("[data-act=encode]").onclick = () => handleEncode(c, fn, el);
     el.querySelector("[data-act=send]").onclick   = () => handleSend(c, fn, el);
   }
+
+  // SLIDER (invisible-seesaw split control) — drag updates both sides + hidden bps value.
+  if (fn.slider) {
+    const range  = el.querySelector(".split-range");
+    const hidden = el.querySelector('input[type="hidden"][data-param]');
+    const rPct   = el.querySelector(".split-right-pct");
+    const lPct   = el.querySelector(".split-left-pct");
+    if (range && hidden) {
+      const paint = () => {
+        const right = parseInt(range.value, 10);   // the cbEthBps %
+        const left  = 100 - right;                  // the invisible seesaw: other side = remainder
+        if (rPct) rPct.textContent = right + "%";
+        if (lPct) lPct.textContent = left + "%";
+        hidden.value = (right * 100);               // % -> basis points (70% -> 7000)
+        // fill the track so it reads as a bar
+        const min = parseInt(range.dataset.sliderMin,10), max = parseInt(range.dataset.sliderMax,10);
+        const fillPct = ((right - min) / (max - min)) * 100;
+        range.style.background = `linear-gradient(90deg, var(--oxide,#2563eb) ${fillPct}%, var(--line,#e2e8f0) ${fillPct}%)`;
+      };
+      range.addEventListener("input", paint);
+      paint();
+      // Preset from the live contract value (read cbEthBps, place the slider there)
+      (async () => {
+        try {
+          const addr = (state.addresses[c.key] || "").trim();
+          if (!addr || !ethers.isAddress(addr)) return;
+          const prov = await getReadProvider(c.chainId);
+          const iface = new ethers.Interface([`function ${fn.slider.readName}() view returns (uint16)`]);
+          const data = iface.encodeFunctionData(fn.slider.readName, []);
+          const res = await prov.call({ to: addr, data });
+          const bps = Number(iface.decodeFunctionResult(fn.slider.readName, res)[0]);
+          if (bps >= 1000 && bps <= 9000) { range.value = Math.round(bps/100); paint(); }
+        } catch (_) { /* leave at default if not yet deployed / unreadable */ }
+      })();
+    }
+  }
+
   return el;
 }
 
@@ -1465,6 +1598,69 @@ function renderFlatGroup(section, c, kind, list) {
 // HANDLERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// E-FOR-EVERYONE: plain-language error translator. Turns raw contract reverts
+// and wallet errors into calm, clear, actionable messages anyone can read.
+// Never shows hex selectors or stack traces to the user (those go to MIB DEBUG).
+// ─────────────────────────────────────────────────────────────────────────
+var ERROR_SELECTORS = {
+  "0x7103b805": { title: "Amount too small", msg: "The balance is below the minimum needed to process (100 USDC). Add more funds, then try again." },
+  "0x6745e885": { title: "Too soon", msg: "This was processed recently. Please wait until the 24-hour window has passed, then try again." },
+  "0x194bd314": { title: "Daily limit reached", msg: "This account has reached its limit for today. Please try again tomorrow." },
+  "0xfad3696e": { title: "Withdrawals paused", msg: "Withdrawals are paused right now for safety. No funds were moved. Please contact support." },
+  "0x9e87fac8": { title: "Temporarily paused", msg: "The system is paused right now. Nothing was charged. Please try again later." },
+  "0xea8e4eb5": { title: "Not allowed", msg: "This wallet does not have permission for that action." },
+  "0x5b33c696": { title: "Price check failed", msg: "We could not confirm prices safely right now. Nothing was charged. Please try again in a few minutes." },
+  "0x04578698": { title: "Price data stale", msg: "Price information is temporarily out of date. Nothing was charged. Please try again shortly." },
+  "0xb421e522": { title: "Price check failed", msg: "A price feed could not be verified. Nothing was charged. Please try again shortly." },
+  "0x8199f5f3": { title: "Prices moved", msg: "Prices moved too much to complete safely. Nothing was charged. Please try again." },
+  "0xe618637e": { title: "Could not complete", msg: "The swap returned nothing, so it was safely stopped. Nothing was charged. Please try again." },
+  "0x3e55c694": { title: "Deposit failed", msg: "A deposit step could not complete. Nothing was charged. Please try again, or contact support if it continues." },
+  "0xd729afe0": { title: "Safety stop", msg: "A safety check stopped this to protect funds. Nothing was charged. Please contact support." },
+  "0xe6c4247b": { title: "Invalid address", msg: "An address was not valid. Please check and try again." },
+  "0x1f2a2005": { title: "Amount missing", msg: "Please enter an amount greater than zero." },
+  "0xeb343f3e": { title: "Reserve full", msg: "The reserve is already at its limit. No action was needed." },
+  "0xd4c7445f": { title: "Reserve limit", msg: "This would exceed the reserve limit. Lower the amount and try again." }
+};
+
+function plainError(e) {
+  // Returns {title, msg} — always something readable, never hex.
+  try {
+    var raw = (e && (e.message || e.shortMessage || "")) + "";
+    var lower = raw.toLowerCase();
+
+    // 1. Custom contract error by selector (0x........ in the error data)
+    var sel = null;
+    if (e && e.data && typeof e.data === "string" && e.data.indexOf("0x") === 0) sel = e.data.slice(0,10).toLowerCase();
+    if (!sel) { var m = raw.match(/0x[0-9a-fA-F]{8}/); if (m) sel = m[0].toLowerCase(); }
+    if (sel && ERROR_SELECTORS[sel]) return ERROR_SELECTORS[sel];
+
+    // 2. Common wallet / network situations (plain language)
+    if (lower.indexOf("user rejected") !== -1 || lower.indexOf("user denied") !== -1 || (e && e.code === 4001))
+      return { title: "Cancelled", msg: "You cancelled in your wallet. Nothing was charged. You can try again anytime." };
+    if (lower.indexOf("insufficient funds") !== -1)
+      return { title: "Not enough for gas", msg: "There is not enough ETH in this wallet to cover the small network fee. Add a little ETH and try again." };
+    if (lower.indexOf("wallet not connected") !== -1)
+      return { title: "Connect your wallet", msg: "Please connect your wallet first, then try again." };
+    if (lower.indexOf("contract address not set") !== -1 || lower.indexOf("no contract code") !== -1)
+      return { title: "Contract not connected", msg: "Connect the contract first (the button under its address), then try again." };
+    if (lower.indexOf("chain") !== -1 && lower.indexOf("switch") !== -1)
+      return { title: "Wrong network", msg: "Your wallet is on the wrong network. Switch to Base, then try again." };
+    if (lower.indexOf("could not coalesce") !== -1 || lower.indexOf("network") !== -1 || lower.indexOf("timeout") !== -1)
+      return { title: "Connection hiccup", msg: "The network connection had a brief problem. Nothing was charged. Please try again." };
+
+    // 3. Generic revert (custom error we don't have mapped) — still calm + safe
+    if (lower.indexOf("execution reverted") !== -1 || lower.indexOf("call_exception") !== -1)
+      return { title: "Could not complete", msg: "The action was safely stopped and nothing was charged. Please check the amount and try again, or contact support if it continues." };
+
+    // 4. Absolute fallback — never show hex
+    return { title: "Something went wrong", msg: "The action did not go through. Nothing was charged. Please try again, or contact support if it continues." };
+  } catch (_) {
+    return { title: "Something went wrong", msg: "The action did not go through. Please try again." };
+  }
+}
+
 function setOutput(el, kind, label, content) {
   const out = el.querySelector("[data-output]");
   out.classList.remove("empty", "ok", "err", "read-ok");
@@ -1482,7 +1678,7 @@ function handleEncode(c, fn, el) {
     if (state.addresses[c.key]) out += `\n\nto: ${state.addresses[c.key]}`;
     setOutput(el, "ok", "ENCODED", escapeHtml(out));
   } catch (e) {
-    setOutput(el, "err", "ENCODE ERROR", escapeHtml(e.message || String(e)));
+    var __pe = plainError(e); setOutput(el, "err", __pe.title, escapeHtml(__pe.msg)); console.error("[encode raw]", e && (e.message||String(e)));
   }
 }
 
@@ -1520,7 +1716,7 @@ async function handleSend(c, fn, el) {
     const r = await tx.wait();
     setOutput(el, "ok", "CONFIRMED", escapeHtml(`tx: ${tx.hash}\nblock: ${r.blockNumber}\nstatus: ${r.status === 1 ? "success" : "reverted"}`));
   } catch (e) {
-    setOutput(el, "err", "SEND ERROR", escapeHtml(e.message || e.shortMessage || String(e)));
+    var __pe = plainError(e); setOutput(el, "err", __pe.title, escapeHtml(__pe.msg)); console.error("[send raw]", e && (e.message||e.shortMessage||String(e)));
   }
 }
 
@@ -1541,7 +1737,7 @@ async function handleRead(c, fn, el) {
 
     setOutput(el, "read-ok", "RESULT", formatReadResult(fn, decoded));
   } catch (e) {
-    setOutput(el, "err", "READ ERROR", escapeHtml(e.message || e.shortMessage || String(e)));
+    var __pe = plainError(e); setOutput(el, "err", __pe.title, escapeHtml(__pe.msg)); console.error("[read raw]", e && (e.message||e.shortMessage||String(e)));
   }
 }
 
@@ -1799,6 +1995,10 @@ const PAY_ABI = [
   { type:"function", name:"getDAIBalance",  stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
   { type:"function", name:"getCbETHBalance",stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
   { type:"function", name:"getMorphoBalance",stateMutability:"view", inputs:[], outputs:[{name:"shares",type:"uint256"},{name:"currentUSDCValue",type:"uint256"}] },
+  { type:"function", name:"sendUSDC",     stateMutability:"nonpayable", inputs:[{name:"amount",type:"uint256"},{name:"to",type:"address"}], outputs:[] },
+  { type:"function", name:"sendCbETH",    stateMutability:"nonpayable", inputs:[{name:"amount",type:"uint256"},{name:"to",type:"address"}], outputs:[] },
+  { type:"function", name:"redeemMorpho", stateMutability:"nonpayable", inputs:[{name:"shares",type:"uint256"},{name:"to",type:"address"}], outputs:[] },
+  { type:"function", name:"cbEthBps",     stateMutability:"view", inputs:[], outputs:[{type:"uint16"}] },
 ];
 
 const SNAPSHOT_STORAGE_KEY = "possessio_console_treasury_history_v0_4_3";
@@ -1951,6 +2151,26 @@ async function refreshTreasury(opts) {
         const cbeth = Number(ethers.formatUnits(bal.cbeth, 18));
         liquidUsd  += usdc + dai;
         earningUsd += cbeth * ethUsdBase;
+
+        // Populate the position rows (USDC, cbETH, Morpho) with USD values + bars
+        try {
+          const cbethUsd = cbeth * ethUsdBase;
+          let morphoUsd = 0, morphoRawShares = 0n;
+          try {
+            const prov = await getReadProvider(8453);
+            const mIface = new ethers.Interface(PAY_ABI);
+            const mRes = await prov.call({ to: paymentsAddr, data: mIface.encodeFunctionData("getMorphoBalance", []) });
+            const dec = mIface.decodeFunctionResult("getMorphoBalance", mRes);
+            morphoRawShares = dec[0];
+            morphoUsd = Number(ethers.formatUnits(dec[1], 6));
+            earningUsd += morphoUsd;
+          } catch (_) {}
+          populatePositions({
+            usdc:  { usd: usdc,     raw: bal.usdc },
+            cbeth: { usd: cbethUsd, raw: bal.cbeth },
+            morpho:{ usd: morphoUsd, raw: morphoRawShares },
+          });
+        } catch (_) {}
       } catch (e) {
         errors.push("Payments: " + (e.shortMessage || e.message || String(e)));
       }
@@ -1989,6 +2209,83 @@ async function refreshTreasury(opts) {
     if (paymentsAddr && ethers.isAddress(paymentsAddr)) parts.push("Payments");
     statusEl.textContent = `Live · ${parts.join(" + ")} · ETH ≈ ${fmtUsd(priceUsed)}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// POSITIONS — show each holding on the treasury card + send it to your wallet.
+// Exits are owner-only (sendUSDC / sendCbETH / redeemMorpho). The owner/deployer
+// wallet is the suggested send address.
+// ─────────────────────────────────────────────────────────────────────────
+function populatePositions(p) {
+  const section = document.getElementById("tc-positions");
+  if (!section) return;
+  section.hidden = false;
+
+  const total = (p.usdc.usd || 0) + (p.cbeth.usd || 0) + (p.morpho.usd || 0);
+  const rows = {
+    usdc:   { raw: p.usdc.raw,   usd: p.usdc.usd },
+    cbeth:  { raw: p.cbeth.raw,  usd: p.cbeth.usd },
+    morpho: { raw: p.morpho.raw, usd: p.morpho.usd },
+  };
+  for (const key in rows) {
+    const r = rows[key];
+    const balEl  = document.getElementById("pos-" + key + "-bal");
+    const fillEl = document.getElementById("pos-" + key + "-fill");
+    if (balEl)  balEl.textContent = fmtUsd(r.usd);
+    if (fillEl) fillEl.style.width = (total > 0 ? Math.max(2, (r.usd / total) * 100) : 0) + "%";
+    // stash the raw amount on the button for the send
+    const btn = document.getElementById("pos-" + key + "-btn");
+    if (btn) btn.dataset.raw = (r.raw != null ? r.raw.toString() : "0");
+  }
+
+  // Pre-fill the suggested send address = the owner/deployer (the connected wallet,
+  // which for a merchant's own deployment IS the owner/deployer).
+  const suggested = state.walletAddr || "";
+  ["usdc","cbeth","morpho"].forEach(key => {
+    const addrEl = document.getElementById("pos-" + key + "-addr");
+    if (addrEl && !addrEl.value && suggested) addrEl.value = suggested;
+  });
+
+  wirePositionSends();
+}
+
+let _posSendsWired = false;
+function wirePositionSends() {
+  if (_posSendsWired) return;
+  _posSendsWired = true;
+  ["usdc","cbeth","morpho"].forEach(key => {
+    const btn = document.getElementById("pos-" + key + "-btn");
+    const addrEl = document.getElementById("pos-" + key + "-addr");
+    const statusEl = document.getElementById("pos-" + key + "-status");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      function setS(msg, cls){ if(statusEl){ statusEl.textContent = msg; statusEl.className = "tc-pos-status " + (cls||"info"); } }
+      const to = (addrEl && addrEl.value || "").trim();
+      const fnName = btn.dataset.fn;
+      const raw = btn.dataset.raw || "0";
+      const payAddr = state.addresses["PAY"];
+      // checks
+      if (!state.signer) { setS("Connect your wallet first to send.", "err"); return; }
+      if (!payAddr || !ethers.isAddress(payAddr)) { setS("Connect the contract first.", "err"); return; }
+      if (!to || !ethers.isAddress(to)) { setS("Enter a valid address to send to.", "err"); return; }
+      if (raw === "0" || raw === "") { setS("Nothing to send in this position.", "info"); return; }
+      try {
+        setS("Confirm in your wallet…", "info");
+        const iface = new ethers.Interface(PAY_ABI);
+        // sendUSDC(amount,to) / sendCbETH(amount,to) / redeemMorpho(shares,to)
+        const data = iface.encodeFunctionData(fnName, [raw, to]);
+        const tx = await state.signer.sendTransaction({ to: payAddr, data });
+        setS("Sending… waiting for confirmation.", "info");
+        await tx.wait();
+        setS("Sent ✓ — your funds are on the way.", "ok");
+        scheduleTreasuryRefresh(1500);
+      } catch (e) {
+        var pe = (typeof plainError === "function") ? plainError(e) : { msg: (e.shortMessage||e.message||String(e)) };
+        setS(pe.msg, "err");
+        console.error("[position send raw]", e && (e.message||e.shortMessage||String(e)));
+      }
+    });
+  });
 }
 
 // debounce util for address-input triggers
