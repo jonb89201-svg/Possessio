@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {PossessioX402Core} from "../src/PossessioX402Core.sol";
 
 /// @dev Exposes the REAL internal _decayedVelocity() and lets the test set the
-///      two storage inputs it reads. No reimplementation of the decay math —
+///      two storage inputs it reads. No reimplementation of the decay math -
 ///      this inherits the production function verbatim so the oracle cross-check
 ///      cannot drift from a copy.
 contract DecayHarness is PossessioX402Core {
@@ -36,7 +36,7 @@ contract DecayHarness is PossessioX402Core {
 
 /// @notice Terminal oracle cross-check: the production Solidity _decayedVelocity
 ///         must agree, to the wei, with the Python mirror (oracle.py) across the
-///         full dt range — especially the partial windows where the linear
+///         full dt range - especially the partial windows where the linear
 ///         interpolation could diverge. Runs the Python via ffi so both sides are
 ///         compared in the same forge run.
 contract PossessioX402CoreDecayTest is Test {
@@ -116,7 +116,7 @@ contract PossessioX402CoreDecayTest is Test {
 
     /// The safety claim, checked numerically against true exponential decay in
     /// the FIRST partial window (where the linear interpolation is used): the
-    /// approximation must never fall BELOW real exp decay — erring high keeps the
+    /// approximation must never fall BELOW real exp decay - erring high keeps the
     /// floor conservative. Uses the Solidity result directly.
     function test_decay_errs_high_vs_exponential() public {
         // sample 1..HALFLIFE-1 at a few points inside the first window

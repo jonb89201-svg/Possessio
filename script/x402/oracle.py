@@ -1,5 +1,5 @@
 """
-PossessioX402Core v0.6 — Python oracle
+PossessioX402Core v0.6 - Python oracle
 Nonce-commitment (settleCall step 4) + velocity decay math (_decayedVelocity,
 _bumpVelocity, getRunningMinimumFloor).
 
@@ -12,7 +12,7 @@ pycryptodome weren't installable. keccak256.py is a from-spec pure-Python
 Keccak-256 (Ethereum variant), verified against the standard keccak256("")
 known-answer vector before being trusted here. When this moves to your repo
 with network access, swap `from keccak256 import keccak256` for
-`from eth_utils import keccak as keccak256` — same output, faster.
+`from eth_utils import keccak as keccak256` - same output, faster.
 """
 
 from keccak256 import keccak256
@@ -24,7 +24,7 @@ UINT256_MAX = (1 << 256) - 1
 # Minimal ABI encoder for the ONE call site that needs it:
 #   keccak256(abi.encode(address, bytes32, uint256, bytes32))
 # All four Solidity types here are "static" (fixed 32-byte-word) types, so
-# abi.encode is just concatenation of four 32-byte words — no offset/length
+# abi.encode is just concatenation of four 32-byte words - no offset/length
 # header machinery needed (that's only for dynamic types: bytes, string,
 # arrays). This is why a full eth_abi dependency isn't actually required
 # for this specific commitment.
@@ -75,7 +75,7 @@ def nonce_commitment(seller: str, channel_id, value: int, salt) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Velocity decay math — exact integer mirror of _decayedVelocity /
+# Velocity decay math - exact integer mirror of _decayedVelocity /
 # _bumpVelocity / getRunningMinimumFloor. Every operation below uses the
 # SAME integer division / right-shift semantics Solidity uses; there is no
 # floating point anywhere in this section on purpose.
@@ -103,7 +103,7 @@ def decayed_velocity(velocity_scaled: int, last_ts: int, now_ts: int, halflife: 
     if dt < 0:
         # Solidity: uint256 subtraction underflow -> revert. now_ts must be
         # >= last_ts for this call to be meaningful; surface it loudly.
-        raise ValueError("now_ts < last_ts — Solidity would revert on this subtraction")
+        raise ValueError("now_ts < last_ts - Solidity would revert on this subtraction")
 
     if dt == 0 or halflife == 0:
         return v
@@ -129,12 +129,12 @@ def bump_velocity(velocity_scaled: int, last_ts: int, now_ts: int, halflife: int
         velocityScaled += 1e18;
     Returns the new velocityScaled. Solidity 0.8.x reverts on overflow
     (checked arithmetic) rather than wrapping, so this raises instead of
-    silently masking — matching the real revert behavior for fuzzing.
+    silently masking - matching the real revert behavior for fuzzing.
     """
     v = decayed_velocity(velocity_scaled, last_ts, now_ts, halflife)
     v_new = v + 10**18
     if v_new > UINT256_MAX:
-        raise OverflowError("velocityScaled + 1e18 overflows uint256 — Solidity would revert")
+        raise OverflowError("velocityScaled + 1e18 overflows uint256 - Solidity would revert")
     return v_new
 
 
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     # sanity: true exponential would give ONE * 2**-0.5 ≈ 0.7071 * ONE.
     # our linear-interpolation approximation should sit ABOVE that (conservative).
     true_exp_approx = int(ONE * 0.70710678)
-    print(f"  true exponential ≈ {true_exp_approx} — approximation should be >= this")
+    print(f"  true exponential ≈ {true_exp_approx} - approximation should be >= this")
     assert v4 >= true_exp_approx, "approximation should overestimate (safe direction)"
     print("  confirmed: approximation is conservative (>= true exponential decay)")
 

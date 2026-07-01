@@ -7,33 +7,33 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /*//////////////////////////////////////////////////////////////
-            POSSESSIO x402 CORE — FOUNDATION SKELETON
-                         v0.6 — 2026-06-30
+            POSSESSIO x402 CORE - FOUNDATION SKELETON
+                         v0.6 - 2026-06-30
 
   v0.6 (COUNCIL_0): applies four findings from the Sonnet-5 cold-seat
   audit of v0.5. The fixes are made here; RE-AUDIT goes to a cold seat
-  (not this seat — the fixer does not certify the fix).
+  (not this seat - the fixer does not certify the fix).
 
-    FIX #1 — VALVE INTEGRITY NOW STRUCTURAL (the real one). v0.5's
+    FIX #1 - VALVE INTEGRITY NOW STRUCTURAL (the real one). v0.5's
       valve-by-omission was convention-dependent: nothing stopped
       deploymentFeeSource being set == operatorDestination or
       treasuryDestination at deploy, which would let drawn funds be
-      reinjected via receiveDeploymentFee — defeating "ingress
+      reinjected via receiveDeploymentFee - defeating "ingress
       structurally impossible" for that path. The constructor now
       reverts ValveIntegrityViolation if they collide. The guarantee
       holds for EVERY deployment with no reliance on deploy discipline.
       (Plus zero-address guards on all load-bearing destinations.)
       -> The valve claim is now what we said it was, not softer.
 
-    FIX #2 — DEAD tollSink REMOVED. It was assigned, read nowhere
+    FIX #2 - DEAD tollSink REMOVED. It was assigned, read nowhere
       (settleCall routes through the pool). An immutable named "Sink"
       that does nothing is auditor-bait; deleted entirely.
 
-    FIX #3 — CEI CONSISTENCY in receiveDeploymentFee. Pool-balance
+    FIX #3 - CEI CONSISTENCY in receiveDeploymentFee. Pool-balance
       effect now commits before the outbound surplus push, matching
       settleOperationalCosts. (Inbound pull is unavoidably first.)
 
-    FIX #4 — DECAY DIRECTION VERIFIED (no code change). Linear
+    FIX #4 - DECAY DIRECTION VERIFIED (no code change). Linear
       interpolation over the partial half-life window overestimates
       decay (linear chord above the convex exp curve) -> errs toward a
       HIGHER floor -> safe direction, cannot under-floor the pool.
@@ -44,7 +44,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
   DUST_SPAM_WINDOW / MIN_HITS / DUST_FLOOR immutable-constant calibration
   remains open before its own freeze.
 
-  STILL PROPOSED — verify against builder repo + FORK TEST before trusting.
+  STILL PROPOSED - verify against builder repo + FORK TEST before trusting.
   This file goes BACK to a cold seat for re-audit of these four fixes.
 
   --- v0.5 / v0.4 / v0.3 history retained below ---
@@ -53,13 +53,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
   (approved) but REIMPLEMENTED to fix four real flaws in his draft:
     1. ASSET CONSISTENCY: everything is USDC via safeTransfer. Gemini's
        draft mixed native ETH (msg.value / .call{value}) with USDC in one
-       balance — would have broken accounting and failed on first call.
+       balance - would have broken accounting and failed on first call.
     2. REAL DECAY: velocity is a time-decayed rolling figure (half-life),
        not a monotonic counter with a 30-day cliff reset (which would
        inflate the floor to lock the pool, or cliff to open a drain).
     3. BOUND INFLOW: receiveDeploymentFee is bound to the immutable
        deploymentFeeSource (Gemini asserted this in a comment but the
-       code let anyone call it — a general deposit door). USDC pull.
+       code let anyone call it - a general deposit door). USDC pull.
     4. NO MAGIC NUMBERS: floor params (ABSOLUTE_FLOOR, FLOOR_PER_UNIT,
        VELOCITY_HALFLIFE) are constructor-set + calibrate-before-freeze,
        not hardcoded constants.
@@ -69,7 +69,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
   above the live floor -> pool can never be drained below the running
   minimum, in every deployment.
 
-  STILL PROPOSED — verify against builder repo + FORK TEST before trusting.
+  STILL PROPOSED - verify against builder repo + FORK TEST before trusting.
   The decay math is integer-approximate; mirror it in the Python oracle
   and prove it on a fork before freeze.
 
@@ -77,7 +77,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
   CHANGED FROM v0.2 (COUNCIL_0's two seams, with one correction):
 
-  SEAM 1 — _expectedValue (ADOPTED AS PROPOSED):
+  SEAM 1 - _expectedValue (ADOPTED AS PROPOSED):
     expectedValue = basePrice + (basePrice * tollBps) / 10_000
     Seller nets exactly basePrice; toll rides on top. This fixes a
     real latent bug in the v0.1/v0.2 split math: (value*tollBps)/10_000
@@ -85,7 +85,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
     tollValue = value - basePrice; netToSeller = basePrice.
     basePrice now needs a place to live -> channel registry, below.
 
-  SEAM 2 — submitter model (PROPOSED bare-permissionless, CORRECTED here):
+  SEAM 2 - submitter model (PROPOSED bare-permissionless, CORRECTED here):
     COUNCIL_0's reasoning: EIP-3009's `to==address(this)` binding plus
     the exact-value check plus nonce-burn fully constrain any caller,
     so settleCall can be permissionless with no access control.
@@ -93,7 +93,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
     the buyer's EIP-712 signature covers (EIP-3009's typed struct is
     only {from, to, value, validAfter, validBefore, nonce}). A
     permissionless caller can submit a valid intercepted signature
-    with their OWN address as `seller` — tollValue still safely
+    with their OWN address as `seller` - tollValue still safely
     reaches tollSink, but netToSeller (the bulk of the payment) goes
     to the attacker, not the real seller. This is a theft vector as
     proposed, not a closed surface.
@@ -101,7 +101,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
     FIX (grounded in the EIP-3009 issue thread's own suggestion: "the
     app developer could dedicate some leading bytes of the nonce...
     as the identifier to prevent cross-use"): the buyer's nonce is
-    NOT random — it's a commitment the buyer computes off-chain at
+    NOT random - it's a commitment the buyer computes off-chain at
     signing time: nonce = keccak256(seller, channelId, value, salt).
     settleCall recomputes that commitment and requires it to match
     the nonce actually in the signed authorization. Since EIP-3009's
@@ -109,14 +109,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
     indirectly covers seller+channelId+value too. A permissionless
     submitter can no longer substitute `seller` without invalidating
     either the commitment check (here) or the EIP-712 signature
-    (inside receiveWithAuthorization) — one of the two always fails.
+    (inside receiveWithAuthorization) - one of the two always fails.
     settleCall stays permissionless; the binding does the work
     access control would have, same as COUNCIL_0 intended, just
     actually closed.
 
   NEW: minimal first-claim channel registry (basePrice needs a home).
     First address to price a channelId owns it; only that address can
-    reprice. Default convention, flagged as overridable — see TODO.
+    reprice. Default convention, flagged as overridable - see TODO.
     Doubles as defense-in-depth: even a defeated nonce-commitment
     still has to pass `seller == channelSeller[channelId]`.
 
@@ -165,21 +165,21 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
           in this contract that moves funds FROM treasuryDestination or
           operatorDestination back into the settlement/trading path.
           Capital movement outward is push-only. Ingress to the trading
-          seat is structurally impossible — enforced by ABSENCE, not a
+          seat is structurally impossible - enforced by ABSENCE, not a
           check. Audit confirmed: grep the contract for any transfer
-          whose SOURCE is treasury/operator — there are none.
+          whose SOURCE is treasury/operator - there are none.
         - Cap-then-surplus fill (Problem 2, first half): toll accrues to
           operationalPoolBalance up to OPERATIONAL_CAP; the exact excess
           is pushed one-way to treasuryDestination in the same tx.
 
-      NOT MERGED (the one open seam): settleOperationalCosts — the PAYOUT
+      NOT MERGED (the one open seam): settleOperationalCosts - the PAYOUT
       of the pool to cover infra cost. Gemini's last draw-to-balance
       version was REJECTED by the Architect ("theft of funds promised to
       a function"). The theft-of-purpose-bound version is pending from
       Technical Authority. See the marked stub below.
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Sovereign treasury — absolute one-way outflow destination.
+    /// @notice Sovereign treasury - absolute one-way outflow destination.
     ///         Immutable. Nothing in this contract can pull FROM it.
     address public immutable treasuryDestination;
 
@@ -190,7 +190,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     /// @notice The ONLY address permitted to push deployment fees into the
     ///         pool (the factory / deploy contract). Immutable. This is what
     ///         makes receiveDeploymentFee valve-safe instead of a general
-    ///         deposit door — Gemini's draft asserted this in a comment but
+    ///         deposit door - Gemini's draft asserted this in a comment but
     ///         did not enforce it; enforced here.
     address public immutable deploymentFeeSource;
 
@@ -205,7 +205,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     event TreasurySurplusSwept(uint256 amount);
 
     /*//////////////////////////////////////////////////////////////
-        VELOCITY-DERIVED FLOOR (Gemini concept, APPROVED — reimplemented)
+        VELOCITY-DERIVED FLOOR (Gemini concept, APPROVED - reimplemented)
 
       The anti-drain floor is derived from on-chain settlement velocity,
       NOT operator config, so it cannot be gamed down to drain the pool.
@@ -215,13 +215,13 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
       CORRECTED from Gemini's draft:
         - ALL USDC (payToken). No msg.value, no native ETH .call. The
           pool, inflows, and payouts are one asset. (Gemini's draft mixed
-          ETH and USDC in one balance — broke the accounting.)
+          ETH and USDC in one balance - broke the accounting.)
         - REAL time-decayed rolling window, not a monotonic counter with
           a 30-day cliff. The velocity figure decays continuously so the
           floor neither inflates unbounded (locking the pool) nor cliffs
           to zero (opening a drain window).
         - Floor params are constructor-set + bounded, not hardcoded
-          magic numbers (same discipline as DUST_FLOOR — calibrate before
+          magic numbers (same discipline as DUST_FLOOR - calibrate before
           freeze).
 
       Floor = ABSOLUTE_FLOOR + (decayedVelocity * FLOOR_PER_UNIT).
@@ -258,7 +258,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
       Minimal first-claim model: setBasePrice claims an unowned
       channelId for msg.sender, or reprices one already owned by
-      msg.sender. No claim fee, no admin gate — TODO flags whether
+      msg.sender. No claim fee, no admin gate - TODO flags whether
       that's the right default.
     //////////////////////////////////////////////////////////////*/
 
@@ -303,7 +303,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     error UnauthorizedCall();
 
     /// @notice v0.6 FIX #1 (Sonnet-5 audit): the valve-by-omission guarantee
-    ///         was convention-dependent — nothing stopped deploymentFeeSource
+    ///         was convention-dependent - nothing stopped deploymentFeeSource
     ///         from being set equal to operator/treasury at deploy, which would
     ///         let drawn funds be reinjected via receiveDeploymentFee, defeating
     ///         "ingress structurally impossible" for that path. Now structural.
@@ -330,7 +330,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
             _deploymentFeeSource == address(0)
         ) revert ZeroAddress();
 
-        // FIX #1 — VALVE INTEGRITY, ENFORCED STRUCTURALLY (not by deploy discipline).
+        // FIX #1 - VALVE INTEGRITY, ENFORCED STRUCTURALLY (not by deploy discipline).
         // deploymentFeeSource is the ONLY inbound path to the pool. If it could
         // equal an OUTBOUND destination (operator/treasury), funds drawn out
         // could be pushed straight back in, defeating valve-by-omission. Forbid
@@ -341,7 +341,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         // NOT require treasuryDestination != operatorDestination. Both are
         // OUTBOUND destinations; collapsing them to one address opens no ingress
         // path and is an allowed deployment shape. The absence of that check is
-        // by design, not an oversight — do not add it.
+        // by design, not an oversight - do not add it.
         if (
             _deploymentFeeSource == _operatorDestination ||
             _deploymentFeeSource == _treasuryDestination
@@ -363,7 +363,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
                          THE FOUNDATION SETTLE PATH
 
       Flow:
-        1. registered(caller) — identity gate, read-only.
+        1. registered(caller) - identity gate, read-only.
         2. Channel lookup: basePrice must exist; seller param must
            match the registry's current owner (defense-in-depth,
            catches stale/wrong 402 headers even before the nonce
@@ -371,14 +371,14 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         3. Price: expectedValue = basePrice + basePrice*tollBps/10_000.
            Exact equality against signed `value`. No tolerance band.
         4. Nonce-commitment check: nonce must equal
-           keccak256(seller, channelId, value, salt) — buyer computed
+           keccak256(seller, channelId, value, salt) - buyer computed
            this at signing time, so the EIP-712 signature now covers
            seller+channelId+value indirectly. This is what makes
            permissionless submission safe.
-        5. receiveWithAuthorization — front-run-closed, USDC lands here.
+        5. receiveWithAuthorization - front-run-closed, USDC lands here.
         6. Split: basePrice -> seller; toll -> operating pool (surplus
            over cap swept one-way to treasury). Exact. (No tollSink.)
-        7. _observe — DustSpam fed live; RoundTrip inert by construction.
+        7. _observe - DustSpam fed live; RoundTrip inert by construction.
     //////////////////////////////////////////////////////////////*/
     function settleCall(
         address caller,
@@ -402,12 +402,12 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         address registeredSeller = channelSeller[channelId];
         if (seller != registeredSeller) revert SellerMismatch(channelId, seller, registeredSeller);
 
-        // 3. Price binding — exact equality, no underpay/overcharge.
+        // 3. Price binding - exact equality, no underpay/overcharge.
         uint256 tollBps = totalFeeBps(caller, channelId);
         uint256 expectedValue = basePrice + (basePrice * tollBps) / 10_000;
         if (value != expectedValue) revert AmountMismatch(value, expectedValue);
 
-        // 4. Nonce-commitment — this is what makes permissionless safe.
+        // 4. Nonce-commitment - this is what makes permissionless safe.
         //    Buyer chose nonce = this commitment at signing time; a
         //    submitter substituting `seller` breaks the match.
         bytes32 expectedCommitment = keccak256(abi.encode(seller, channelId, value, salt));
@@ -418,7 +418,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
             caller, address(this), value, validAfter, validBefore, nonce, v, r, s
         );
 
-        // 6. Split — exact, post-fix. Seller nets exactly basePrice.
+        // 6. Split - exact, post-fix. Seller nets exactly basePrice.
         //    Toll feeds the self-funding loop (Gemini, APPROVED), NOT a
         //    dead sink. CEI: state updated before the external surplus push.
         uint256 tollValue = value - basePrice;
@@ -465,7 +465,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
     /// @dev Decay the velocity figure by elapsed time (half-life), then
     ///      add one unit (1e18 scaled) for the settlement just processed.
-    ///      Continuous decay — no cliff, no unbounded accumulation.
+    ///      Continuous decay - no cliff, no unbounded accumulation.
     function _bumpVelocity() internal {
         velocityScaled = _decayedVelocity();
         lastVelocityTs = block.timestamp;
@@ -478,7 +478,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     ///      iteration (caps at ~256 halvings -> effectively zero) so it
     ///      can never gas-grief. Pure integer math, fork-mirrorable.
     ///
-    ///      v0.6 NOTE (Sonnet-5 audit, FIX #4 — verified, no code change):
+    ///      v0.6 NOTE (Sonnet-5 audit, FIX #4 - verified, no code change):
     ///      true exponential decay is CONVEX; a linear chord between the two
     ///      window endpoints always sits ABOVE the curve. So this linear
     ///      interpolation OVERESTIMATES decay's remaining value -> errs toward
@@ -506,7 +506,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     }
 
     /// @notice The current ungameable running-minimum floor, in USDC.
-    ///         Derived from decayed throughput — operator cannot lower it.
+    ///         Derived from decayed throughput - operator cannot lower it.
     function getRunningMinimumFloor() public view returns (uint256) {
         uint256 vUnits = _decayedVelocity() / 1e18; // back to whole units
         return ABSOLUTE_FLOOR + (vUnits * FLOOR_PER_UNIT);
@@ -521,7 +521,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
     /// @notice Scoped, valve-safe deployment-fee inflow. USDC, pulled from
     ///         the immutable deploymentFeeSource only. NOT a general deposit
-    ///         door — any other caller reverts. Funds the pool to capitalize
+    ///         door - any other caller reverts. Funds the pool to capitalize
     ///         scaling; surplus over the cap pushes one-way to treasury.
     /// @dev    v0.6 FIX #3 (Sonnet-5 audit): CEI consistency. The inbound pull
     ///         is unavoidable (funds must be received before they can be
@@ -532,7 +532,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         if (msg.sender != deploymentFeeSource) revert NotDeploymentFeeSource(msg.sender);
         if (amount == 0) revert InsufficientOperationalFunds();
 
-        // Inbound pull (unavoidably first — must receive before accounting).
+        // Inbound pull (unavoidably first - must receive before accounting).
         // Reentrancy-safe: nonReentrant guard + immutable, trusted source.
         payTokenERC20.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -581,7 +581,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-        STILL OPEN — architect decision, not guessed here:
+        STILL OPEN - architect decision, not guessed here:
           - Channel registry governance: is first-claim the right
             default, or should claiming require a fee / admin
             approval / be tied to the seller's own on-chain identity
@@ -590,7 +590,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
           - Reprice cooldown: owner can change basePrice instantly,
             mid-flight against any already-signed-but-unsettled
             buyer authorization (which would now simply revert on
-            AmountMismatch rather than settle wrong — safe, but
+            AmountMismatch rather than settle wrong - safe, but
             worth deciding if that's the desired UX).
           - salt: caller-supplied, not validated for uniqueness
             beyond what EIP-3009's own nonce-burn provides. Confirm
@@ -606,7 +606,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
       pool (or surplus to treasury), for tollBps in [200..500].
    2. FRONT-RUN CLOSED: an auth signed to==this cannot be settled by
       any other submitter path.
-   3. SELLER-SUBSTITUTION CLOSED (NEW — the actual gap this version
+   3. SELLER-SUBSTITUTION CLOSED (NEW - the actual gap this version
       fixes): a permissionless caller cannot settle a valid signed
       authorization while substituting their own address as `seller`.
       Must revert (either NonceCommitmentMismatch or signature
@@ -647,7 +647,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
   17. FLOORED DRAW: settleOperationalCosts releases AT MOST
       (operationalPoolBalance - getRunningMinimumFloor()) to the immutable
       operator; a request above that reverts ExceedsDrawableSurplus. The
-      pool can NEVER be drawn below the floor — full-drain impossible.
+      pool can NEVER be drawn below the floor - full-drain impossible.
   18. UNGAMEABLE FLOOR (fuzz): getRunningMinimumFloor() is derived only
       from decayed settlement velocity + immutable params. No caller,
       including the operator, can lower it by any call sequence. Prove the
@@ -664,7 +664,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
       move USDC via safeTransfer/safeTransferFrom only. No native ETH path
       exists anywhere (no msg.value, no .call{value}).
 
-   --- v0.6 FIXES (Sonnet-5 audit — RE-AUDIT THESE, cold seat) ---
+   --- v0.6 FIXES (Sonnet-5 audit - RE-AUDIT THESE, cold seat) ---
   23. VALVE INTEGRITY STRUCTURAL: constructor reverts ValveIntegrityViolation
       if deploymentFeeSource == operatorDestination OR == treasuryDestination.
       Prove no deploy config can wire the inbound fee path to an outbound
@@ -689,5 +689,5 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
    NON-PROVEN until defined: floor param values (#22); channel registry
    governance (first-claim vs. gated); reprice cooldown; quote/settle
    staleness window (lock vs. re-sign). The decay math is integer-approximate
-   — fork-prove before freeze.
+   - fork-prove before freeze.
 //////////////////////////////////////////////////////////////*/

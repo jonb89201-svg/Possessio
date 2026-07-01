@@ -1,5 +1,5 @@
 """
-Pure-Python Keccak-256 (the Ethereum variant, NOT NIST SHA3-256 — different
+Pure-Python Keccak-256 (the Ethereum variant, NOT NIST SHA3-256 - different
 padding domain byte: 0x01 for Keccak, 0x06 for SHA3). No dependencies, since
 this sandbox has no network access to pip install eth_abi/eth_utils/pycryptodome.
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     result = keccak256(b"").hex()
     expected = "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
     assert result == expected, f"KAT FAILED: got {result}, expected {expected}"
-    print("keccak256('') KAT: PASS —", result)
+    print("keccak256('') KAT: PASS -", result)
 
     print("keccak256('abc'):", keccak256(b"abc").hex())
     print("keccak256('testing'):", keccak256(b"testing").hex())

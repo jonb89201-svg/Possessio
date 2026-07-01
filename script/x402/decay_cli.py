@@ -4,7 +4,7 @@ ffi bridge for the decay oracle. Usage:
     decay_cli.py <velocity_scaled> <last_ts> <now_ts> <halflife>
 Prints the decayed velocity as a 0x-prefixed 32-byte big-endian word so
 forge's vm.ffi can abi.decode it straight to uint256. This calls the SAME
-decayed_velocity() the worked-examples use — no reimplementation.
+decayed_velocity() the worked-examples use - no reimplementation.
 """
 import sys
 from oracle import decayed_velocity
