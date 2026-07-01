@@ -46,9 +46,10 @@ contract PossessioX402CoreDecayTest is Test {
     uint256 constant T0 = 1_000_000;  // arbitrary non-zero warp base
     uint256 constant ONE = 1e18;
 
-    // absolute path to the Python ffi bridge (session scratchpad)
-    string constant PY =
-        "/tmp/claude-0/-home-user-Possessio/b3d02154-413f-504e-a1bf-5953f898c941/scratchpad/x402/decay_cli.py";
+    // repo-relative path to the Python ffi bridge (forge ffi runs from repo
+    // root). Lives in script/x402/ alongside oracle.py + keccak256.py so the
+    // decay_cli import chain resolves. Portable across any checkout.
+    string constant PY = "script/x402/decay_cli.py";
 
     function setUp() public {
         h = new DecayHarness(HALFLIFE);
