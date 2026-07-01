@@ -48,6 +48,7 @@ Thumbs.db
 # Generated build/test tee reports (kept on disk, not in history)
 compile.txt
 report.txt
+grep_v4api.txt
 
 # =========================
 # Python (your models/)
