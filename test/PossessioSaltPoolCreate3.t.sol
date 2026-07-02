@@ -43,6 +43,14 @@ contract PossessioSaltPoolCreate3Test is Test {
     bytes32 constant PROXY_INITCODE_HASH =
         0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f;
 
+    // Canonical CreateX deployed-runtime codehash, published by CreateX itself
+    // (README: "keccak256 hash ... of the deployed runtime bytecode is ...").
+    // The etch fixture is pinned to this: if the hex is corrupted, swapped, or
+    // a wrong compiler build, setUp reverts instead of etching bytecode that is
+    // not CreateX - closing the "false green against non-CreateX bytes" gap.
+    bytes32 constant CANONICAL_RUNTIME_CODEHASH =
+        0xbd8a7ea8cfca7b4e5f5041d7d4b17bc317c5ce42cfbc42066a00cf26b43eb53f;
+
     PossessioSaltPool internal pool;
 
     address internal factory;
@@ -55,6 +63,15 @@ contract PossessioSaltPoolCreate3Test is Test {
         // Etch the real CreateX runtime at its canonical address - no fork.
         bytes memory code = vm.parseBytes(vm.readFile("test/fixtures/createx.runtime.hex"));
         vm.etch(address(CREATEX), code);
+
+        // NOTARIZE the fixture: the etched code MUST be canonical CreateX. If it
+        // is not, fail loudly here rather than passing every test below against
+        // bytecode that only pretends to be CreateX.
+        assertEq(
+            address(CREATEX).codehash,
+            CANONICAL_RUNTIME_CODEHASH,
+            "etched fixture is NOT canonical CreateX (corrupted/wrong-version hex)"
+        );
 
         factory = makeAddr("factory");
         pool = new PossessioSaltPool(factory, KEEPER, OPERATOR, TREASURY, FEESRC);
@@ -154,5 +171,26 @@ contract PossessioSaltPoolCreate3Test is Test {
         vm.expectRevert(); // second CREATE3 to the same address must fail
         CREATEX.deployCreate3(salt, type(Deployed).creationCode);
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        Fork-gated notarization: confirm the pinned codehash matches
+        LIVE CreateX on Base. Runs only when BASE_RPC_URL is set; it
+        verifies the pinned constant against mainnet and is NOT
+        load-bearing for the offline suite's green.
+    //////////////////////////////////////////////////////////////*/
+
+    function test_fork_pinnedCodehashMatchesLiveCreateX() public {
+        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+        assertEq(
+            address(CREATEX).codehash,
+            CANONICAL_RUNTIME_CODEHASH,
+            "pinned codehash does not match live CreateX on Base"
+        );
     }
 }
