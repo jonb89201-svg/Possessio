@@ -243,4 +243,21 @@ contract PossessioFactoryAdversarialTest is Test {
         f.deployTemplate(address(0), "", type(HonestTemplate).creationCode, _auth());
         assertEq(p.depth(), 1, "no salt consumed");
     }
+
+    /*//////////////////////////////////////////////////////////////
+        ATTACK 8 (F1 hardening) - degenerate template codehash. A
+        factory pinned to bytes32(0) or keccak256("") would let
+        initCode == "" deploy args-as-code. The constructor forbids
+        both, so no such factory can ever exist to be attacked.
+    //////////////////////////////////////////////////////////////*/
+
+    function test_attack_degenerateCodehash_factoryRejected() public {
+        PossessioSaltPool p = new PossessioSaltPool(address(0xF), keeper, OPERATOR, TREASURY, FEESRC);
+
+        vm.expectRevert(PossessioFactory.ZeroCodehash.selector);
+        new PossessioFactory(FEE, bytes32(0), address(p), address(usdc), sink);
+
+        vm.expectRevert(PossessioFactory.EmptyTemplateCodehash.selector);
+        new PossessioFactory(FEE, keccak256(""), address(p), address(usdc), sink);
+    }
 }

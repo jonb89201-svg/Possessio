@@ -79,6 +79,7 @@ contract PossessioFactory is ReentrancyGuard {
     error ZeroAddress();
     error ZeroFee();
     error ZeroCodehash();
+    error EmptyTemplateCodehash();
     error OwnerIsFactory();
     error TemplateCodehashMismatch(bytes32 got, bytes32 expected);
     error DeployFailed();
@@ -105,6 +106,12 @@ contract PossessioFactory is ReentrancyGuard {
 
     /// @notice Canonical CreateX - identical address on every chain.
     ICreateX public constant CREATEX = ICreateX(0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed);
+
+    /// @dev keccak256 of empty bytes. A factory pinned to this degenerate
+    ///      hash would accept initCode == "" and deploy args-as-code; the
+    ///      constructor forbids it (F1 hardening, cold-seat audit).
+    bytes32 private constant EMPTY_CODEHASH =
+        0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
 
     /// @notice This tier's fixed price, in USDC (6 decimals). No setter.
     uint256 public immutable DEPLOYMENT_FEE;
@@ -141,6 +148,7 @@ contract PossessioFactory is ReentrancyGuard {
     ) {
         if (_deploymentFee == 0) revert ZeroFee();
         if (_templateCodehash == bytes32(0)) revert ZeroCodehash();
+        if (_templateCodehash == EMPTY_CODEHASH) revert EmptyTemplateCodehash();
         if (_saltPool == address(0) || _payToken == address(0) || _feeSink == address(0)) {
             revert ZeroAddress();
         }
