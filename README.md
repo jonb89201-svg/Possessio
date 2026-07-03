@@ -73,6 +73,16 @@ Build verified: `forge build` succeeds with current Solc, compiling all source f
 
 *Terminal-confirmed on two chains. **Base Sepolia** sweep: **671 passed · 2 failed · 1 skipped across 31 suites (674 total)**, July 2026, 47.4s. `PossessioHookCreate3Fork` runs **3/3** against a **Base mainnet** RPC - union: **673 passed · 1 skipped · 0 genuine failures**. † `PossessioHookCreate3Fork`'s hook-creation path requires live Base mainnet V4 PoolManager state; on a Sepolia fork CreateX reverts mid-CREATE3 with `0xc05cee7a` (emitter = CreateX's own address) - chain-mismatch, never regression. The `PossessioSaltPoolCreate3` suite etches canonical CreateX (deployed-runtime codehash `0xbd8a7ea8...`, reconstructed offline from CreateX's presigned deploy tx and pinned in `setUp`) so it runs offline; `test_fork_pinnedCodehashMatchesLiveCreateX` also confirms the pin against live Base when an RPC is set. `SymmetryGuardCore` passes 20/20, including `test_ffi_leaf_matches_onchain` - on-chain confirmation that `script/gen_proof.py` matches `HandshakeLib` byte-for-byte.*
 
+**Pending certification** (forge-verified in isolation; not yet folded into a full on-machine sweep):
+
+| Suite (file : contract) | Tests |
+|---|---|
+| `PossessioFactory.t.sol` : PossessioFactoryTest (automated deploy engine, DoD) | 9 |
+| `PossessioFactoryAdversarial.t.sol` (Invariant 1/2 adversarial pass) | 8 |
+| **Subtotal** | **17** |
+
+These 17 pass under `forge test` (builder + Code Integrity adversarial pass) against the real salt pool and etched canonical CreateX. They fold into the certified count (674 -> 691 tests, 31 -> 33 suites) on the next full two-chain sweep. Held out of the certified headline until that sweep runs on-machine - the certified number reflects a real sweep, not an assembled total.
+
 ---
 
 ## The Production Cascade
