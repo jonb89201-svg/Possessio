@@ -6,8 +6,8 @@ optimizer = true
 optimizer_runs = 1
 via_ir = true
 ffi = true  # SymmetryGuardCore.t.sol shells to script/gen_proof.py via vm.ffi
+fs_permissions = [{ access = "read", path = "./test/fixtures" }]  # vm.etch CreateX runtime for the offline salt-pool CREATE3 test
 
 remappings = [
-    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/",
-    "createx/=lib/createx/src/"
+    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/"
 ]

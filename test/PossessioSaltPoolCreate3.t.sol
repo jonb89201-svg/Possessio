@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {PossessioSaltPool} from "../src/PossessioSaltPool.sol";
-import {CreateX} from "createx/CreateX.sol"; // vendored AGPL dep under lib/, test-only
 
 /*//////////////////////////////////////////////////////////////
         POSSESSIO SALT POOL - CREATE3 INTEGRATION (OFFLINE)
@@ -13,14 +12,22 @@ import {CreateX} from "createx/CreateX.sol"; // vendored AGPL dep under lib/, te
     factory calls the REAL CreateX.deployCreate3 with that salt ->
     the contract lands at the deterministic CREATE3 address.
 
-  CreateX (the actual mainnet factory, vendored under lib/createx)
-  is deployed at its canonical address via deployCodeTo, so its
-  constructor runs there and its _SELF immutable is set correctly.
-  A CREATE3 address depends only on (factory address, guarded salt,
-  proxy init-code hash), never on CreateX's bytecode or compiler,
-  so this computes the same addresses mainnet would. The landing
-  address is cross-checked three independent ways.
+  CreateX is NEVER compiled here - it pins itself to solc =0.8.23,
+  which cannot coexist with this repo's ^0.8.26 in one build graph.
+  You never deploy CreateX anyway; you call the canonical deployment.
+  So we talk to it through a minimal local interface and, for offline
+  runs, vm.etch its runtime bytecode at the canonical address (see
+  test/fixtures/README.md). A CREATE3 address depends only on
+  (factory address, guarded salt, proxy init-code hash), never on
+  CreateX's bytecode, so this matches mainnet. Cross-checked 3 ways.
 //////////////////////////////////////////////////////////////*/
+
+/// Minimal interface - only what this test calls. Declared at ^0.8.26 so the
+/// CreateX source (pinned =0.8.23) never enters the build graph.
+interface ICreateX {
+    function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address);
+    function computeCreate3Address(bytes32 salt) external view returns (address);
+}
 
 /// Trivial payload the factory deploys through the pulled salt.
 contract Deployed {
@@ -29,14 +36,21 @@ contract Deployed {
 
 contract PossessioSaltPoolCreate3Test is Test {
     // Canonical CreateX address (identical on every chain it is deployed to).
-    address internal constant CREATEX_ADDR = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
+    ICreateX internal constant CREATEX = ICreateX(0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed);
 
     // CreateX's CREATE3 proxy init-code hash - a public constant baked into
     // CreateX itself. Used for the independent address computation below.
     bytes32 constant PROXY_INITCODE_HASH =
         0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f;
 
-    CreateX internal cx;
+    // Canonical CreateX deployed-runtime codehash, published by CreateX itself
+    // (README: "keccak256 hash ... of the deployed runtime bytecode is ...").
+    // The etch fixture is pinned to this: if the hex is corrupted, swapped, or
+    // a wrong compiler build, setUp reverts instead of etching bytecode that is
+    // not CreateX - closing the "false green against non-CreateX bytes" gap.
+    bytes32 constant CANONICAL_RUNTIME_CODEHASH =
+        0xbd8a7ea8cfca7b4e5f5041d7d4b17bc317c5ce42cfbc42066a00cf26b43eb53f;
+
     PossessioSaltPool internal pool;
 
     address internal factory;
@@ -46,10 +60,18 @@ contract PossessioSaltPoolCreate3Test is Test {
     address internal constant FEESRC   = address(0x0033);
 
     function setUp() public {
-        // Deploy the real CreateX at its canonical address (constructor runs
-        // there, so _SELF == CREATEX_ADDR). No fork, no RPC.
-        deployCodeTo("CreateX.sol:CreateX", CREATEX_ADDR);
-        cx = CreateX(CREATEX_ADDR);
+        // Etch the real CreateX runtime at its canonical address - no fork.
+        bytes memory code = vm.parseBytes(vm.readFile("test/fixtures/createx.runtime.hex"));
+        vm.etch(address(CREATEX), code);
+
+        // NOTARIZE the fixture: the etched code MUST be canonical CreateX. If it
+        // is not, fail loudly here rather than passing every test below against
+        // bytecode that only pretends to be CreateX.
+        assertEq(
+            address(CREATEX).codehash,
+            CANONICAL_RUNTIME_CODEHASH,
+            "etched fixture is NOT canonical CreateX (corrupted/wrong-version hex)"
+        );
 
         factory = makeAddr("factory");
         pool = new PossessioSaltPool(factory, KEEPER, OPERATOR, TREASURY, FEESRC);
@@ -70,7 +92,7 @@ contract PossessioSaltPoolCreate3Test is Test {
     function _create3(bytes32 guardedSalt) internal pure returns (address) {
         address proxy = address(
             uint160(uint256(keccak256(abi.encodePacked(
-                hex"ff", CREATEX_ADDR, guardedSalt, PROXY_INITCODE_HASH
+                hex"ff", address(CREATEX), guardedSalt, PROXY_INITCODE_HASH
             ))))
         );
         return address(
@@ -96,7 +118,7 @@ contract PossessioSaltPoolCreate3Test is Test {
         bytes32 pulled = pool.pullSalt();          // factory pulls from the pool
         assertEq(pulled, salt, "pool returned the stocked salt");
 
-        address deployed = cx.deployCreate3(pulled, type(Deployed).creationCode);
+        address deployed = CREATEX.deployCreate3(pulled, type(Deployed).creationCode);
         vm.stopPrank();
 
         // 1. real deployment actually produced code
@@ -105,7 +127,7 @@ contract PossessioSaltPoolCreate3Test is Test {
 
         // 2. matches CreateX's own view over the guarded salt
         bytes32 gs = _guarded(factory, salt);
-        assertEq(deployed, cx.computeCreate3Address(gs), "CreateX view disagrees");
+        assertEq(deployed, CREATEX.computeCreate3Address(gs), "CreateX view disagrees");
 
         // 3. matches an independent from-scratch CREATE3 computation
         assertEq(deployed, _create3(gs), "independent CREATE3 math disagrees");
@@ -144,10 +166,31 @@ contract PossessioSaltPoolCreate3Test is Test {
 
         vm.startPrank(factory);
         pool.pullSalt();
-        cx.deployCreate3(salt, type(Deployed).creationCode); // first: ok
+        CREATEX.deployCreate3(salt, type(Deployed).creationCode); // first: ok
         pool.pullSalt();
         vm.expectRevert(); // second CREATE3 to the same address must fail
-        cx.deployCreate3(salt, type(Deployed).creationCode);
+        CREATEX.deployCreate3(salt, type(Deployed).creationCode);
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        Fork-gated notarization: confirm the pinned codehash matches
+        LIVE CreateX on Base. Runs only when BASE_RPC_URL is set; it
+        verifies the pinned constant against mainnet and is NOT
+        load-bearing for the offline suite's green.
+    //////////////////////////////////////////////////////////////*/
+
+    function test_fork_pinnedCodehashMatchesLiveCreateX() public {
+        string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+        assertEq(
+            address(CREATEX).codehash,
+            CANONICAL_RUNTIME_CODEHASH,
+            "pinned codehash does not match live CreateX on Base"
+        );
     }
 }

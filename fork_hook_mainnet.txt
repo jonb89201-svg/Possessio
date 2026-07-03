@@ -1,0 +1,9 @@
+No files changed, compilation skipped
+
+Ran 3 tests for test/PossessioHookCreate3Fork.t.sol:PossessioHookCreate3ForkTest
+[PASS] test_create3_deploys_to_mined_0x8C8_address() (gas: 4647938)
+[PASS] test_live_poolManager_accepts_hook() (gas: 4679700)
+[PASS] test_wrong_sender_cannot_reach_mined_address() (gas: 4648700)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 547.09ms (720.90ms CPU time)
+
+Ran 1 test suite in 551.89ms (547.09ms CPU time): 3 tests passed, 0 failed, 0 skipped (3 total tests)
