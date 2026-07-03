@@ -1,8 +1,26 @@
 {
+  "lib/chainlink-brownie-contracts": {
+    "tag": {
+      "name": "1.3.0",
+      "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
+    }
+  },
+  "lib/hookmate": {
+    "rev": "33408fbc15e083eb0bc4205fa37cb6ba0a926f44"
+  },
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.6.1",
       "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
     }
+  },
+  "lib/v4-core": {
+    "tag": {
+      "name": "v4.0.0",
+      "rev": "e50237c43811bd9b526eff40f26772152a42daba"
+    }
+  },
+  "lib/v4-periphery": {
+    "rev": "363226d9e1e2180b67bf6857023dbaad751010c5"
   }
 }
