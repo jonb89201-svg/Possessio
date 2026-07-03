@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 674 tests run across 31 suites (673 passing; 1 intentional `vm.skip`; zero genuine failures when each fork suite runs on the chain it forks). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 691 tests run across 33 suites (690 passing; 1 intentional `vm.skip`; zero genuine failures), of which 674 are certified by the last full on-machine two-chain sweep and the 17 `PossessioFactory` tests are forge-verified pending the Architect's final pre-deploy sweep. Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,7 +35,9 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result (July 2026): 31 suites · 674 tests · 673 passed · 1 skipped · 0 genuine failures**
+**Result (July 2026): 33 suites · 691 tests · 690 passed · 1 skipped · 0 genuine failures** (forge-verified)
+
+Of these, **674 (31 suites) are certified by the last full on-machine two-chain sweep**; the 17 `PossessioFactory` tests (2 suites) are forge-verified (builder + Code Integrity adversarial pass) and are confirmed in the Architect's **final pre-deploy sweep**, which is the deploy gate. Every number here reflects a test that passes under `forge test`.
 
 Certification runs each fork suite on the chain it forks. The main sweep on **Base Sepolia** returns **671 passed · 2 failed · 1 skipped** across 31 suites in 47.4s. The skip is an intentional `vm.skip` (a mock-mode-only path). The 2 non-passes are both `PossessioHookCreate3Fork`: its hook-creation path needs live **Base mainnet** V4 PoolManager state, so on a Sepolia fork CreateX reverts mid-CREATE3 (`0xc05cee7a`, emitter = CreateX's own address `0xba5Ed0...`) - a chain mismatch, not a contract defect. Run that one suite against a **Base mainnet** RPC and it is **3/3 pass**. Union across both chains: **673 passed · 1 skipped · 0 genuine failures**. The `0xc05cee7a`/CreateX-emitter signature on Sepolia means chain-mismatch, never regression. Terminal-confirmed on both chains.
 
@@ -69,19 +71,13 @@ Build verified: `forge build` succeeds with current Solc, compiling all source f
 | `PossessioSaltPool.t.sol` : PossessioSaltPoolTest **(new - CREATE3 salt pool, DoD)** | 17 |
 | `PossessioSaltPoolCreate3.t.sol` **(new - offline CREATE3 integration; live CreateX codehash notarization)** | 4 |
 | `PossessioX402CoreDecay.t.sol` **(new - x402 velocity-decay oracle mirror, ffi)** | 3 |
-| **Total (31 suites)** | **674** |
+| `PossessioFactory.t.sol` : PossessioFactoryTest **(new - automated deploy engine, DoD)** | 9 |
+| `PossessioFactoryAdversarial.t.sol` **(new - Invariant 1/2 adversarial pass; reentrancy tripwire)** | 8 |
+| **Total (33 suites)** | **691** |
 
 *Terminal-confirmed on two chains. **Base Sepolia** sweep: **671 passed · 2 failed · 1 skipped across 31 suites (674 total)**, July 2026, 47.4s. `PossessioHookCreate3Fork` runs **3/3** against a **Base mainnet** RPC - union: **673 passed · 1 skipped · 0 genuine failures**. † `PossessioHookCreate3Fork`'s hook-creation path requires live Base mainnet V4 PoolManager state; on a Sepolia fork CreateX reverts mid-CREATE3 with `0xc05cee7a` (emitter = CreateX's own address) - chain-mismatch, never regression. The `PossessioSaltPoolCreate3` suite etches canonical CreateX (deployed-runtime codehash `0xbd8a7ea8...`, reconstructed offline from CreateX's presigned deploy tx and pinned in `setUp`) so it runs offline; `test_fork_pinnedCodehashMatchesLiveCreateX` also confirms the pin against live Base when an RPC is set. `SymmetryGuardCore` passes 20/20, including `test_ffi_leaf_matches_onchain` - on-chain confirmation that `script/gen_proof.py` matches `HandshakeLib` byte-for-byte.*
 
-**Pending certification** (forge-verified in isolation; not yet folded into a full on-machine sweep):
-
-| Suite (file : contract) | Tests |
-|---|---|
-| `PossessioFactory.t.sol` : PossessioFactoryTest (automated deploy engine, DoD) | 9 |
-| `PossessioFactoryAdversarial.t.sol` (Invariant 1/2 adversarial pass) | 8 |
-| **Subtotal** | **17** |
-
-These 17 pass under `forge test` (builder + Code Integrity adversarial pass) against the real salt pool and etched canonical CreateX. They fold into the certified count (674 -> 691 tests, 31 -> 33 suites) on the next full two-chain sweep. Held out of the certified headline until that sweep runs on-machine - the certified number reflects a real sweep, not an assembled total.
+*Provenance: **674** is the last full on-machine two-chain sweep; **691** is the forge-verified total. The two `PossessioFactory` suites (17 tests) are forge-verified (builder + Code Integrity adversarial pass, including a reentrancy-guard tripwire) against the real salt pool and etched canonical CreateX; they have not yet ridden a full on-machine sweep. The Architect's final pre-deploy sweep confirms them and is the deploy gate - nothing deploys before that sweep is green.*
 
 ---
 
@@ -220,7 +216,7 @@ A merchant payment processor -- non-custodial smart contract infrastructure for 
 
 This is what "crypto treasury without crypto custody" looks like operationally -- merchants get a treasury-management layer integrated with their existing payment processor, routing operational liquidity to DAI and accumulating cbETH yield in their own contract, without giving up custody at any point.
 
-**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the 674 total above.
+**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the 691 total above.
 
 ---
 
