@@ -40,20 +40,35 @@ contract HonestTemplate {
     }
 }
 
-/// A template whose constructor RE-ENTERS the factory. If nonReentrant
-/// works, the re-entry is rejected and `reentryRejected` is set true while
-/// the outer deploy still completes.
+/// A template whose constructor RE-ENTERS the factory with a FULLY VALID
+/// call: genuine initCode (its own creation code, passes the codehash
+/// check), a funded fee (mints itself DEPLOYMENT_FEE - the mock's mint is
+/// unpermissioned, test-only), a salt waiting in the pool, and a valid
+/// owner. Every non-guard check passes, so nonReentrant is the ONLY thing
+/// standing between the re-entry and success. The constructor records the
+/// exact revert selector so the test can prove WHICH mechanism fired -
+/// not merely that something reverted. If nonReentrant is ever removed,
+/// the re-entry SUCCEEDS, `reentrySucceeded` reads true, and the test
+/// fails loudly. This is a tripwire for the guard, not a fail-safe check.
 contract ReentrantTemplate {
     address public owner;
-    bool public reentryRejected;
+    bool public reentrySucceeded;
+    bytes4 public reentryErrorSelector;
+
     constructor(address _owner, bytes memory initArgs) {
         owner = _owner;
-        address f = abi.decode(initArgs, (address));
+        (address f, address usdcAddr, bytes memory selfInitCode) =
+            abi.decode(initArgs, (address, address, bytes));
+
+        // Fund the fee: msg.sender of the re-entry is THIS address, and the
+        // factory settles from msg.sender, so the template funds itself.
+        MockUSDC(usdcAddr).mint(address(this), PossessioFactory(f).DEPLOYMENT_FEE());
+
         PossessioFactory.FeeAuth memory a;
-        try PossessioFactory(f).deployTemplate(_owner, "", "", a) {
-            reentryRejected = false;
-        } catch {
-            reentryRejected = true; // blocked by ReentrancyGuard (or reverted before any effect)
+        try PossessioFactory(f).deployTemplate(_owner, "", selfInitCode, a) returns (address) {
+            reentrySucceeded = true;
+        } catch (bytes memory err) {
+            reentryErrorSelector = bytes4(err);
         }
     }
 }
@@ -147,22 +162,49 @@ contract PossessioFactoryAdversarialTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-        ATTACK 3 - reentrancy through a template constructor. Even a
-        template that calls back into deployTemplate is blocked by
-        nonReentrant; the re-entry is rejected.
+        ATTACK 3 - reentrancy through a template constructor. TIGHTENED
+        (cold-seat finding): the re-entry is now FULLY VALID - genuine
+        initCode, funded fee, a second salt waiting, valid owner - so
+        every check EXCEPT nonReentrant would pass. The test asserts
+        the exact ReentrancyGuardReentrantCall selector, proving the
+        guard specifically fired. The prior version re-entered with
+        initCode="" and could not distinguish the guard from the
+        codehash check catching it; it would have kept passing even
+        with nonReentrant deleted. This version fails if the guard is
+        ever removed: the re-entry would then SUCCEED and the
+        reentrySucceeded assertion trips.
     //////////////////////////////////////////////////////////////*/
+
+    /// @dev OZ 5.x ReentrancyGuard custom error.
+    bytes4 internal constant REENTRANCY_SELECTOR =
+        bytes4(keccak256("ReentrancyGuardReentrantCall()"));
 
     function test_attack_reentrantTemplate_isBlocked() public {
         (PossessioSaltPool p, PossessioFactory f) = _deploy(keccak256(type(ReentrantTemplate).creationCode));
+        // TWO salts: one for the outer deploy, one waiting so the re-entry's
+        // pull would succeed if it ever got that far.
         _refill(p, address(f), 7);
+        _refill(p, address(f), 8);
         usdc.mint(attacker, FEE);
 
-        // initArgs carries the factory address so the template can try to re-enter it
-        bytes memory args = abi.encode(address(f));
+        // initArgs carries everything the template needs for a valid re-entry:
+        // the factory, the USDC (to self-fund the fee), and its own genuine
+        // creation code (to pass the codehash check).
+        bytes memory args = abi.encode(address(f), address(usdc), type(ReentrantTemplate).creationCode);
+
         vm.prank(attacker);
         address deployed = f.deployTemplate(makeAddr("o"), args, type(ReentrantTemplate).creationCode, _auth());
 
-        assertTrue(ReentrantTemplate(deployed).reentryRejected(), "re-entry into deployTemplate must be rejected");
+        // The guard - and specifically the guard - must have stopped it.
+        assertFalse(ReentrantTemplate(deployed).reentrySucceeded(), "re-entry must not succeed");
+        assertEq(
+            ReentrantTemplate(deployed).reentryErrorSelector(),
+            REENTRANCY_SELECTOR,
+            "revert must be ReentrancyGuardReentrantCall, not an incidental check"
+        );
+        // And the second salt must still be there: the re-entry died at the
+        // guard, BEFORE its fee settle or salt pull could execute.
+        assertEq(p.depth(), 1, "re-entry consumed nothing: guard fired before fee/salt");
     }
 
     /*//////////////////////////////////////////////////////////////
