@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 648 tests run across 28 suites (646 passing; 1 intentional `vm.skip`; 1 fork suite gated on a `BASE_RPC_URL`). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 674 tests run across 31 suites (673 passing; 1 intentional `vm.skip`; zero genuine failures when each fork suite runs on the chain it forks). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,9 +35,9 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result (June 2026): 28 suites · 648 tests · 646 passed · 1 skipped · 1 fork-harness failure**
+**Result (July 2026): 31 suites · 674 tests · 673 passed · 1 skipped · 0 genuine failures**
 
-The skip is an intentional `vm.skip` (a mock-mode-only path). The single non-pass is `PossessioHookCreate3Fork::setUp` requiring a Base RPC (`BASE_RPC_URL` env var) — a fork-test harness gap, not a contract defect. Set `BASE_RPC_URL` and the fork suites (`PossessioHookCreate3Fork`, `PaymentsFork`, `LSTExchangeRateFork`) execute live against Base mainnet and the harness failure clears. Terminal-confirmed; substrate verified (646 `[PASS]` markers == 646 reported).
+Certification runs each fork suite on the chain it forks. The main sweep on **Base Sepolia** returns **671 passed · 2 failed · 1 skipped** across 31 suites in 47.4s. The skip is an intentional `vm.skip` (a mock-mode-only path). The 2 non-passes are both `PossessioHookCreate3Fork`: its hook-creation path needs live **Base mainnet** V4 PoolManager state, so on a Sepolia fork CreateX reverts mid-CREATE3 (`0xc05cee7a`, emitter = CreateX's own address `0xba5Ed0...`) - a chain mismatch, not a contract defect. Run that one suite against a **Base mainnet** RPC and it is **3/3 pass**. Union across both chains: **673 passed · 1 skipped · 0 genuine failures**. The `0xc05cee7a`/CreateX-emitter signature on Sepolia means chain-mismatch, never regression. Terminal-confirmed on both chains.
 
 Build verified: `forge build` succeeds with current Solc, compiling all source files with 0 errors. Pre-existing informational notices (forge-std `error` keyword future-deprecation, test mock unchecked transfers, V4 hook math typecasts, hour-scale timelock timestamp checks) -- none block compilation or test execution.
 
@@ -58,17 +58,20 @@ Build verified: `forge build` succeeds with current Solc, compiling all source f
 | `AutomationInvariants.t.sol` : AutomationInvariants (hook) | 27 |
 | `AutomationInvariants.t.sol` : PaymentsAutomationInvariants | 4 |
 | `PossessioHook_M1Overflow.t.sol` | 5 |
-| `PossessioHookCreate3Fork.t.sol` (fork — needs `BASE_RPC_URL`) | 1 † |
+| `PossessioHookCreate3Fork.t.sol` (fork - run on Base mainnet) | 3 † |
 | `PaymentsFork_t.sol` : PaymentsForkTest (fork) | 21 |
 | `LSTExchangeRateFork.t.sol` (fork) | 5 |
 | `L1AnchorFactory.t.sol` | 35 |
 | `L1AnchorAdversarial.t.sol` (6 suites: Oracle 6 / Reentrancy 3 / SilentFailure 3 / Sovereignty 7 / EmergencyUnwind 5 / Identity 7) | 31 |
 | `L1AnchorReentrancyMocks.sol` (Behavioral) | 5 |
 | `L1AnchorInvariant.t.sol` | 1 |
-| `SymmetryGuardCore.t.sol` : SymmetryGuardCoreGauntlet **(new — typed additive MEV toll + sha256 Merkle handshake)** | 20 |
-| **Total (28 suites)** | **648** |
+| `SymmetryGuardCore.t.sol` : SymmetryGuardCoreGauntlet (typed additive MEV toll + sha256 Merkle handshake) | 20 |
+| `PossessioSaltPool.t.sol` : PossessioSaltPoolTest **(new - CREATE3 salt pool, DoD)** | 17 |
+| `PossessioSaltPoolCreate3.t.sol` **(new - offline CREATE3 integration; live CreateX codehash notarization)** | 4 |
+| `PossessioX402CoreDecay.t.sol` **(new - x402 velocity-decay oracle mirror, ffi)** | 3 |
+| **Total (31 suites)** | **674** |
 
-*Terminal-confirmed: **646 passed · 1 skipped · 1 fork-harness failure across 28 suites (648 total)**, June 2026. † `PossessioHookCreate3Fork` fails its `setUp` only when `BASE_RPC_URL` is unset (fork-harness gap, not a contract defect); with the RPC set it runs live. The new `SymmetryGuardCore` suite passes 20/20, including `test_ffi_leaf_matches_onchain` — on-chain confirmation that the off-chain proof generator (`script/gen_proof.py`) matches `HandshakeLib` byte-for-byte.*
+*Terminal-confirmed on two chains. **Base Sepolia** sweep: **671 passed · 2 failed · 1 skipped across 31 suites (674 total)**, July 2026, 47.4s. `PossessioHookCreate3Fork` runs **3/3** against a **Base mainnet** RPC - union: **673 passed · 1 skipped · 0 genuine failures**. † `PossessioHookCreate3Fork`'s hook-creation path requires live Base mainnet V4 PoolManager state; on a Sepolia fork CreateX reverts mid-CREATE3 with `0xc05cee7a` (emitter = CreateX's own address) - chain-mismatch, never regression. The `PossessioSaltPoolCreate3` suite etches canonical CreateX (deployed-runtime codehash `0xbd8a7ea8...`, reconstructed offline from CreateX's presigned deploy tx and pinned in `setUp`) so it runs offline; `test_fork_pinnedCodehashMatchesLiveCreateX` also confirms the pin against live Base when an RPC is set. `SymmetryGuardCore` passes 20/20, including `test_ffi_leaf_matches_onchain` - on-chain confirmation that `script/gen_proof.py` matches `HandshakeLib` byte-for-byte.*
 
 ---
 
@@ -207,7 +210,7 @@ A merchant payment processor -- non-custodial smart contract infrastructure for 
 
 This is what "crypto treasury without crypto custody" looks like operationally -- merchants get a treasury-management layer integrated with their existing payment processor, routing operational liquidity to DAI and accumulating cbETH yield in their own contract, without giving up custody at any point.
 
-**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the 663 total above.
+**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the 674 total above.
 
 ---
 
