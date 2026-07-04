@@ -461,6 +461,33 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
   </div>
 </div>
 
+<style>
+  /* LaunchRailLive badge + honest status (injected module anchors) */
+  .lr-badge{display:block;margin:12px 0 4px;padding:8px 12px;border-radius:8px;font:600 12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;}
+  .lr-badge-preview{background:rgba(180,140,40,.14);color:#c9a24b;border:1px solid rgba(180,140,40,.35);}
+  .lr-badge-live{background:rgba(60,180,110,.14);color:#4bbf7b;border:1px solid rgba(60,180,110,.40);}
+  .lr-live-status{white-space:pre-wrap;word-break:break-word;margin:10px 0 0;padding:0;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9aa2ad;}
+  /* DexBubbles market map (placement is the Architect's to relocate) */
+  .dexbubbles-sec{max-width:760px;margin:26px auto 0;padding:0 18px;}
+  .dexbubbles>summary{cursor:pointer;list-style:none;font:600 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8b9bad;padding:10px 0;}
+  .dexbubbles>summary::-webkit-details-marker{display:none;}
+  .dexbubbles-body{padding:8px 0 4px;}
+  #dexbubbles-canvas{width:100%;max-width:100%;height:240px;display:block;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:12px;}
+  .dexbubbles-status{font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#78828e;margin-top:8px;min-height:14px;}
+  .dexbubbles-note{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#66707c;margin-top:6px;}
+</style>
+
+<section class="dexbubbles-sec">
+  <details id="dexbubbles-details" class="dexbubbles" ontoggle="if(window.DexBubbles){this.open?window.DexBubbles.start():window.DexBubbles.stop();}">
+    <summary>Markets - live DEX bubblemap</summary>
+    <div class="dexbubbles-body">
+      <canvas id="dexbubbles-canvas" width="320" height="240"></canvas>
+      <div id="dexbubbles-status" class="dexbubbles-status"></div>
+      <p class="dexbubbles-note">Empty until the pool is live - add the STEEL/WETH pair address to DexBubbles CFG.PAIRS after the wave. Placement is the Architect's to choose: this block can move into any tab. start()/stop() fire on open/close to respect the feed rate limit.</p>
+    </div>
+  </details>
+</section>
+
 <footer>
   <div>POSSESSIO PROTOCOL · OPERATOR CONSOLE · ARCHITECT-RATIFIED</div>
   <div class="arch">Per Amendment VII — terminal output substantiates state. This console encodes calldata, submits transactions, and reads on-chain state via eth_call; it does not certify deployments.</div>
@@ -2424,7 +2451,6 @@ refreshTreasury();
   function esc(x){return String(x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
   function isAddr(a){return /^0x[a-fA-F0-9]{40}$/.test(a);}
   function shrt(a){return a&&a.length>10?a.slice(0,6)+"\u2026"+a.slice(-4):a||"";}
-  function mock(){var h="0123456789abcdef",x="";for(var i=0;i<37;i++)x+=h[Math.floor(Math.random()*16)];return "0x8C8"+x;}
   function nlabel(k){return L.env==="test"?NET[C[k].net].test:NET[C[k].net].main;}
   function ncls(k){return NET[C[k].net].cls;}
   var W=function(){return document.getElementById("lr-wrap");};
@@ -2466,12 +2492,12 @@ refreshTreasury();
     var c=C[L.contract],lab=nlabel(L.contract),isT=L.env==="test",t=tcls();
     var own=L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
     if(L.dep==="ready")
-      return '<div class="lr-sum"><div class="lr-sr"><span class="k">Contract</span><span class="v">'+esc(c.name)+'</span></div><div class="lr-sr"><span class="k">Network</span><span class="v">'+lab+(isT?" (testnet)":"")+'</span></div>'+(c.config==="token"?'<div class="lr-sr"><span class="k">Token</span><span class="v">'+esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"")+'</span></div>':"")+'<div class="lr-sr"><span class="k">Owned by</span><span class="v">'+esc(own)+'</span></div><div class="lr-sr"><span class="k">Fee</span><span class="v">'+(isT?"test ETH only":"included")+'</span></div></div><div class="lr-note i" style="margin-top:14px"><span class="ni">i</span><span>We prepare your contract\'s address, then your wallet confirms. Deploy and fee happen in one transaction — together, or not at all.</span></div><button class="lr-go '+t+'" onclick="LaunchRail.deploy()">'+(isT?"Deploy to testnet":"Prepare &amp; deploy")+'</button>';
+      return '<div class="lr-sum"><div class="lr-sr"><span class="k">Contract</span><span class="v">'+esc(c.name)+'</span></div><div class="lr-sr"><span class="k">Network</span><span class="v">'+lab+(isT?" (testnet)":"")+'</span></div>'+(c.config==="token"?'<div class="lr-sr"><span class="k">Token</span><span class="v">'+esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"")+'</span></div>':"")+'<div class="lr-sr"><span class="k">Owned by</span><span class="v">'+esc(own)+'</span></div><div class="lr-sr"><span class="k">Fee</span><span class="v">'+(isT?"test ETH only":"included")+'</span></div></div><div class="lr-note i" style="margin-top:14px"><span class="ni">i</span><span>We prepare your contract\'s address, then your wallet confirms. Deploy and fee happen in one transaction — together, or not at all.</span></div><div id="lr-live-badge" class="lr-badge lr-badge-preview">Checking network…</div><button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.deploy()" disabled>'+(isT?"Deploy to testnet":"Prepare &amp; deploy")+'</button><pre id="lr-live-status" class="lr-live-status" aria-live="polite"></pre>';
     if(L.dep==="prep")
       return '<div class="lr-cs"><div class="lr-spin"></div><p class="lr-st">Preparing your contract</p><p class="lr-sb">This can take a few minutes — keep this open. We\'re mining your contract\'s unique address. <b>Nothing has been charged.</b></p></div>';
     if(L.dep==="confirm")
       return '<p class="lr-bs" style="margin-top:0">Your address is ready. Sign once to deploy'+(isT?" on testnet":" and pay the fee")+' — in a single transaction.</p><div class="lr-wsheet" style="margin-top:13px"><div class="lr-wh"><span class="bd">B</span> Base App wallet \u00b7 '+lab+'</div><div class="lr-sum" style="border:none"><div class="lr-sr" style="padding:8px 0"><span class="k">Deploy</span><span class="v">'+esc(c.name)+'</span></div><div class="lr-sr" style="padding:8px 0"><span class="k">Fee</span><span class="v">'+(isT?"test ETH":"included")+'</span></div><div class="lr-sr" style="padding:8px 0;border:none"><span class="k">To</span><span class="v">'+esc(own)+'</span></div></div></div><div class="lr-note w" style="margin-top:12px"><span class="ni">!</span><span>You\'re signing in Base App — that signature is what makes this yours.</span></div><button class="lr-go '+t+'" onclick="LaunchRail.sign()">Sign in Base App</button>';
-    return '<div class="lr-cs"><div class="lr-ck"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><p class="lr-st">Deployed. You own it.</p><p class="lr-sb">'+esc(c.name)+' is live on '+lab+', owned by your '+(L.owner==="safe"?"Safe":"Base Account")+'.</p><div class="lr-addr"><small>Your contract address \u00b7 '+lab+'</small>'+L.addr+'</div><button class="lr-go" onclick="LaunchRail.close()">Done — back to console</button></div>';
+    return '<div class="lr-cs"><div class="lr-ck"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><p class="lr-st">Deployed. You own it.</p><p class="lr-sb">'+esc(c.name)+' is live on '+lab+', owned by your '+(L.owner==="safe"?"Safe":"Base Account")+'.</p><div class="lr-addr"><small>Your contract address \u00b7 '+lab+'</small>'+esc(L.addr||"")+'</div><button class="lr-go" onclick="LaunchRail.close()">Done — back to console</button></div>';
   }
   var CT=[cChoose,cOwn,cSetup,cDeploy];
 
@@ -2491,6 +2517,9 @@ refreshTreasury();
       blocks+='<div class="lr-block '+st+'" id="lr-blk'+i+'"><div class="lr-gut"><div class="lr-node">'+nodeH(i)+'</div></div><div class="lr-bd">'+inner+'</div></div>';
     }
     W().innerHTML='<section class="lr-intro"><h1>Launch a contract</h1><p>Four steps. Each opens the next.</p></section>'+banner+'<div class="lr-flow">'+blocks+'</div>';
+    // On the Deploy step, let the live module read the chain and set the
+    // PREVIEW/LIVE badge + enable/disable #lr-go. Preview keeps it disabled.
+    if(L.step===3&&window.LaunchRailLive){window.LaunchRailLive.init();}
   }
   function scrollA(){requestAnimationFrame(function(){var el=document.getElementById("lr-blk"+Math.min(L.step,3));if(el)el.scrollIntoView({behavior:"smooth",block:"start"});});}
   function goOk(ok){var g=document.getElementById("lr-go");if(g)g.disabled=!ok;}
@@ -2508,11 +2537,389 @@ refreshTreasury();
     setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
     edit:function(i){L.step=i;if(i<3)L.dep="ready";render();scrollA();},
     next:function(){L.step++;render();scrollA();},
-    deploy:function(){L.dep="prep";render();scrollA();setTimeout(function(){L.addr=mock();L.dep="confirm";render();scrollA();},2600);},
-    sign:function(){L.dep="done";render();scrollA();}
+    deploy:function(){
+      // Retired the setTimeout fake-address generator. Delegate to the real
+      // factory path (console_LaunchRailLive). With FACTORY unset per chain the
+      // module runs in PREVIEW: the deploy button stays disabled and no address
+      // is ever produced. Owner: the Safe address, or the connected account.
+      if(!window.LaunchRailLive){return;}
+      var owner=L.owner==="safe"?L.safe:(window.ethereum&&window.ethereum.selectedAddress?window.ethereum.selectedAddress:"");
+      window.LaunchRailLive.deploy(owner,"0x");
+    }
   };
   var __lrLaunch = document.getElementById("lr-launch-btn");
 if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv();});
+})();
+</script>
+
+<!-- ============================================================
+     POSSESSIO console modules (namespaced IIFEs, injected)
+       - LaunchRailLive v1.1 : retires the mock deploy, real factory path
+       - DexBubbles v1.0      : client-side DEX bubblemap
+     USDC[8453] corrected to the canonical Base native-USDC address
+     (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) per the repo constant.
+     ============================================================ -->
+<script>
+/* ============================================================
+   POSSESSIO CONSOLE — LaunchRailLive v1.1 (2026-07-03)
+   Replaces LaunchRail's mock deploy()/sign() with the REAL
+   PossessioFactory.deployTemplate() path, per SPEC v0.2 and the
+   fork-proven sequence (PossessioFactoryForkTest, 2/2 mainnet).
+
+   DESIGN DECISIONS (auditor: attack these):
+   D1. Config-gated honesty: if FACTORY[chainId] is unset, the rail
+       runs in PREVIEW mode — visibly badged, deploy button disabled.
+       No fabricated addresses, ever. The old fake-address path is
+       retired, not hidden.
+   D2. initCode is FETCHED from a pinned artifact URL and hash-checked
+       client-side against factory.templateCodehash() BEFORE any
+       signature is requested. The contract check is the authority.
+   D3. EIP-3009 nonce is 32 random bytes from crypto.getRandomValues.
+   D4. Fee is READ from factory.DEPLOYMENT_FEE(), never hardcoded.
+   D5. "Nothing was charged" is only claimed where PROVABLY true —
+       split at the SUBMISSION BOUNDARY in deploy().
+   ============================================================ */
+(function LaunchRailLive() {
+  "use strict";
+
+  /* ---------- CONFIG (Claude Code: align at injection) ---------- */
+  const CFG = {
+    // Factory addresses per chain. NULL = preview mode (D1).
+    FACTORY: {
+      8453:  null,   // Base mainnet  — set after the wave deploys
+      84532: null    // Base Sepolia  — set after testnet factory deploy
+    },
+    // USDC per chain. Verified against the repo canonical constant used
+    // by the fork tests (PossessioFactoryFork.t.sol / PaymentsFork).
+    USDC: {
+      8453:  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      84532: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    },
+    // USDC EIP-712 domain values (Circle, version "2"). Verify at injection.
+    USDC_DOMAIN_NAME: { 8453: "USD Coin", 84532: "USDC" },
+    USDC_DOMAIN_VERSION: "2",
+    // Pinned template artifact: { "creationCode": "0x..." }
+    TEMPLATE_ARTIFACT_URL: "", // set at injection (post-wave)
+    // Auth validity window (seconds).
+    AUTH_WINDOW_S: 15 * 60
+  };
+
+  const FACTORY_ABI = [
+    "function DEPLOYMENT_FEE() view returns (uint256)",
+    "function templateCodehash() view returns (bytes32)",
+    "function deployTemplate(address owner, bytes initArgs, bytes initCode, (uint256 validAfter,uint256 validBefore,bytes32 nonce,uint8 v,bytes32 r,bytes32 s) feeAuth) returns (address)",
+    "event TemplateDeployed(address indexed owner, address indexed deployed, uint256 fee)"
+  ];
+
+  const log = (m) => (window.dbgLog ? window.dbgLog("[RAIL] " + m) : console.log("[RAIL]", m));
+
+  /* ---------- STATE ---------- */
+  const S = { mode: "preview", fee: null, codehash: null, initCode: null,
+              busy: false, lastError: null, deployed: null, pendingTx: null };
+
+  /* ---------- HELPERS ---------- */
+  async function _provider() {
+    if (!window.ethereum) throw new Error("No wallet");
+    return new ethers.BrowserProvider(window.ethereum);
+  }
+  function _fmtUSDC(x) { return (Number(x) / 1e6).toFixed(2) + " USDC"; }
+  function _randNonce() {
+    const b = new Uint8Array(32); crypto.getRandomValues(b);
+    return "0x" + Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+  }
+
+  /* ---------- INIT: decide preview vs live, load chain truth ---------- */
+  async function init() {
+    try {
+      const provider = await _provider();
+      const net = await provider.getNetwork();
+      const chainId = Number(net.chainId);
+      const factoryAddr = CFG.FACTORY[chainId];
+
+      if (!factoryAddr) {
+        S.mode = "preview";
+        log("preview mode: no factory configured for chain " + chainId);
+        return render();
+      }
+
+      const factory = new ethers.Contract(factoryAddr, FACTORY_ABI, provider);
+      // D4: the chain is the price authority.
+      S.fee = await factory.DEPLOYMENT_FEE();
+      S.codehash = await factory.templateCodehash();
+
+      // D2: fetch + pre-verify the template bytes.
+      const res = await fetch(CFG.TEMPLATE_ARTIFACT_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error("artifact fetch " + res.status);
+      const art = await res.json();
+      const initCode = art.creationCode;
+      const localHash = ethers.keccak256(initCode);
+      if (localHash !== S.codehash) {
+        S.mode = "preview"; S.lastError =
+          "Template artifact hash does not match on-chain codehash. Refusing.";
+        log("HASH MISMATCH local=" + localHash + " chain=" + S.codehash);
+        return render();
+      }
+      S.initCode = initCode;
+      S.mode = "live";
+      log("live: fee=" + _fmtUSDC(S.fee) + " codehash verified " + localHash.slice(0, 10));
+      render();
+    } catch (e) {
+      S.mode = "preview"; S.lastError = String(e.message || e);
+      log("init failed -> preview: " + S.lastError);
+      render();
+    }
+  }
+
+  /* ---------- THE REAL DEPLOY (retires the mock) ---------- */
+  async function deploy(ownerAddress, initArgsHex) {
+    if (S.mode !== "live") { S.lastError = "Rail is in preview — no live factory on this chain."; return render(); }
+    if (S.busy) return;
+    S.busy = true; S.lastError = null; S.deployed = null; S.pendingTx = null; render();
+
+    try {
+      const provider = await _provider();
+      const signer = await provider.getSigner();
+      const net = await provider.getNetwork();
+      const chainId = Number(net.chainId);
+      const buyer = await signer.getAddress();
+      const factoryAddr = CFG.FACTORY[chainId];
+      const usdcAddr = CFG.USDC[chainId];
+
+      const owner = ethers.getAddress(ownerAddress);
+      if (owner === ethers.ZeroAddress) throw new Error("Owner cannot be zero address");
+      if (owner.toLowerCase() === factoryAddr.toLowerCase())
+        throw new Error("Owner cannot be the factory");
+
+      // ---- EIP-3009 ReceiveWithAuthorization signature (the fee) ----
+      const now = Math.floor(Date.now() / 1000);
+      const auth = {
+        from: buyer,
+        to: factoryAddr,                       // to == factory: front-run closed
+        value: S.fee,
+        validAfter: 0,
+        validBefore: now + CFG.AUTH_WINDOW_S,
+        nonce: _randNonce()                     // D3
+      };
+      const domain = {
+        name: CFG.USDC_DOMAIN_NAME[chainId],
+        version: CFG.USDC_DOMAIN_VERSION,
+        chainId, verifyingContract: usdcAddr
+      };
+      const types = { ReceiveWithAuthorization: [
+        { name: "from", type: "address" }, { name: "to", type: "address" },
+        { name: "value", type: "uint256" }, { name: "validAfter", type: "uint256" },
+        { name: "validBefore", type: "uint256" }, { name: "nonce", type: "bytes32" }
+      ]};
+      log("requesting fee signature: " + _fmtUSDC(S.fee) + " -> factory");
+      const sig = ethers.Signature.from(await signer.signTypedData(domain, types, auth));
+
+      // ---- the atomic call: fee + salt + CreateX + ownership ----
+      const factory = new ethers.Contract(factoryAddr, FACTORY_ABI, signer);
+      const feeAuth = { validAfter: auth.validAfter, validBefore: auth.validBefore,
+                        nonce: auth.nonce, v: sig.v, r: sig.r, s: sig.s };
+      // ================= SUBMISSION BOUNDARY (v1.1 fix) =================
+      log("sending deployTemplate…");
+      let tx;
+      try {
+        tx = await factory.deployTemplate(owner, initArgsHex || "0x", S.initCode, feeAuth);
+      } catch (e) {
+        throw { phase: "pre", err: e };
+      }
+
+      // From here on the tx EXISTS. Never claim nothing was charged.
+      S.pendingTx = tx.hash;
+      log("submitted " + tx.hash);
+      let rcpt;
+      try {
+        rcpt = await tx.wait();
+      } catch (e) {
+        throw { phase: "post", err: e, txHash: tx.hash };
+      }
+
+      if (rcpt.status === 0) {
+        S.lastError = "Deploy reverted on-chain. The fee was not charged (atomic unwind) — gas only. tx " + rcpt.hash;
+        log("REVERTED " + rcpt.hash);
+        return;
+      }
+
+      // Mined and SUCCEEDED.
+      let deployed = null;
+      for (const lg of rcpt.logs) {
+        try {
+          const p = factory.interface.parseLog(lg);
+          if (p && p.name === "TemplateDeployed") { deployed = p.args.deployed; break; }
+        } catch (_) {}
+      }
+      if (!deployed) {
+        S.deployed = { address: null, owner, tx: rcpt.hash };
+        S.lastError = "Deploy SUCCEEDED (fee charged) — but this console couldn't parse the new address from the receipt. Find it on the explorer: tx " + rcpt.hash;
+        log("SUCCESS-UNPARSED " + rcpt.hash + " (event ABI drift? align FACTORY_ABI to the built contract)");
+        return;
+      }
+      S.deployed = { address: deployed, owner, tx: rcpt.hash };
+      log("DEPLOYED " + deployed + " owner=" + owner + " tx=" + rcpt.hash);
+    } catch (e) {
+      const raw = e && e.err ? e.err : e;
+      const msg = (raw && (raw.shortMessage || raw.message)) || String(raw);
+      if (e && e.phase === "post") {
+        S.lastError = "Transaction submitted but confirmation was lost (network drop). It may have succeeded — check the explorer before retrying: tx " + e.txHash;
+      } else if (/user rejected|ACTION_REJECTED/i.test(msg)) {
+        S.lastError = "Signature declined. Nothing was charged.";
+      } else {
+        S.lastError = "Deploy failed. Nothing was charged. (" + msg.slice(0, 140) + ")";
+      }
+      log("FAILED[" + ((e && e.phase) || "pre") + "]: " + msg);
+    } finally {
+      S.busy = false; render();
+    }
+  }
+
+  /* ---------- RENDER (anchors into the existing rail DOM) ---------- */
+  function render() {
+    const badge = document.getElementById("lr-live-badge");
+    const btn   = document.getElementById("lr-go");
+    const out   = document.getElementById("lr-live-status");
+    if (badge) {
+      badge.textContent = S.mode === "live"
+        ? "LIVE — fee " + (S.fee != null ? _fmtUSDC(S.fee) : "…") + " (read from chain)"
+        : "PREVIEW — no live factory on this chain yet";
+      badge.className = "lr-badge " + (S.mode === "live" ? "lr-badge-live" : "lr-badge-preview");
+    }
+    if (btn) btn.disabled = (S.mode !== "live") || S.busy;
+    if (out) {
+      out.textContent =
+          (S.deployed && S.deployed.address)
+            ? ("Deployed. You own it.\n" + S.deployed.address + "\ntx " + S.deployed.tx)
+        : S.lastError ? S.lastError
+        : S.busy ? "Working — one transaction: fee + deploy, together or not at all…"
+        : "";
+    }
+  }
+
+  /* ---------- EXPORT ---------- */
+  window.LaunchRailLive = { init, deploy, _state: S, _cfg: CFG };
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+
+<script>
+/* ============================================================
+   POSSESSIO CONSOLE — DexBubbles v1.0 (2026-07-02)
+   Client-side DEX market bubblemap. DexScreener public REST
+   (api.dexscreener.com — no key). One batched request per refresh.
+
+   D1. HONEST EMPTY STATE: with no pairs configured the canvas says so.
+   D2. ONE request per refresh (<=30 pairs comma-joined); interval 60s.
+   D3. Bubble AREA proportional to liquidity.usd (radius ~ sqrt).
+   D4. Stale (>3x interval) data grays out per the freshness-gate doctrine.
+   ============================================================ */
+(function DexBubbles() {
+  "use strict";
+
+  /* ---------- CONFIG (Claude Code: align at injection) ---------- */
+  const CFG = {
+    CHAIN: "base",
+    // Pair addresses to chart. EMPTY pre-launch (D1). After the wave:
+    // push the STEEL/WETH v4 pool's pair address here.
+    PAIRS: [],
+    REFRESH_MS: 60000,
+    CANVAS_ID: "dexbubbles-canvas",
+    STATUS_ID: "dexbubbles-status"
+  };
+
+  const API = "https://api.dexscreener.com/latest/dex/pairs/";
+  const log = (m) => (window.dbgLog ? window.dbgLog("[BUBBLES] " + m) : console.log("[BUBBLES]", m));
+
+  const S = { pairs: [], fetchedAt: 0, timer: null, error: null };
+
+  /* ---------- FETCH (D2: one batched call) ---------- */
+  async function refresh() {
+    if (!CFG.PAIRS.length) { S.pairs = []; S.error = null; return draw(); }
+    try {
+      const url = API + CFG.CHAIN + "/" + CFG.PAIRS.join(",");
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("DexScreener " + res.status);
+      const data = await res.json();
+      S.pairs = (data.pairs || []).map(p => ({
+        symbol: (p.baseToken?.symbol || "?") + "/" + (p.quoteToken?.symbol || "?"),
+        priceUsd: parseFloat(p.priceUsd || "0"),
+        liqUsd: p.liquidity?.usd || 0,
+        vol24: p.volume?.h24 || 0,
+        chg24: p.priceChange?.h24 ?? 0
+      }));
+      S.fetchedAt = Date.now(); S.error = null;
+      log("refreshed " + S.pairs.length + " pair(s)");
+    } catch (e) {
+      S.error = String(e.message || e);
+      log("fetch failed: " + S.error);
+    }
+    draw();
+  }
+
+  /* ---------- DRAW (D3 sizing, D4 staleness) ---------- */
+  function draw() {
+    const cv = document.getElementById(CFG.CANVAS_ID);
+    const status = document.getElementById(CFG.STATUS_ID);
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    const W = cv.width = cv.clientWidth || 320;
+    const H = cv.height = cv.clientHeight || 240;
+    ctx.clearRect(0, 0, W, H);
+
+    // D1: honest empty state
+    if (!CFG.PAIRS.length) {
+      ctx.fillStyle = "#5a6"; ctx.font = "12px monospace"; ctx.textAlign = "center";
+      ctx.fillText("No pairs configured - pool not live yet.", W / 2, H / 2 - 8);
+      ctx.fillText("Lights up when the wave lands.", W / 2, H / 2 + 10);
+      if (status) status.textContent = "";
+      return;
+    }
+    if (S.error && !S.pairs.length) {
+      ctx.fillStyle = "#c66"; ctx.font = "12px monospace"; ctx.textAlign = "center";
+      ctx.fillText("Feed unavailable: " + S.error.slice(0, 48), W / 2, H / 2);
+      return;
+    }
+
+    // D4: staleness
+    const age = Date.now() - S.fetchedAt;
+    const stale = age > 3 * CFG.REFRESH_MS;
+    if (status) status.textContent =
+      (stale ? "STALE - " : "") + "as of " + new Date(S.fetchedAt).toLocaleTimeString() +
+      (S.error ? "  (last refresh failed: " + S.error.slice(0, 40) + ")" : "");
+
+    // D3: area proportional to liquidity; deterministic spiral placement
+    const maxLiq = Math.max(...S.pairs.map(p => p.liqUsd), 1);
+    const maxR = Math.min(W, H) * 0.22, minR = 14;
+    const cx = W / 2, cy = H / 2;
+    S.pairs
+      .slice().sort((a, b) => b.liqUsd - a.liqUsd)
+      .forEach((p, i) => {
+        const r = minR + (maxR - minR) * Math.sqrt(p.liqUsd / maxLiq);
+        const ang = i * 2.399963;                       // golden angle
+        const rad = i === 0 ? 0 : (maxR * 1.15) + i * (minR * 1.6);
+        const x = cx + Math.cos(ang) * rad, y = cy + Math.sin(ang) * rad * (H / W);
+        const up = p.chg24 >= 0;
+        ctx.globalAlpha = stale ? 0.35 : 0.9;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
+        ctx.fillStyle = up ? "rgba( 60,180,110,0.85)" : "rgba(200, 80, 80,0.85)";
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#eee"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+        ctx.fillText(p.symbol, x, y - 2);
+        ctx.fillText("$" + p.priceUsd.toPrecision(4) + "  " + (up ? "+" : "") + p.chg24 + "%", x, y + 10);
+      });
+  }
+
+  /* ---------- LIFECYCLE ---------- */
+  function start() {
+    if (S.timer) clearInterval(S.timer);
+    refresh();
+    S.timer = setInterval(refresh, CFG.REFRESH_MS);
+    log("started, interval " + CFG.REFRESH_MS / 1000 + "s");
+  }
+  function stop() { if (S.timer) clearInterval(S.timer); S.timer = null; }
+
+  window.DexBubbles = { start, stop, refresh, _state: S, _cfg: CFG };
 })();
 </script>
 </body>
