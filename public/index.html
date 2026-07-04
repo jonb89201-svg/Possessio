@@ -375,7 +375,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
     </select>
     <button class="btn oxide" id="connect-btn">Connect Wallet</button>
     <button class="btn oxide" id="lr-launch-btn">Launch</button>
-    <a class="btn" id="markets-link" href="markets.html">Markets</a>
+    <button class="btn" id="markets-link" type="button">Markets</button>
   </div>
   <div class="row" style="margin-top:10px">
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
@@ -2778,6 +2778,46 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   /* ---------- EXPORT ---------- */
   window.LaunchRailLive = { init, deploy, _state: S, _cfg: CFG };
   document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+<!-- Markets: network chooser -> DexScreener (in-page bubblemap retired) -->
+<style>
+  .mkts-modal{position:fixed;inset:0;z-index:220;background:rgba(15,23,42,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);display:flex;align-items:flex-start;justify-content:center;padding:70px 16px 16px}
+  .mkts-modal[hidden]{display:none}
+  .mkts-sheet{background:var(--surface);width:100%;max-width:420px;border-radius:18px;padding:20px;box-shadow:0 12px 48px rgba(15,23,42,.28)}
+  .mkts-sheet h3{font-size:18px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+  .mkts-sheet .sub{color:var(--ink-dim);font-size:13px;margin:0 0 16px}
+  .mkts-choice{display:flex;align-items:center;justify-content:space-between;width:100%;border:1.5px solid var(--line);border-radius:14px;padding:15px 16px;margin-bottom:11px;background:var(--surface);font-weight:600;font-size:15.5px;color:var(--ink);text-decoration:none}
+  .mkts-choice:hover{border-color:var(--line-2);text-decoration:none}
+  .mkts-choice .net{display:inline-flex;align-items:center;gap:10px}
+  .mkts-choice .nd{width:9px;height:9px;border-radius:50%}
+  .mkts-choice.base .nd{background:var(--oxide)} .mkts-choice.sol .nd{background:#14b8a6}
+  .mkts-choice .arw{color:var(--ink-faint);font-weight:500;font-size:13px}
+  .mkts-cancel{width:100%;text-align:center;padding:13px;color:var(--ink-dim);font-weight:500;font-size:14px;background:none;border:none;cursor:pointer;margin-top:2px}
+</style>
+<div class="mkts-modal" id="mkts-modal" hidden>
+  <div class="mkts-sheet" role="dialog" aria-label="Open live markets">
+    <h3>Live markets</h3>
+    <p class="sub">Pick a network - opens DexScreener in a new tab.</p>
+    <a class="mkts-choice base" href="https://dexscreener.com/base" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Base</span><span class="arw">DexScreener &#8599;</span></a>
+    <a class="mkts-choice sol" href="https://dexscreener.com/solana" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Solana</span><span class="arw">DexScreener &#8599;</span></a>
+    <button class="mkts-cancel" id="mkts-cancel" type="button">Cancel</button>
+  </div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var modal=document.getElementById("mkts-modal");
+  var open=document.getElementById("markets-link");
+  var cancel=document.getElementById("mkts-cancel");
+  if(!modal||!open)return;
+  function show(){modal.hidden=false;}
+  function hide(){modal.hidden=true;}
+  open.addEventListener("click",function(e){e.preventDefault();show();});
+  if(cancel)cancel.addEventListener("click",hide);
+  modal.addEventListener("click",function(e){if(e.target===modal)hide();});
+  Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
 })();
 </script>
 </body>
