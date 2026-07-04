@@ -1,0 +1,29 @@
+# Cloudflare Pages response headers for possessio.io (build output dir = public).
+# ACTIVE below: safe, non-breaking headers.
+# The CSP and frame policy are left COMMENTED on purpose - both can break the
+# site if wrong, and neither can be verified from CI. Enable + test on device
+# (wallet connect, cdnjs ethers, Google Fonts, DexScreener feed + token images)
+# before trusting them live. Codebyte Law: do not ship what you cannot verify.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
+
+# --- Content-Security-Policy (VERIFY on device, then uncomment) ---
+# Hosts the console actually uses:
+#   script  : self + inline (console is inline-heavy) + cdnjs (ethers 6.13.4)
+#   style   : self + inline + fonts.googleapis.com
+#   font    : fonts.gstatic.com
+#   connect : self + api.dexscreener.com (markets feed; wallet RPC is via the
+#             injected provider, not page fetch, so not listed here)
+#   img     : self + data: + https: (DexScreener token logos, drawn to canvas)
+# Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.dexscreener.com; img-src 'self' data: https:; base-uri 'self'; form-action 'self'
+
+# --- Framing policy (DECISION for the Architect) ---
+# Standalone security wants DENY. But if the console is ever embedded as a
+# Base App / Farcaster mini-app (webview/iframe), DENY blocks it. Left OFF so
+# a future embed is not silently broken. Pick one when that path is decided:
+#   X-Frame-Options: DENY
+#   (or) Content-Security-Policy: frame-ancestors 'self' https://<embedder-origins>
