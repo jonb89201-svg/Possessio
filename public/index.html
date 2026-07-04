@@ -468,26 +468,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
   .lr-badge-preview{background:rgba(180,140,40,.14);color:#c9a24b;border:1px solid rgba(180,140,40,.35);}
   .lr-badge-live{background:rgba(60,180,110,.14);color:#4bbf7b;border:1px solid rgba(60,180,110,.40);}
   .lr-live-status{white-space:pre-wrap;word-break:break-word;margin:10px 0 0;padding:0;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9aa2ad;}
-  /* DexBubbles market map (placement is the Architect's to relocate) */
-  .dexbubbles-sec{max-width:760px;margin:26px auto 0;padding:0 18px;}
-  .dexbubbles>summary{cursor:pointer;list-style:none;font:600 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8b9bad;padding:10px 0;}
-  .dexbubbles>summary::-webkit-details-marker{display:none;}
-  .dexbubbles-body{padding:8px 0 4px;}
-  #dexbubbles-canvas{width:100%;max-width:100%;height:240px;display:block;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:12px;}
-  .dexbubbles-status{font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#78828e;margin-top:8px;min-height:14px;}
-  .dexbubbles-note{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#66707c;margin-top:6px;}
 </style>
-
-<section class="dexbubbles-sec">
-  <details id="dexbubbles-details" class="dexbubbles" ontoggle="if(window.DexBubbles){this.open?window.DexBubbles.start():window.DexBubbles.stop();}">
-    <summary>Markets - live DEX bubblemap</summary>
-    <div class="dexbubbles-body">
-      <canvas id="dexbubbles-canvas" width="320" height="240"></canvas>
-      <div id="dexbubbles-status" class="dexbubbles-status"></div>
-      <p class="dexbubbles-note">Empty until the pool is live - add the STEEL/WETH pair address to DexBubbles CFG.PAIRS after the wave. Placement is the Architect's to choose: this block can move into any tab. start()/stop() fire on open/close to respect the feed rate limit.</p>
-    </div>
-  </details>
-</section>
 
 <footer>
   <div>POSSESSIO PROTOCOL · OPERATOR CONSOLE · ARCHITECT-RATIFIED</div>
@@ -2554,9 +2535,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 </script>
 
 <!-- ============================================================
-     POSSESSIO console modules (namespaced IIFEs, injected)
+     POSSESSIO console module (namespaced IIFE, injected)
        - LaunchRailLive v1.1 : retires the mock deploy, real factory path
-       - DexBubbles v1.0      : client-side DEX bubblemap
      USDC[8453] corrected to the canonical Base native-USDC address
      (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) per the repo constant.
      ============================================================ -->
@@ -2800,127 +2780,6 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   /* ---------- EXPORT ---------- */
   window.LaunchRailLive = { init, deploy, _state: S, _cfg: CFG };
   document.addEventListener("DOMContentLoaded", init);
-})();
-</script>
-
-<script>
-/* ============================================================
-   POSSESSIO CONSOLE — DexBubbles v1.0 (2026-07-02)
-   Client-side DEX market bubblemap. DexScreener public REST
-   (api.dexscreener.com — no key). One batched request per refresh.
-
-   D1. HONEST EMPTY STATE: with no pairs configured the canvas says so.
-   D2. ONE request per refresh (<=30 pairs comma-joined); interval 60s.
-   D3. Bubble AREA proportional to liquidity.usd (radius ~ sqrt).
-   D4. Stale (>3x interval) data grays out per the freshness-gate doctrine.
-   ============================================================ */
-(function DexBubbles() {
-  "use strict";
-
-  /* ---------- CONFIG (Claude Code: align at injection) ---------- */
-  const CFG = {
-    CHAIN: "base",
-    // Pair addresses to chart. EMPTY pre-launch (D1). After the wave:
-    // push the STEEL/WETH v4 pool's pair address here.
-    PAIRS: [],
-    REFRESH_MS: 60000,
-    CANVAS_ID: "dexbubbles-canvas",
-    STATUS_ID: "dexbubbles-status"
-  };
-
-  const API = "https://api.dexscreener.com/latest/dex/pairs/";
-  const log = (m) => (window.dbgLog ? window.dbgLog("[BUBBLES] " + m) : console.log("[BUBBLES]", m));
-
-  const S = { pairs: [], fetchedAt: 0, timer: null, error: null };
-
-  /* ---------- FETCH (D2: one batched call) ---------- */
-  async function refresh() {
-    if (!CFG.PAIRS.length) { S.pairs = []; S.error = null; return draw(); }
-    try {
-      const url = API + CFG.CHAIN + "/" + CFG.PAIRS.join(",");
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error("DexScreener " + res.status);
-      const data = await res.json();
-      S.pairs = (data.pairs || []).map(p => ({
-        symbol: (p.baseToken?.symbol || "?") + "/" + (p.quoteToken?.symbol || "?"),
-        priceUsd: parseFloat(p.priceUsd || "0"),
-        liqUsd: p.liquidity?.usd || 0,
-        vol24: p.volume?.h24 || 0,
-        chg24: p.priceChange?.h24 ?? 0
-      }));
-      S.fetchedAt = Date.now(); S.error = null;
-      log("refreshed " + S.pairs.length + " pair(s)");
-    } catch (e) {
-      S.error = String(e.message || e);
-      log("fetch failed: " + S.error);
-    }
-    draw();
-  }
-
-  /* ---------- DRAW (D3 sizing, D4 staleness) ---------- */
-  function draw() {
-    const cv = document.getElementById(CFG.CANVAS_ID);
-    const status = document.getElementById(CFG.STATUS_ID);
-    if (!cv) return;
-    const ctx = cv.getContext("2d");
-    const W = cv.width = cv.clientWidth || 320;
-    const H = cv.height = cv.clientHeight || 240;
-    ctx.clearRect(0, 0, W, H);
-
-    // D1: honest empty state
-    if (!CFG.PAIRS.length) {
-      ctx.fillStyle = "#5a6"; ctx.font = "12px monospace"; ctx.textAlign = "center";
-      ctx.fillText("No pairs configured - pool not live yet.", W / 2, H / 2 - 8);
-      ctx.fillText("Lights up when the wave lands.", W / 2, H / 2 + 10);
-      if (status) status.textContent = "";
-      return;
-    }
-    if (S.error && !S.pairs.length) {
-      ctx.fillStyle = "#c66"; ctx.font = "12px monospace"; ctx.textAlign = "center";
-      ctx.fillText("Feed unavailable: " + S.error.slice(0, 48), W / 2, H / 2);
-      return;
-    }
-
-    // D4: staleness
-    const age = Date.now() - S.fetchedAt;
-    const stale = age > 3 * CFG.REFRESH_MS;
-    if (status) status.textContent =
-      (stale ? "STALE - " : "") + "as of " + new Date(S.fetchedAt).toLocaleTimeString() +
-      (S.error ? "  (last refresh failed: " + S.error.slice(0, 40) + ")" : "");
-
-    // D3: area proportional to liquidity; deterministic spiral placement
-    const maxLiq = Math.max(...S.pairs.map(p => p.liqUsd), 1);
-    const maxR = Math.min(W, H) * 0.22, minR = 14;
-    const cx = W / 2, cy = H / 2;
-    S.pairs
-      .slice().sort((a, b) => b.liqUsd - a.liqUsd)
-      .forEach((p, i) => {
-        const r = minR + (maxR - minR) * Math.sqrt(p.liqUsd / maxLiq);
-        const ang = i * 2.399963;                       // golden angle
-        const rad = i === 0 ? 0 : (maxR * 1.15) + i * (minR * 1.6);
-        const x = cx + Math.cos(ang) * rad, y = cy + Math.sin(ang) * rad * (H / W);
-        const up = p.chg24 >= 0;
-        ctx.globalAlpha = stale ? 0.35 : 0.9;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, 7);
-        ctx.fillStyle = up ? "rgba( 60,180,110,0.85)" : "rgba(200, 80, 80,0.85)";
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = "#eee"; ctx.font = "10px monospace"; ctx.textAlign = "center";
-        ctx.fillText(p.symbol, x, y - 2);
-        ctx.fillText("$" + p.priceUsd.toPrecision(4) + "  " + (up ? "+" : "") + p.chg24 + "%", x, y + 10);
-      });
-  }
-
-  /* ---------- LIFECYCLE ---------- */
-  function start() {
-    if (S.timer) clearInterval(S.timer);
-    refresh();
-    S.timer = setInterval(refresh, CFG.REFRESH_MS);
-    log("started, interval " + CFG.REFRESH_MS / 1000 + "s");
-  }
-  function stop() { if (S.timer) clearInterval(S.timer); S.timer = null; }
-
-  window.DexBubbles = { start, stop, refresh, _state: S, _cfg: CFG };
 })();
 </script>
 </body>
