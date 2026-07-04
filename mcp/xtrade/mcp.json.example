@@ -1,0 +1,19 @@
+{
+  "//": "Copy into the environment's MCP config to attach xtrade (NEXT session, not live). Run `npm install` in mcp/xtrade first. Keys are the Architect's; never commit them.",
+  "mcpServers": {
+    "xtrade": {
+      "command": "node",
+      "args": ["mcp/xtrade/server.js"],
+      "env": {
+        "ALLOW_HOT": "0",
+        "MAX_NOTIONAL_USD": "2",
+        "MAX_SLIPPAGE_BPS": "200",
+        "MAX_TRADES_PER_DAY": "10",
+        "MAX_DAILY_EXPOSURE_USD": "20",
+        "JUPITER_BASE": "https://quote-api.jup.ag",
+        "SOLANA_RPC": "",
+        "LEDGER_PATH": "mcp/xtrade/ledger.jsonl"
+      }
+    }
+  }
+}

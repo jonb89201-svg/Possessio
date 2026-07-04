@@ -1,0 +1,18 @@
+{
+  "name": "xtrade-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Possessio Trading Agent MCP - pump.fun/Solana, build-mode. Governed by RULEBOOK_TradingAgent.md.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test test/",
+    "start": "node server.js",
+    "check": "node --check server.js && node --check adapters/jupiter.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "engines": { "node": ">=20" }
+}

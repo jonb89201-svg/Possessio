@@ -1,7 +1,10 @@
 # SPEC - Cross-Chain Trading MCP (Farcaster-rail)
 
 **Type:** Build spec (draft -> council ratify -> build -> on-device verify)
-**Version:** v0.1 - 2026-07-04
+**Version:** v0.2 - 2026-07-04 - aligned to RULEBOOK_TradingAgent.md v1.0
+  (RATIFIED). v1 scope narrowed to pump.fun/Solana; caps + method governed
+  by the rulebook; build-mode server built under mcp/xtrade (19/19 unit-
+  proven, live paths device-verify).
 **Build seat:** Code Integrity (Claude). NON-PROVEN until it runs against
 live endpoints on the Architect's device. The sandbox that drafts this
 cannot reach trading APIs (outbound to non-allowlisted hosts is 403), so
@@ -114,10 +117,16 @@ optionally `submit()` (only used by `hot` mode).
 - `hot` refuses with any gate missing; caps refuse over-notional/over-slippage.
 - A Solana buy of the pump.fun test token round-trips (quote -> build -> sign -> land).
 
-## 9. Open decisions for the council
+## 9. Decisions - RESOLVED by RULEBOOK v1.0
 
-1. **Backend confirm:** is the Farcaster rail Bankr, or something else?
-   Everything else is ready to build once this is set.
-2. Which chains in v1 - Solana + Base only, or add other EVMs day one?
-3. Hot-mode caps - starting `MAX_NOTIONAL_USD` / `MAX_SLIPPAGE_BPS` values.
-4. Runtime - Node (matches the console tooling) vs Python.
+1. **Backend:** v1 ships **Jupiter (Solana) only**. Bankr / Farcaster-native
+   rail deferred (rulebook Sec7) - drops in later as one adapter.
+2. **Chains:** Solana only in v1 (pump.fun pre-DEX window).
+3. **Caps:** governed by RULEBOOK Sec3 - $2/trade, 10/day, $20/day, 200bps;
+   env may tighten but never loosen (enforced in `config.js`).
+4. **Runtime:** Node (matches console tooling). Built under `mcp/xtrade`.
+
+Still open (tunable by ratification via the Sec5 ledger, not now):
+- Session-gate cutoff (0.60-0.70 band; 0.65 start).
+- Rug-gate creator-holding % (15 default, Architect-unconfirmed).
+- Entry-MC band edges (target ~$10k ratified; band edges NON-RATIFIED).
