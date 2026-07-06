@@ -32,6 +32,13 @@ failure - see `STATEMENT_console_markets_final.md`.
   patches without a new explicit ratification.
 - **Preview-safe:** the site cannot deploy or charge anything until the wave
   sets the factory address.
+- **LIVE on possessio.io (2026-07-05):** custom domain attached via
+  `wrangler.jsonc` routes (config-as-code); Base Build **registered +
+  domain-verified** (`base:app_id` meta found on the live homepage;
+  "Welcome, possessio.io"). Mini-app scaffold shipped: `.well-known/
+  farcaster.json` (accountAssociation awaiting the Architect's signature),
+  production art (icon-1024/splash-200/og), guarded `sdk.actions.ready()`
+  splash dismiss, `fc:miniapp` embed meta.
 
 ## Trading agent - `mcp/xtrade/`
 - **Governance:** `RULEBOOK_TradingAgent.md` v1.0 (RATIFIED);
@@ -42,17 +49,27 @@ failure - see `STATEMENT_console_markets_final.md`.
   `build` mode always on (unsigned tx, Architect signs); `hot` mode OFF,
   triple-gated, and locked until the wave's key ceremony makes a dedicated
   trading wallet.
-- **NON-PROVEN (device-verify, Code Integrity seat / Architect device):**
-  live Jupiter quote -> build -> sign -> land; server end-to-end.
+- **DEVICE-VERIFIED (2026-07-05, ~20:55, Architect's terminal):**
+  `scripts/deviceverify.js` full run against live Solana (QuickNode RPC)
+  + Jupiter via `public.jupiterapi.com` - `RESULT: PASS - live
+  quote->build path works. Adapter is real.` Verified-by-artifact by the
+  Code Integrity seat (terminal screenshot), relayed by the Architect.
+  Still open beyond this: nothing until the wave; hot-mode stays locked
+  behind the key ceremony. Note: the public Jupiter mirror injects ~20bps
+  platform fee - account for it in net returns (RULEBOOK Sec5) before
+  live trading.
 
 ## Open items, by lane
-- **Code Integrity (RPC/Base):** device-verify the Jupiter path on live
-  Solana; live DexScreener/Base checks.
-- **Claude Code (repo/deploy):** file/commit/deploy; docs; ratified code
-  changes only. Nothing outstanding on Markets (settled).
-- **Architect:** Cloudflare dashboard - confirm the `a3146eb` build is
-  green, attach `possessio.io` apex; keys; the wave key ceremony (gates
-  hot-mode).
+- **Code Integrity (RPC/Base):** none blocking - device-verify CLOSED.
+  Ad-hoc live-chain checks as needed.
+- **Claude Code (repo/deploy):** paste the account-association fields into
+  `farcaster.json` when the Architect signs; final push. Otherwise ratified
+  changes only.
+- **Architect:** (1) the SIGNATURE - Base Build > Account Association >
+  possessio.io > sign > send the three fields; (2) the PUBLISH - post
+  possessio.io in Base App when ready (preview-mode vs factory-live is
+  the Architect's call); (3) **the WAVE** - key ceremony, Monday. The only
+  big item left; it gates the factory address AND hot-mode.
 
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
