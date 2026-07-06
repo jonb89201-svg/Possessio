@@ -5,9 +5,15 @@ repo, never against a prose description. Verified against `main@a3146eb`.
 
 ## Seats + relay
 - **Claude Code (repo seat)** - repo + deploy tooling. **Sole writer to
-  the repo.** Network-blocked sandbox; also holds QuickNode MCP
-  management plane (endpoint admin/metrics - can audit RPC traffic,
-  cannot query chains).
+  the repo.** Sandbox raw egress still allowlist-blocked (verified
+  2026-07-06: Jupiter, DexScreener, Solana RPC, even quiknode.pro all
+  403 at the gateway), but the seat now holds live MCP connectors:
+  **Base MCP read plane** (read-only eth_call / JSON-RPC on Base +
+  major EVM chains - live-chain EVM reads now work from this seat),
+  QuickNode MCP management plane (endpoint admin/metrics), Cloudflare
+  MCP. Solana / Jupiter paths remain unreachable from the sandbox -
+  device-verify runs stay with the MCP seat or the Architect's
+  terminal.
 - **MCP seat (new chat)** - full internet + MCP tooling (Base, QuickNode,
   Cloudflare connectors). Live-chain queries, cast calls, device-verify
   runs, DexScreener/Jupiter access. Finds and proves; does NOT write the
@@ -24,6 +30,16 @@ prove your network: (1) curl a Jupiter quote (public.jupiterapi.com),
 (getUSDCBalance / getTreasuryGauge / executedUpkeepCount - closes the
 console-compat probe), (3) run node mcp/xtrade/scripts/deviceverify.js.
 RPC URLs come from environment variables, never from the repo.
+
+**Console-compat probe CLOSED (2026-07-06, repo seat via Base MCP):**
+read-only eth_call against live Payments
+0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91 on Base (block ~48,262,912):
+`getUSDCBalance()` = 0, `getTreasuryGauge()` = 320587280895694 wei
+(~0.00032 ETH-equiv), `executedUpkeepCount()` = 0. All three selectors
+(`3cfd1ccc` / `2e23acc4` / `351dab15`) confirmed present in the deployed
+runtime bytecode via eth_getCode. Onboarding items (1) Jupiter quote and
+(3) deviceverify.js still cannot run from this sandbox (egress blocked);
+device-verify remains CLOSED on the Architect's 2026-07-05 terminal run.
 
 **Protocol (the codified lesson):** one writer to the repo (Claude Code).
 The other seat verifies live and reports through the relay; changes land
