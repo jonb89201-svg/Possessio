@@ -1,0 +1,34 @@
+{
+  "_status": "FUEL_COMPUTER_SPEC.md v1.0 config schema, repo-committed as spec'd. Numbers marked OPEN in the spec are PROPOSALS pending Architect ratification (session ledger OPEN item 5). No secrets live here.",
+  "master_pause": false,
+  "inference": {
+    "billing_mode": "credits",
+    "primary": "claude-fable-5",
+    "fallbacks": ["claude-opus-4-8"],
+    "routine": "claude-haiku-4-5",
+    "per_run_token_cap": 200000,
+    "daily_usd_ceiling": 2.00,
+    "paused": false
+  },
+  "rpc": {
+    "mode": "x402",
+    "free_tier_first": true,
+    "payment_network": "base-sepolia",
+    "daily_usd_ceiling": 0.50,
+    "paused": false
+  },
+  "tools": {
+    "allowed_networks": ["base-sepolia"],
+    "per_call_max_usd": 0.05,
+    "daily_usd_ceiling": 0.50,
+    "seller_allowlist": [],
+    "paused": false
+  },
+  "sell": {
+    "toll_sink": "0x0000000000000000000000000000000000000000",
+    "network": "base-sepolia",
+    "facilitator": "coinbase-cdp",
+    "paused": true
+  },
+  "global_daily_usd_ceiling": 3.00
+}

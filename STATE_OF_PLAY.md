@@ -172,6 +172,33 @@ failure - see `STATEMENT_console_markets_final.md`.
   (0.02 ETH / 100 USDC / 12 h). Full-suite certification run stays on
   the Architect terminal per GATE 5.
 
+## Radar sell-side + fuel computer (SESSION_LEDGER_20260706, landed 2026-07-06)
+- **Live D1 VERIFIED by read-back** (`possessio-radar-ledger`
+  e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde): exactly 4 tables (births,
+  sessions, spends, trades) + 6 indexes; `spends` DDL matches
+  migration_0002 byte-for-byte. Recorded as `radar/schema.live.sql`
+  (read-back provenance) + `radar/migrations/0002_spends.sql`.
+- **VERIFY-FIRST catch:** the handed-off toll snapshot named `x402-hono`
+  (v1) - that package is DEPRECATED (security patches only). Current
+  official stack is x402 v2: `@x402/hono` 2.17.0 + `@x402/core` +
+  `@x402/evm`; API verified from the package's own README/types
+  (CAIP-2 networks, x402ResourceServer + HTTPFacilitatorClient, default
+  facilitator https://facilitator.x402.org).
+- **`radar/` worker COMPILED + acceptance 5 and 7 PROVEN in-sandbox:**
+  own worker (possessio-radar), real @x402 middleware wired
+  (nodejs_compat), D1-bound, bundle dry-run green. Local run: all three
+  routes 200 + `x-possessio-toll: TOLL_NOT_ARMED` while sink is zero
+  (acceptance 5); planted `watching` row leaked NOWHERE (acceptance 7 -
+  the product boundary held). Acceptance 6 (armed 402 -> paid 200 ->
+  on-chain settlement) needs the facilitator + a funded x402 client:
+  Architect terminal.
+- **Landed:** SESSION_LEDGER_20260706.md, FUEL_COMPUTER_SPEC.md,
+  `fuel.config.json` (spec schema verbatim; ceilings/prices remain OPEN
+  proposals - ledger OPEN item 5). NOT landed (not in the upload):
+  RADAR_HANDOFF.md, radar-watcher.ts, schema.sql - the WATCHER (feed
+  poller, acceptance 1-4) stays unbuilt until its handoff reaches the
+  repo seat; the feed itself is VERIFY-FIRST.
+
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
 (target ~$10k ratified, band edges NON-RATIFIED).

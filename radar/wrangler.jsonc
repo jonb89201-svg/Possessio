@@ -1,0 +1,30 @@
+// possessio-radar — its OWN worker (session ledger: radar gets its own worker;
+// the console worker stays the console's). Deployed by the Architect:
+//   cd radar && npm install && npx wrangler deploy
+// No secrets: the toll sink is a public address, prices are public, and the
+// x402 middleware verifies payments via the facilitator — this worker holds
+// no keys at all.
+{
+  "name": "possessio-radar",
+  "main": "index.ts",
+  "compatibility_date": "2026-07-04",
+  "compatibility_flags": ["nodejs_compat"], // @x402/extensions imports node:url
+
+  "d1_databases": [
+    {
+      "binding": "RADAR_DB",
+      "database_name": "possessio-radar-ledger",
+      "database_id": "e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde" // live; schema verified by read-back 2026-07-06
+    }
+  ],
+  "vars": {
+    "TOLL_SINK": "0x0000000000000000000000000000000000000000", // zero = TOLL_NOT_ARMED free mode; wave GATE 4 fills it
+    "TOLL_NETWORK": "base-sepolia", // wave cutover flips to "base" (CAIP-2 derived in code)
+    // FACILITATOR_URL unset -> default https://facilitator.x402.org; cutover may
+    // point at the Coinbase CDP facilitator per current x402 docs.
+    // Prices OPEN — Architect ratifies after >=1 week of tape (pricing memo).
+    "PRICE_GAP_STATS": "$0.005",
+    "PRICE_SESSION_GATE": "$0.01",
+    "PRICE_TAPE": "$0.02"
+  }
+}

@@ -55,3 +55,6 @@ grep_v4api.txt
 # =========================
 __pycache__/
 *.pyc
+
+# Wrangler local dev state
+.wrangler/
