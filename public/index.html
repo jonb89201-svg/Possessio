@@ -2782,6 +2782,166 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   document.addEventListener("DOMContentLoaded", init);
 })();
 </script>
+
+<!-- ============================================================
+     POSSESSIO console module (namespaced IIFE, injected)
+       - TestnetFuel v1.0 : fuel-from-pool for testnet launches
+     A zero-balance wallet on Base Sepolia taps Fuel, receives the
+     gas stipend (and 100 test USDC for the factory fee) from
+     PossessioTestnetLaunchPool via POST /api/testnet/drip, then the
+     rail re-checks and unlocks. Testnet-only by construction: the
+     endpoint's pool refuses to exist off 84532, and this module
+     renders nothing off 84532 / off the Testnet rail.
+     ============================================================ -->
+<style>
+  .lr-fuel{border:1.5px solid var(--line);border-radius:14px;padding:14px 16px;margin:0 0 12px}
+  .lr-fuel .fh{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14.5px}
+  .lr-fuel .fh .lr-i{margin-left:auto}
+  .lr-fuel .fb{margin-top:10px}
+  .lr-fuel .lr-go{margin-top:10px}
+  .lr-fuel .fstat{font-size:13px;color:var(--ink-dim);margin-top:8px;white-space:pre-wrap}
+</style>
+<script>
+/* ============================================================
+   POSSESSIO CONSOLE — TestnetFuel v1.0 (2026-07-06)
+   Console side of the testnet launch pool (HANDOFF_testnet_pool):
+   balance check -> Fuel -> poll -> Launch unlocked.
+
+   HONESTY RULES (same discipline as LaunchRailLive):
+   - Renders ONLY on chainId 84532 with the Testnet rail open, a
+     wallet already connected (eth_accounts, never a prompt), and a
+     balance actually below threshold. Otherwise: invisible.
+   - Error states pass through the pool's honest reverts:
+     POOL_EMPTY / COOLDOWN_ACTIVE / TOKEN_NOT_ENABLED /
+     POOL_NOT_DEPLOYED. Nothing is retried silently.
+   - Thresholds mirror the launch cost: 0.005 ETH gas headroom,
+     100 USDC factory fee tier.
+   ============================================================ */
+(function TestnetFuel() {
+  "use strict";
+  var API = "/api/testnet/drip";
+  var MIN_ETH_WEI = 5000000000000000n;   // 0.005 ETH
+  var MIN_USDC    = 100000000n;          // 100 USDC (6-dec) — factory fee tier
+  var POLL_MS = 4000, POLL_MAX = 24;     // ~96s of polling after a drip
+  var log = function (m) { window.dbgLog ? window.dbgLog("[FUEL] " + m) : console.log("[FUEL]", m); };
+  var S = { busy: false, msg: "", pool: null, low: null, addr: null };
+
+  function onTestnetRail() {
+    var t = document.getElementById("lr-envtag");
+    return !!(t && t.textContent === "Testnet");
+  }
+
+  async function balances() {
+    if (!window.ethereum || !window.ethers) return null;
+    var provider = new ethers.BrowserProvider(window.ethereum);
+    var accts = await provider.send("eth_accounts", []); // never prompts
+    if (!accts || !accts.length) return null;
+    var net = await provider.getNetwork();
+    if (Number(net.chainId) !== 84532) return null;
+    var who = accts[0];
+    var eth = await provider.getBalance(who);
+    var usdcAddr = (window.LaunchRailLive && LaunchRailLive._cfg.USDC[84532]) || "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+    var usdc = await new ethers.Contract(usdcAddr, ["function balanceOf(address) view returns (uint256)"], provider).balanceOf(who);
+    return { addr: who, eth: BigInt(eth), usdc: BigInt(usdc) };
+  }
+
+  async function check() {
+    try {
+      if (!onTestnetRail()) return hide();
+      var b = await balances();
+      if (!b) return hide();
+      S.addr = b.addr;
+      S.low = { eth: b.eth < MIN_ETH_WEI, usdc: b.usdc < MIN_USDC, bal: b };
+      if (!S.low.eth && !S.low.usdc) return hide();
+      if (S.pool === null) {
+        try { S.pool = (await (await fetch(API)).json()).pool; } catch (_) { S.pool = null; }
+      }
+      render();
+    } catch (e) { log("check failed: " + (e.message || e)); hide(); }
+  }
+
+  async function drip(asset) {
+    var r = await fetch(API, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: S.addr, asset: asset })
+    });
+    var j = null; try { j = await r.json(); } catch (_) {}
+    if (r.ok) { log(asset + " drip tx " + (j && j.txHash)); return null; }
+    var err = (j && j.error) || ("HTTP " + r.status);
+    if (err === "POOL_NOT_DEPLOYED") return "The pool isn't deployed yet — fuel arrives with the testnet rollout.";
+    if (err === "POOL_EMPTY") return "The pool is empty right now. It refills from faucets — try again later.";
+    if (err === "COOLDOWN_ACTIVE") return "This wallet drew fuel recently. The pool allows one draw per 12 hours.";
+    if (err === "TOKEN_NOT_ENABLED") return "USDC fuel isn't switched on yet — ETH may still have arrived.";
+    return "Fuel failed (" + err + "). Nothing to retry automatically — the pool tells the truth.";
+  }
+
+  async function fuel() {
+    if (S.busy) return;
+    S.busy = true; S.msg = "Requesting fuel from the pool…"; render();
+    try {
+      var failMsg = null;
+      if (S.low.eth) failMsg = await drip("eth");
+      if (!failMsg && S.low.usdc) {
+        var m = await drip("usdc");
+        if (m) failMsg = m;
+      }
+      if (failMsg) { S.msg = failMsg; S.busy = false; return render(); }
+      S.msg = "Fuel sent — waiting for it to land on-chain…"; render();
+      for (var i = 0; i < POLL_MAX; i++) {
+        await new Promise(function (res) { setTimeout(res, POLL_MS); });
+        var b = await balances();
+        if (b && b.eth >= MIN_ETH_WEI && b.usdc >= MIN_USDC) {
+          S.msg = ""; S.busy = false; hide();
+          log("fueled: " + b.addr);
+          if (window.LaunchRailLive) LaunchRailLive.init(); // re-check the rail
+          return;
+        }
+      }
+      S.msg = "Still waiting on the network — balances update automatically when it lands.";
+    } catch (e) {
+      S.msg = "Fuel failed (" + String(e.message || e).slice(0, 120) + ")";
+    }
+    S.busy = false; render();
+  }
+
+  function hide() { var el = document.getElementById("lr-fuel"); if (el) el.remove(); }
+
+  function render() {
+    var badge = document.getElementById("lr-live-badge");
+    if (!badge) return;
+    var el = document.getElementById("lr-fuel");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "lr-fuel"; el.id = "lr-fuel";
+      badge.parentNode.insertBefore(el, badge);
+    }
+    var b = S.low.bal;
+    var ethS = (Number(b.eth) / 1e18).toFixed(4), usdcS = (Number(b.usdc) / 1e6).toFixed(2);
+    el.innerHTML =
+      '<div class="fh">Test wallet is low on fuel' +
+      '<span class="lr-i" role="button" tabindex="0" onclick="LaunchRail.info(\'lr-ifuel\')">i</span></div>' +
+      '<div class="lr-ip" id="lr-ifuel">Free test fuel so you can try a launch — this is practice money on a test network, worth nothing.' +
+      '<div class="tech">PossessioTestnetLaunchPool ' + (S.pool || "(deploying)") + ' · Base Sepolia · 0.02 test ETH + 100 test USDC per draw · 12 h cooldown per address · honest errors: POOL_EMPTY / COOLDOWN_ACTIVE</div></div>' +
+      '<div class="fb" style="font-size:13.5px;color:var(--ink-dim)">Balance: ' + ethS + ' ETH · ' + usdcS + ' USDC — a launch needs ~0.005 ETH gas' + (S.low.usdc ? " + 100 USDC fee" : "") + '.</div>' +
+      '<button class="lr-go t" id="lr-fuel-btn" onclick="TestnetFuel.fuel()"' + (S.busy ? " disabled" : "") + '>' + (S.busy ? "Fueling…" : "Fuel from pool") + '</button>' +
+      (S.msg ? '<div class="fstat">' + S.msg + '</div>' : '');
+  }
+
+  /* Hook: after the live rail inits on the Deploy step, run the fuel check.
+     Wrapping keeps LaunchRailLive untouched and preview-safe. */
+  function arm() {
+    if (!window.LaunchRailLive || LaunchRailLive.__fuelArmed) return;
+    var orig = LaunchRailLive.init;
+    LaunchRailLive.init = async function () { await orig(); check(); };
+    LaunchRailLive.__fuelArmed = true;
+  }
+  document.addEventListener("DOMContentLoaded", arm);
+  arm();
+
+  window.TestnetFuel = { fuel: fuel, check: check, _state: S };
+})();
+</script>
 <!-- Markets: network chooser -> DexScreener (in-page bubblemap retired) -->
 <style>
   .mkts-modal{position:fixed;inset:0;z-index:220;background:rgba(15,23,42,.5);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);display:flex;align-items:flex-start;justify-content:center;padding:70px 16px 16px}
