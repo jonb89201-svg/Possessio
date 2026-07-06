@@ -10,7 +10,7 @@
         "MAX_SLIPPAGE_BPS": "200",
         "MAX_TRADES_PER_DAY": "10",
         "MAX_DAILY_EXPOSURE_USD": "20",
-        "JUPITER_BASE": "https://lite-api.jup.ag/swap/v1",
+        "JUPITER_BASE": "https://public.jupiterapi.com",
         "SOLANA_RPC": "",
         "LEDGER_PATH": "mcp/xtrade/ledger.jsonl"
       }

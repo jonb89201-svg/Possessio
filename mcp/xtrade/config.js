@@ -53,7 +53,7 @@ function runtimeEnv(env = process.env) {
     allowHot:   env.ALLOW_HOT === "1",
     hasSigner:  !!env.TRADING_SIGNER_KEY,   // presence only; value never read here
     ledgerPath: env.LEDGER_PATH || "mcp/xtrade/ledger.jsonl",
-    jupiterBase:env.JUPITER_BASE || "https://lite-api.jup.ag/swap/v1",
+    jupiterBase:env.JUPITER_BASE || "https://public.jupiterapi.com",
     solanaRpc:  env.SOLANA_RPC || "",
     // Caps are LAW; env may only make them STRICTER, never looser.
     maxNotionalUsd:   tighten(env.MAX_NOTIONAL_USD, LAW.maxNotionalUsd, "min"),
