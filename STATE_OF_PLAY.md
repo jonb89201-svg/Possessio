@@ -120,6 +120,30 @@ failure - see `STATEMENT_console_markets_final.md`.
   `/health`, then add the custom connector ONCE at
   claude.ai/settings/connectors when clear-headed - ungated, no rush.
 
+## x402Core - testnet deploy lane (WO 2026-07-06, ratified placeholders)
+- **Ratified TESTNET placeholder constructor values** (behavior-visible,
+  NOT production economics - DoD #22 stays open as its own pre-freeze
+  gate): `OPERATIONAL_CAP=100e6`, `VELOCITY_HALFLIFE=3600`,
+  `ABSOLUTE_FLOOR=10e6`, `FLOOR_PER_UNIT=1e6`, `dustFloor=1e6`.
+  DEPLOYMENT_FEE is a FACTORY concern - deliberately not wired on core.
+- **Built:** `script/DeployX402Testnet.s.sol` (Base Sepolia; USDC
+  0x036CbD53842c5426634e7929541eC2318f3dCF7e verified live via eth_call:
+  symbol/decimals/version "2"/authorizationState - EIP-3009 present;
+  3-distinct-address pre-check mirroring the line-345 valve guard;
+  declared TWO-LEAF test merkle root computed in-script from env leaves -
+  single-leaf is structurally unusable, register() rejects empty proofs)
+  + `test/PossessioX402CoreTestnet.t.sol` (dual-mode: offline mock
+  EIP-3009 / Base Sepolia fork via X402_FORK_RPC) +
+  `test/X402TestnetMocks.sol`.
+- **Proven offline in-sandbox (npm forge 1.7.1 + WASM solc 0.8.35 shim):
+  10/10 PASS** covering WO items DoD #1, #9, #13, #14 (+fuzz), #17, #18,
+  #19 (+fuzz), #23. Remaining for the Architect's terminal: the actual
+  `--broadcast` deploy + the same suite with X402_FORK_RPC set (fork
+  proof against real USDC), tee'd per the WO.
+- **Explicitly deferred (held, per WO):** #22 real calibration;
+  channel-registry governance; reprice cooldown. Testnet proves the
+  machine, not the numbers.
+
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
 (target ~$10k ratified, band edges NON-RATIFIED).
