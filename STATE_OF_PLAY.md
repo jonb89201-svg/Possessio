@@ -96,18 +96,29 @@ failure - see `STATEMENT_console_markets_final.md`.
   Ad-hoc live-chain checks as needed.
 - **Claude Code (repo/deploy):** paste the account-association fields into
   `farcaster.json` when the Architect signs; final push. Otherwise ratified
-  changes only. NEW (2026-07-06): `mcp/solana-mcp/` built - own remote
-  read-only Solana+Jupiter MCP worker (capability-URL auth, read-method
-  allowlist, 10/10 offline tests) replacing the third-party-connector
-  option; awaits the Architect's deploy (see its README).
-- **Architect:** (1) the SIGNATURE - Base Build > Account Association >
-  possessio.io > sign > send the three fields; (2) the PUBLISH - post
+  changes only. `mcp/solana-mcp/` (2026-07-06): own remote read-only
+  Solana+Jupiter MCP worker (capability-URL auth, read-method allowlist,
+  10/10 offline tests) - **RATIFIED, read-only-by-design affirmed as the
+  design** (`STATEMENT_solana_mcp_ratified.md`; the "Solana EYE" - gate 1
+  of 3, ungated). Deploy is the Architect's terminal, not this sandbox
+  (no CF credential here; api.cloudflare.com egress-blocked - verified).
+  Once connected: run the Solana proofs, close onboarding item (1).
+  Cleanup (non-blocking): run the Base App migration skill
+  (`npx skills add base/skills`) - Base App dropped the Farcaster-manifest
+  model 2026-04-09 (now standard web app + wallet).
+- **Architect:** (1) the SIGNATURE - now at **dashboard.base.org**
+  (base.dev renamed; the old preview URL 404s) > Preview > Account
+  Association > possessio.io > sign > send the three fields; (2) the
+  PUBLISH - post
   possessio.io in Base App when ready (preview-mode vs factory-live is
   the Architect's call); (3) **the WAVE** - key ceremony, Monday. The only
-  big item left; it gates the factory address AND hot-mode. (4) deploy
-  `mcp/solana-mcp` (two `wrangler secret put` + one `wrangler deploy`,
-  ~2 min - see `mcp/solana-mcp/README.md`), then hand the connector URL
-  to the seats. Read-only plane; NOT wave-gated.
+  big item left; it gates the factory address AND hot-mode (and per the
+  ratification: the wave gates EVM HANDS only - not the Solana eye, not
+  Solana hands; three doors, three keys). (4) deploy `mcp/solana-mcp`
+  from the Architect's terminal (two `wrangler secret put` + one
+  `wrangler deploy`, ~2 min - see `mcp/solana-mcp/README.md`), smoke-test
+  `/health`, then add the custom connector ONCE at
+  claude.ai/settings/connectors when clear-headed - ungated, no rush.
 
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
