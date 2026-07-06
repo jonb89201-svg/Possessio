@@ -96,12 +96,18 @@ failure - see `STATEMENT_console_markets_final.md`.
   Ad-hoc live-chain checks as needed.
 - **Claude Code (repo/deploy):** paste the account-association fields into
   `farcaster.json` when the Architect signs; final push. Otherwise ratified
-  changes only.
+  changes only. NEW (2026-07-06): `mcp/solana-mcp/` built - own remote
+  read-only Solana+Jupiter MCP worker (capability-URL auth, read-method
+  allowlist, 10/10 offline tests) replacing the third-party-connector
+  option; awaits the Architect's deploy (see its README).
 - **Architect:** (1) the SIGNATURE - Base Build > Account Association >
   possessio.io > sign > send the three fields; (2) the PUBLISH - post
   possessio.io in Base App when ready (preview-mode vs factory-live is
   the Architect's call); (3) **the WAVE** - key ceremony, Monday. The only
-  big item left; it gates the factory address AND hot-mode.
+  big item left; it gates the factory address AND hot-mode. (4) deploy
+  `mcp/solana-mcp` (two `wrangler secret put` + one `wrangler deploy`,
+  ~2 min - see `mcp/solana-mcp/README.md`), then hand the connector URL
+  to the seats. Read-only plane; NOT wave-gated.
 
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges

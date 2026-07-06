@@ -1,0 +1,17 @@
+// Possessio Solana MCP worker - SEPARATE from the git-connected `possessio`
+// console worker (which stays assets-only). Deployed manually by the
+// Architect from this directory:
+//
+//   cd mcp/solana-mcp
+//   npx wrangler secret put SOLANA_RPC    # QuickNode Solana mainnet URL
+//   npx wrangler secret put ACCESS_KEY    # e.g. `openssl rand -hex 32`
+//   npx wrangler deploy
+//
+// Secrets NEVER go in this file or anywhere else in the repo.
+{
+  "name": "possessio-solana-mcp",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-04"
+  // Optional plain var (only if the Jupiter base ever moves):
+  // "vars": { "JUPITER_BASE": "https://public.jupiterapi.com" }
+}
