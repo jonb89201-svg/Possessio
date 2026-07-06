@@ -1,6 +1,18 @@
 {
   "name": "possessio",
   "compatibility_date": "2026-07-04",
-  "assets": { "directory": "./public" },
-  "routes": [{ "pattern": "possessio.io", "custom_domain": true }]
+  // Workers+Assets: assets serve FIRST for any matching path (console behavior
+  // unchanged); only asset-misses reach the script - i.e. /api/*.
+  "main": "worker/index.ts",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "routes": [{ "pattern": "possessio.io", "custom_domain": true }],
+  "kv_namespaces": [
+    { "binding": "DRIP_LIMITS", "id": "49f2f2c858424605a9e90efc11e5e5f7" } // possessio-testnet-drip-limits (provisioned by Code Integrity seat)
+  ],
+  "vars": {
+    "POOL_ADDRESS": "0x0000000000000000000000000000000000000000", // placeholder -> fill with the deployed PossessioTestnetLaunchPool; endpoint answers POOL_NOT_DEPLOYED until then
+    "USDC_ADDRESS": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia test USDC (verified live 2026-07-06)
+    "BASE_SEPOLIA_RPC": "https://sepolia.base.org"
+  }
+  // Secret (Architect, terminal only): wrangler secret put TESTNET_OPERATOR_PK
 }

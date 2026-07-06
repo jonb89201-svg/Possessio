@@ -144,6 +144,34 @@ failure - see `STATEMENT_console_markets_final.md`.
   channel-registry governance; reprice cooldown. Testnet proves the
   machine, not the numbers.
 
+## Testnet launch pool + drip (HANDOFF_testnet_pool.md, landed 2026-07-06)
+- **Compiled + green in-sandbox (Codebyte Law satisfied): 16/16** -
+  `src/PossessioTestnetLaunchPool.sol` + tests + deploy script landed.
+  Two repo-side fixes, contract byte-identical to the handoff: EIP-55
+  casing on the Base Account constant (same bytes) and a setUp
+  `vm.warp(1_000_000)` (Foundry's ts=1 default made FRESH addresses hit
+  CooldownActive - test-env artifact only, impossible on real chains).
+- **Worker wired:** `worker/index.ts` (router; assets-first, console
+  paths untouched) + `worker/drip-endpoint.ts` (as handed off) +
+  `wrangler.jsonc` (main, ASSETS binding, DRIP_LIMITS KV
+  49f2f2c858424605a9e90efc11e5e5f7, vars incl. POOL_ADDRESS placeholder
+  -> endpoint answers POOL_NOT_DEPLOYED until filled). GET on the drip
+  route returns pool config for the console info layer. Bundle
+  dry-run-verified (viem in, 694KiB->143KiB gz).
+- **Console:** TestnetFuel v1.0 injected module - on the Testnet rail's
+  Deploy step (84532, wallet connected via eth_accounts, never prompts):
+  low balance (<0.005 ETH gas / <100 USDC fee) -> "Fuel from pool" ->
+  POST drip eth-then-usdc -> poll -> LaunchRailLive.init() re-check.
+  Bilingual info (plain face + tech layer naming pool/stipend/cooldown);
+  honest error passthrough (POOL_EMPTY / COOLDOWN_ACTIVE / ...).
+- **Remaining (Architect):** throwaway operator key; `wrangler secret
+  put TESTNET_OPERATOR_PK`; deploy pool (any funded testnet key - holds
+  no role after); fill POOL_ADDRESS var; owner enable
+  `setTokenStipend(USDC, 100e6)` from the Base Account; point faucets
+  at the pool. Open for ratification: stipend/cooldown defaults
+  (0.02 ETH / 100 USDC / 12 h). Full-suite certification run stays on
+  the Architect terminal per GATE 5.
+
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
 (target ~$10k ratified, band edges NON-RATIFIED).

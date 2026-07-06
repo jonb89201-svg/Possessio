@@ -1,0 +1,8 @@
+{
+  "name": "possessio",
+  "private": true,
+  "description": "Deps for the possessio Worker (worker/ - drip endpoint). Solidity lives under src/ (foundry), the trading agent under mcp/xtrade (self-contained).",
+  "dependencies": {
+    "viem": "^2.54.6"
+  }
+}
