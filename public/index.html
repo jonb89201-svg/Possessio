@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
 <title>POSSESSIO — Operator Console v0.5.0</title>
+<meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","url":"https://possessio.io"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
@@ -2819,6 +2820,16 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
 })();
+</script>
+<script type="module">
+// Farcaster/Base App mini-app splash dismiss. Without ready() the Base App
+// webview shows the splash forever. Guarded: in a normal browser (or if the
+// CDN import fails) every path lands in catch and the page is unaffected.
+try {
+  const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
+  await sdk.actions.ready();
+  console.log("[MINIAPP] sdk.actions.ready() sent");
+} catch (e) { /* not a mini-app context - nothing to do */ }
 </script>
 </body>
 </html>
