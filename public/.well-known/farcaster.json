@@ -10,7 +10,7 @@
     "homeUrl": "https://possessio.io",
     "iconUrl": "https://possessio.io/icon-1024.png",
     "splashImageUrl": "https://possessio.io/splash-200.png",
-    "splashBackgroundColor": "#1d4ed8",
+    "splashBackgroundColor": "#556870",
     "primaryCategory": "finance",
     "description": "Own your protocol. The Possessio operator console: deploy, operate, and verify contracts on Base."
   }
