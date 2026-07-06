@@ -4,10 +4,26 @@
 repo, never against a prose description. Verified against `main@a3146eb`.
 
 ## Seats + relay
-- **Claude Code** - repo + deploy tooling. **Sole writer to the repo.**
-- **Code Integrity seat** - RPC + Base tooling (Base MCP, chain calls,
-  DexScreener API), live-chain verification, device-verify.
-- **Architect** - the relay; holds keys + the Cloudflare dashboard.
+- **Claude Code (repo seat)** - repo + deploy tooling. **Sole writer to
+  the repo.** Network-blocked sandbox; also holds QuickNode MCP
+  management plane (endpoint admin/metrics - can audit RPC traffic,
+  cannot query chains).
+- **MCP seat (new chat)** - full internet + MCP tooling (Base, QuickNode,
+  Cloudflare connectors). Live-chain queries, cast calls, device-verify
+  runs, DexScreener/Jupiter access. Finds and proves; does NOT write the
+  repo - fixes route to the repo seat as sourced statements.
+- **Code Integrity seat** - council audit, cold-seat review,
+  verify-by-artifact.
+- **Architect** - the relay; holds ALL keys + the Cloudflare and Base
+  Build dashboards. Every signature is the Architect's until a ratified
+  key ceremony says otherwise.
+
+New MCP seat onboarding: read this file + RULEBOOK_TradingAgent.md, then
+prove your network: (1) curl a Jupiter quote (public.jupiterapi.com),
+(2) cast call the live Payments 0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91
+(getUSDCBalance / getTreasuryGauge / executedUpkeepCount - closes the
+console-compat probe), (3) run node mcp/xtrade/scripts/deviceverify.js.
+RPC URLs come from environment variables, never from the repo.
 
 **Protocol (the codified lesson):** one writer to the repo (Claude Code).
 The other seat verifies live and reports through the relay; changes land
