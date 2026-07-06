@@ -1,8 +1,10 @@
 // Solana swap adapter - Jupiter aggregator.
 // NON-PROVEN in the build sandbox: these two functions hit the network
-// (lite-api.jup.ag), which is 403-blocked here. Endpoints follow Jupiter's
-// CURRENT Lite API - base https://lite-api.jup.ag/swap/v1, no key required
-// (quote-api.jup.ag/v6 was deprecated 2025-10-01). The Architect proves them live
+// (public.jupiterapi.com), which is 403-blocked here. Base is QuickNode's
+// public no-key Jupiter mirror (Metis / v6-family): GET /quote + POST /swap,
+// FLAT response shape (outAmount / routePlan / priceImpactPct at top level).
+// NOTE: this public mirror injects a ~20bps platform fee - fine for verify;
+// revisit for live net-return accounting (RULEBOOK Sec5). Architect proves live
 // on-device (SPEC_CrossChainTradingMCP.md Sec8). No key is used or held:
 // quote + swap-tx build are unsigned; signing is the Architect's, or the
 // dedicated hot wallet's under the Sec4 gates.
