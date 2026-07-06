@@ -83,7 +83,12 @@ export function buildTolledApp(env: Env) {
               MIN(gap_ms) AS min_gap_ms, MAX(gap_ms) AS max_gap_ms
          FROM births WHERE status='discovered'`
     ).first();
-    return c.json(stats ?? {});
+    // watching_count is an AGGREGATE (a number, never rows/addresses) - inside
+    // the product boundary, per the watcher reference implementation.
+    const watching = await c.env.RADAR_DB.prepare(
+      `SELECT COUNT(*) AS n FROM births WHERE status='watching'`
+    ).first();
+    return c.json({ ...(stats ?? {}), watching_count: (watching as any)?.n ?? 0 });
   });
 
   app.get("/radar/session-gate", async (c) => {

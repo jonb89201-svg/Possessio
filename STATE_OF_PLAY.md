@@ -194,10 +194,27 @@ failure - see `STATEMENT_console_markets_final.md`.
   Architect terminal.
 - **Landed:** SESSION_LEDGER_20260706.md, FUEL_COMPUTER_SPEC.md,
   `fuel.config.json` (spec schema verbatim; ceilings/prices remain OPEN
-  proposals - ledger OPEN item 5). NOT landed (not in the upload):
-  RADAR_HANDOFF.md, radar-watcher.ts, schema.sql - the WATCHER (feed
-  poller, acceptance 1-4) stays unbuilt until its handoff reaches the
-  repo seat; the feed itself is VERIFY-FIRST.
+  proposals - ledger OPEN item 5).
+- **WATCHER landed + locally proven (2026-07-06, RADAR_HANDOFF):**
+  `radar/watcher.ts` (jobs verbatim from the handoff) + cron trigger +
+  vars; `radar/schema.sql` (authored mirror) replaces the read-back
+  copy. Sandbox proofs: bundle green; local cron tick via
+  `--test-scheduled` ran both jobs zero-crash; birthScan idle gate held
+  (PUMPFUN_FEED_URL empty); discoveryScan's EXPIRY branch executed for
+  real (planted >24h watching row flipped to 'expired', last_checked_ms
+  stamped, discovered row untouched); gap-stats gained the
+  watching_count aggregate (a count, inside the boundary).
+- **Radar remaining:** (1) VERIFY-FIRST the birth feed from a seat with
+  egress - candidates in radar/wrangler.jsonc (frontend-api-v3
+  /coins/latest may now want a JWT - problem for a keyless worker;
+  PumpPortal WS = the Durable Object seam; Bitquery/Moralis keyed last
+  resorts); set PUMPFUN_FEED_URL + normalize the item shape. (2)
+  Architect deploys `possessio-radar` (cd radar && npm install && npx
+  wrangler deploy - keyless, no secrets). (3) Acceptance 1-3 (cron
+  zero-errors 1h, births accumulating, first gap_ms vs the ~20-min
+  prior) need the live feed; acceptance 4 partially proven (aggregates
+  sane, boundary held) - re-test on live. (4) Acceptance 6 armed-toll
+  round-trip: Architect terminal.
 
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
