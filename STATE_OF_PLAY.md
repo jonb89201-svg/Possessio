@@ -211,6 +211,35 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
+- **graduation_dex (migration 0004, 2026-07-07) - the anomaly was
+  inventory:** the R-1 predicate fires on the first non-pumpfun pair,
+  but some are SIDE-POOLS / LP-at-birth, not true graduations. One-line
+  patch records gradPairs[0].dexId at detection so the read segments
+  true grads (pumpswap/raydium) from side-pools. Payoff: an LP at birth
+  is a strong BAIT marker -> side-pool flag becomes a rug-gate input
+  (Rulebook Sec2). Column verified live (births = 16 cols); 6/6 tests
+  pass with the graduation_dex assertion; gap-stats gains
+  graduation_by_dex. NOTE: running worker is the 15:04Z build - writes
+  NULL until redeployed; the 21:21Z read segments non-NULL rows and
+  reports the NULL bucket honestly.
+- **COLD-SEAT REVIEW: PASS (Code Integrity, from the production
+  bundle):** predicate faithful, telemetry write-once, batch writes
+  present, 429 yields in, product boundary holding (aggregates only).
+  Wipe deviation ACCEPTED as recorded (Architect redirecting his own
+  protocol, logged = system working). Token burn CLOSED: a chat-pasted
+  credential hit a 30-day two-scope disposable key, rolled within the
+  hour - zero blast radius; least-privilege proven by live fire.
+- **Sec6 REPO POSTURE - council decision pending (audit-seat rec:
+  SPLIT):** repo is PUBLIC. The machine being public is an asset
+  (grants, trust, verifiability); the method's tape-calibrated NUMBERS
+  are the one proprietary sliver, and the real risk is BAIT (public
+  deterministic entry band + rug-gates hand adversarial creators the
+  profile to farm). Repo already public for hours = assume snapshot
+  crawled, so a panic-toggle is theater. Recommendation: repo stays
+  public (structure only); `RULEBOOK_TradingAgent.md` + every
+  calibration constant (stall N, session-gate cutoffs, refined bands)
+  born/moved PRIVATE (private repo or env-injected config). Architect's
+  signature; the ask is that it is a booked decision, not a default.
 - **TAPE WIPED CLEAN (2026-07-07 15:10Z):** 1,336 poisoned rows deleted
   (DELETE FROM births), zero verified, trades untouched (was empty).
   Executed by the REPO seat on the Architect's direct order - a
