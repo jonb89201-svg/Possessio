@@ -63,6 +63,7 @@ test("non-pumpfun pair -> GRADUATION: discovered with gap + grad mcap", async ()
   assert.ok(disc, "graduation fires discovery");
   assert.equal(disc.args[0], "BBB");
   assert.equal(disc.args[2], 71000, "mcap from the GRADUATION pair, not the curve");
+  assert.equal(disc.args[3], "raydium", "graduation_dex = the triggering non-pumpfun dex (0004)");
   assert.ok(db.batched.some((s) => s.sql.includes("curve_pair_seen_ms")), "curve telemetry still recorded");
 });
 

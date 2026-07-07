@@ -151,16 +151,22 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
 
       if (gradPairs.length > 0) {
         // THE event: graduation surface reached. gap_ms = birth -> graduation.
+        // graduation_dex (migration 0004) records WHICH dex triggered, so the
+        // read can segment TRUE graduations (pumpswap/raydium migration, MC
+        // consistent with curve completion) from SIDE-POOLS. A side-pool /
+        // LP-at-birth is a strong BAIT marker -> this flag feeds the rug-gate.
         const mc = numOrNull(gradPairs[0]?.marketCap ?? gradPairs[0]?.fdv);
+        const dex = gradPairs[0]?.dexId ?? null;
         stmts.push(
           env.RADAR_DB.prepare(
             `UPDATE births SET status='discovered',
                     dexscreener_first_seen_ms=?2,
                     gap_ms=?2 - pumpfun_first_seen_ms,
                     mc_at_discovery_usd=?3,
+                    graduation_dex=?4,
                     last_checked_ms=?2
               WHERE token_address=?1 AND status='watching'`
-          ).bind(addr, now, mc)
+          ).bind(addr, now, mc, dex)
         );
       } else {
         stmts.push(

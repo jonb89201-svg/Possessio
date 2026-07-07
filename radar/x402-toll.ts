@@ -111,6 +111,15 @@ export function buildTolledApp(env: Env) {
       `SELECT COUNT(*) AS n, AVG(curve_pair_seen_ms - pumpfun_first_seen_ms) AS avg_ms
          FROM births WHERE curve_pair_seen_ms IS NOT NULL`
     ).first<any>();
+    // Segment graduations by dex (migration 0004): true migrations
+    // (pumpswap/raydium) vs side-pools. An aggregate breakdown - a count per
+    // dexId, no rows/addresses - stays inside the product boundary.
+    const byDex = await db.prepare(
+      `SELECT graduation_dex AS dex, COUNT(*) AS n,
+              AVG(gap_ms) AS avg_gap_ms, MIN(gap_ms) AS min_gap_ms
+         FROM births WHERE status='discovered'
+        GROUP BY graduation_dex ORDER BY n DESC`
+    ).all();
     const total = Number(counts?.births_total ?? 0);
     const graduated = Number(counts?.graduated_count ?? 0);
     return c.json({
@@ -123,6 +132,7 @@ export function buildTolledApp(env: Env) {
         avg: grad?.avg_ms ?? null, min: grad?.min_ms ?? null, max: grad?.max_ms ?? null,
         p25: await pct(0.25), median: await pct(0.5), p75: await pct(0.75),
       },
+      graduation_by_dex: byDex.results,
       curve_index_telemetry: { seen: Number(curve?.n ?? 0), avg_ms: curve?.avg_ms ?? null },
     });
   });
