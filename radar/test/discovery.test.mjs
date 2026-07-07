@@ -10,8 +10,9 @@ const NOW_STALE = Date.now() - 25 * 3600_000; // >24h - must expire
 
 function mockDb(watchingRows) {
   const batched = [];
+  const runs = [];
   const db = {
-    batched,
+    batched, runs,
     prepare(sql) {
       return {
         bind(...args) {
@@ -19,6 +20,7 @@ function mockDb(watchingRows) {
             sql, args,
             all: async () => ({ results: watchingRows }),
             first: async () => null,
+            run: async () => { runs.push({ sql, args }); return { success: true }; },
           };
         },
       };
@@ -33,8 +35,9 @@ function env(db, fetchImpl) {
   return {
     RADAR_DB: db,
     DEXSCREENER_TOKEN_URL: "https://dex.example/tokens/",
-    DISCOVERY_BATCH: "300",
+    DISCOVERY_BATCH: "900",
     EXPIRE_HOURS: "24",
+    YOUNG_WINDOW_MIN: "120",
   };
 }
 
@@ -67,6 +70,22 @@ test("non-pumpfun pair -> GRADUATION: discovered with gap + grad mcap", async ()
   assert.equal(disc.args[2], 71000, "mcap from the GRADUATION pair, not the curve");
   assert.equal(disc.args[3], "raydium", "graduation_dex = the triggering non-pumpfun dex (0004)");
   assert.ok(db.batched.some((s) => s.sql.includes("curve_pair_seen_ms")), "curve telemetry still recorded");
+  const peak = db.batched.find((s) => s.sql.includes("mc_peak_usd"));
+  assert.ok(peak, "R-4: peak MC recorded");
+  assert.equal(peak.args[1], 71000, "peak = max marketCap across pairs (the graduation pair)");
+});
+
+test("R-4: curve pump WITHOUT graduation records peak, stays watching (the Binface case)", async () => {
+  // Token on the curve at $25k - pumped past the buy zone, never graduated.
+  // This is EXACTLY the trade that was invisible before R-4.
+  const db = mockDb([{ token_address: "PUMP", pumpfun_first_seen_ms: NOW_FRESH }]);
+  await discoveryScan(env(db, async () => pairsResponse([
+    { dexId: "pumpfun", baseToken: { address: "PUMP" }, marketCap: 25000 },
+  ])));
+  const peak = db.batched.find((s) => s.sql.includes("mc_peak_usd"));
+  assert.ok(peak, "peak recorded for a pumping-but-not-graduated token");
+  assert.equal(peak.args[1], 25000, "peak = the curve MC");
+  assert.ok(!db.batched.some((s) => s.sql.includes("status='discovered'")), "no graduation - stays watching");
 });
 
 test("no pairs at all -> only last_checked bump", async () => {
@@ -76,12 +95,15 @@ test("no pairs at all -> only last_checked bump", async () => {
   assert.ok(db.batched[0].sql.includes("SET last_checked_ms"));
 });
 
-test(">24h without graduation -> expired, no fetch for that token", async () => {
+test("R-5: aged-out tokens expire via ONE bulk write, never polled", async () => {
+  // young-select returns only fresh rows; the bulk expiry is a separate .run().
   let fetches = 0;
-  const db = mockDb([{ token_address: "DDD", pumpfun_first_seen_ms: NOW_STALE }]);
+  const db = mockDb([]); // no young tokens this tick
   await discoveryScan(env(db, async () => { fetches++; return pairsResponse([]); }));
-  assert.equal(fetches, 0, "expired rows never reach the network");
-  assert.ok(db.batched[0].sql.includes("status='expired'"));
+  assert.equal(fetches, 0, "nothing polled when the young set is empty");
+  const exp = db.runs.find((r) => r.sql.includes("status='expired'"));
+  assert.ok(exp, "bulk expiry UPDATE ran");
+  assert.ok(exp.sql.includes("pumpfun_first_seen_ms < ?2"), "expires by age, in bulk");
 });
 
 test("R-2: 65 live tokens -> 3 batched requests of <=30, all swept", async () => {

@@ -120,6 +120,14 @@ export function buildTolledApp(env: Env) {
          FROM births WHERE status='discovered'
         GROUP BY graduation_dex ORDER BY n DESC`
     ).all();
+    // R-4: peak-MC distribution — the trade window (birth->pump), not just
+    // graduation. Generic percentiles only; any band (8-13k) is a PRIVATE
+    // read-time threshold, never exposed here (Sec6).
+    const peak = await db.prepare(
+      `SELECT COUNT(*) AS n, MAX(mc_peak_usd) AS max_mc,
+              AVG(mc_peak_usd) AS avg_mc
+         FROM births WHERE mc_peak_usd IS NOT NULL`
+    ).first<any>();
     const total = Number(counts?.births_total ?? 0);
     const graduated = Number(counts?.graduated_count ?? 0);
     return c.json({
@@ -133,6 +141,7 @@ export function buildTolledApp(env: Env) {
         p25: await pct(0.25), median: await pct(0.5), p75: await pct(0.75),
       },
       graduation_by_dex: byDex.results,
+      peak_mc: { tracked: Number(peak?.n ?? 0), avg: peak?.avg_mc ?? null, max: peak?.max_mc ?? null },
       curve_index_telemetry: { seen: Number(curve?.n ?? 0), avg_ms: curve?.avg_ms ?? null },
     });
   });

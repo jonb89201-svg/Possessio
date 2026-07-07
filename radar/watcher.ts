@@ -27,6 +27,7 @@ export type WatcherEnv = Env & {
   DEXSCREENER_TOKEN_URL: string;
   DISCOVERY_BATCH: string;
   EXPIRE_HOURS: string;
+  YOUNG_WINDOW_MIN: string;
 };
 
 export async function birthScan(env: WatcherEnv): Promise<void> {
@@ -87,42 +88,41 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
 
 export async function discoveryScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
-  // R-2 (2026-07-07): batched discovery. DexScreener's tokens endpoint takes
-  // up to 30 comma-joined addresses per request at 300 req/min (VERIFY-FIRST
-  // against docs.dexscreener.com/api/reference, confirmed 2026-07-07), so a
-  // tick sweeps DISCOVERY_BATCH tokens in ceil(n/30) requests - full
-  // watching-set coverage every 1-3 min at current birth rates.
-  const perTick = parseInt(env.DISCOVERY_BATCH || "300", 10);
+  const perTick = parseInt(env.DISCOVERY_BATCH || "900", 10);
   const expireMs = parseInt(env.EXPIRE_HOURS || "24", 10) * 3600_000;
+  const youngMs = parseInt(env.YOUNG_WINDOW_MIN || "120", 10) * 60_000;
 
+  // R-5 (2026-07-07, from the Acceptance-3 read): expire the aged-out watching
+  // set in ONE bulk write - no per-token polling. At ~1,277 births/hr a 24h
+  // watching set balloons past 30k; re-checking corpses starved the YOUNG
+  // tokens where graduations + pumps actually happen (first ~23-56 min), so the
+  // grad rate read as a lower bound and gap timing was inflated by our own
+  // poll latency (~1.7h/token). Sweep the old out cheaply.
+  await env.RADAR_DB.prepare(
+    `UPDATE births SET status='expired', last_checked_ms=?1
+      WHERE status='watching' AND pumpfun_first_seen_ms < ?2`
+  ).bind(now, now - expireMs).run();
+
+  // R-5: poll ONLY young watching tokens (within the pump/graduation window),
+  // least-recently-checked first. The edge lives here - birth -> 8-13k -> peak,
+  // all pre-graduation - so this is where the whole poll budget goes.
   const { results } = await env.RADAR_DB.prepare(
-    `SELECT token_address, pumpfun_first_seen_ms FROM births
-      WHERE status = 'watching'
+    `SELECT token_address FROM births
+      WHERE status='watching' AND pumpfun_first_seen_ms >= ?2
       ORDER BY last_checked_ms ASC LIMIT ?1`
   )
-    .bind(perTick)
+    .bind(perTick, now - youngMs)
     .all();
 
+  const live = (results as any[]).map((r) => ({ addr: r.token_address as string }));
   const stmts: any[] = [];
-  const live: { addr: string }[] = [];
-  for (const row of results as any[]) {
-    // Expiry first, no network needed. Post-R-1 this is the COMMON path:
-    // ~98% of births never graduate (the prior; the tape now measures it).
-    if (now - (row.pumpfun_first_seen_ms as number) > expireMs) {
-      stmts.push(
-        env.RADAR_DB.prepare(
-          `UPDATE births SET status='expired', last_checked_ms=?2 WHERE token_address=?1`
-        ).bind(row.token_address, now)
-      );
-    } else {
-      live.push({ addr: row.token_address as string });
-    }
-  }
 
+  // R-2: batched discovery - 30 comma-joined addresses per request at
+  // 300 req/min (VERIFY-FIRST vs docs.dexscreener.com/api/reference).
   for (let c = 0; c < live.length; c += 30) {
     const chunk = live.slice(c, c + 30);
     const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.map((t) => t.addr).join(","), {
-      headers: { accept: "application/json", "user-agent": "possessio-radar/0.2" },
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.3" },
     });
     if (res.status === 429) {
       console.warn("dexscreener 429 — yielding this tick");
@@ -142,12 +142,21 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
 
     for (const { addr } of chunk) {
       const pairs = byToken.get(addr) ?? [];
-      // R-1 (2026-07-07, first-audit finding): DexScreener indexes the pump.fun
-      // BONDING CURVE itself as dexId 'pumpfun' ~60s after birth. That is
-      // machine latency, not the market event. The event is GRADUATION: the
-      // first non-pumpfun pair ($69K MC surface - 6.9x entry, 3.45x TP).
+      // R-1: DexScreener indexes the pump.fun BONDING CURVE as dexId 'pumpfun'
+      // ~minutes after birth (machine latency, not the market). The market
+      // event is GRADUATION: the first non-pumpfun pair ($69K surface).
       const curvePair = pairs.find((p) => p?.dexId === "pumpfun");
       const gradPairs = pairs.filter((p) => p?.dexId && p.dexId !== "pumpfun");
+
+      // R-4: the current MC = max marketCap across the token's pairs (the live
+      // curve MC while on the curve). Track the PEAK so the birth->pump
+      // trajectory - the actual trade window - is measurable. Generic peak
+      // only; any band (8-13k) is a PRIVATE read-time threshold (Sec6).
+      let currentMc: number | null = null;
+      for (const p of pairs) {
+        const m = numOrNull(p?.marketCap ?? p?.fdv);
+        if (m !== null && (currentMc === null || m > currentMc)) currentMc = m;
+      }
 
       if (curvePair) {
         // telemetry: first sighting of the curve index entry (write-once)
@@ -159,12 +168,22 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
         );
       }
 
+      if (currentMc !== null) {
+        // write-if-higher peak; first reading sets it (COALESCE 0 baseline).
+        stmts.push(
+          env.RADAR_DB.prepare(
+            `UPDATE births
+                SET mc_peak_ms  = CASE WHEN ?2 > COALESCE(mc_peak_usd, 0) THEN ?3 ELSE mc_peak_ms END,
+                    mc_peak_usd = MAX(COALESCE(mc_peak_usd, 0), ?2)
+              WHERE token_address = ?1`
+          ).bind(addr, currentMc, now)
+        );
+      }
+
       if (gradPairs.length > 0) {
         // THE event: graduation surface reached. gap_ms = birth -> graduation.
-        // graduation_dex (migration 0004) records WHICH dex triggered, so the
-        // read can segment TRUE graduations (pumpswap/raydium migration, MC
-        // consistent with curve completion) from SIDE-POOLS. A side-pool /
-        // LP-at-birth is a strong BAIT marker -> this flag feeds the rug-gate.
+        // graduation_dex (0004) segments true grads (pumpswap/raydium) from
+        // side-pools (LP-at-birth = bait marker -> rug-gate input).
         const mc = numOrNull(gradPairs[0]?.marketCap ?? gradPairs[0]?.fdv);
         const dex = gradPairs[0]?.dexId ?? null;
         stmts.push(
