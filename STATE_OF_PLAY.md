@@ -229,7 +229,20 @@ failure - see `STATEMENT_console_markets_final.md`.
   protocol, logged = system working). Token burn CLOSED: a chat-pasted
   credential hit a 30-day two-scope disposable key, rolled within the
   hour - zero blast radius; least-privilege proven by live fire.
-- **Sec6 REPO POSTURE - council decision pending (audit-seat rec:
+- **Sec6 REPO POSTURE - RATIFIED 2026-07-07 (Architect: split, reds
+  private): the SENSITIVE method material (`RULEBOOK_TradingAgent.md` +
+  every calibration constant) goes PRIVATE; the machine stays public.
+  Mechanism DELEGATED to council (Architect: "council has a better
+  idea than me"). Options for the council memo: (A) whole repo private
+  - owner toggle, simplest, loses the public-machine asset; (B) repo
+  public, RULEBOOK + constants relocated to private repo/env config -
+  keeps the asset, needs a history removal (collides w/ the new
+  force-push guard on main); (C) born-private - new tape-calibrated
+  numbers land only in private storage going forward. CAVEAT ON
+  RECORD: repo public for hours = today's snapshot assumed crawled;
+  going private is forward-looking, not a scrub. NOT YET EXECUTED -
+  visibility flip is owner-only + council picks the mechanism first.
+  (audit-seat rec:
   SPLIT):** repo is PUBLIC. The machine being public is an asset
   (grants, trust, verifiability); the method's tape-calibrated NUMBERS
   are the one proprietary sliver, and the real risk is BAIT (public
