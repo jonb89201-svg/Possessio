@@ -261,6 +261,41 @@ failure - see `STATEMENT_console_markets_final.md`.
   Clean-tick verification + the 6h Acceptance-3 read are scheduled
   (15:15Z and ~21:21Z wake-ups). PR #9 (branch -> main) open, merge
   pending at the Architect's hand.
+- **ACCEPTANCE-3 READ (2026-07-07 ~21:25Z, ~6.2h clean tape) - the
+  tape's first honest verdict:**
+  - **(1) Graduation rate 1.59%** (126 / 7,926) vs the ~2% lore prior -
+    CONSISTENT, and it's a LOWER BOUND (see R-5 below), so true rate
+    likely sits right at ~2%. Acceptance 1 PASS.
+  - **(2) Segmentation LIVE (graduation_dex working):** TRUE graduations
+    = **pumpswap 31** (avg MC ~$25.6k); **meteora 1** = a SIDE-POOL
+    ($5k MC, not a $69k migration - the bait population the rug-gate
+    wants); **94 NULL** = pre-0004-redeploy, unsegmentable (honest
+    bucket). Acceptance 2 PASS.
+  - **(3) True-graduation (pumpswap) birth->graduation gap: p25 23min /
+    median 41min / p75 56min** vs the ~20-min prior. MEASURED ~2x the
+    prior BUT polling-latency-inflated (R-5) - real median sits between
+    20 and 41 min; the prior is not refuted, the bias is now understood.
+    Winners-only survivorship stat. Acceptance 3 INFORMATIVE (pin after
+    R-5).
+  - **(4) Curve telemetry median ~15 min** (NOT ~1 cron tick as the
+    handoff expected) - this is the R-5 tell: it measures OUR poll
+    cadence, not DexScreener indexing.
+  - **(5) Expiry 0** (correct at 6h; 24h threshold). **Births/hr 1,277**
+    - far above expectations.
+- **R-5 FINDING (from the Acceptance read) - discovery throughput
+  can't keep up:** at 1,277 births/hr with 24h expiry, the watching set
+  heads toward ~30k; at DISCOVERY_BATCH=300/tick x 60 = 18k checks/hr,
+  each token is polled only ~0.6x/hr (~once per 1.7h) - but graduation
+  happens in the first ~23-56 min. So we UNDER-SAMPLE the graduation
+  window: grad rate is a lower bound, gap timing inflated. FIX =
+  age-prioritized discovery (poll young tokens where graduation actually
+  happens, let old ones age out) - prerequisite for R-4 peak-tracking to
+  be meaningful. Not yet built.
+- **Session Gate signal:** graduation-rate-per-hour is the measured §0
+  regime reading (as data, not feel) - flagged for the council.
+- **Repo state at read time:** PR #9 OPEN (mergeable_state clean, not
+  merged); `main` protected:true (JohnRules holding); R-3 + graduation_dex
+  builds deployed (20:21Z / 15:04Z).
 - **R-1/R-2 DEPLOYED (2026-07-07 15:04:44Z, verified):** new predicate confirmed executing in
   production (116 rows carry curve_pair_seen_ms within minutes; only
   R-1 writes it). Pre-wipe tape shows the poison plainly: 1113/1245
