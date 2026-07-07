@@ -261,6 +261,18 @@ failure - see `STATEMENT_console_markets_final.md`.
   Clean-tick verification + the 6h Acceptance-3 read are scheduled
   (15:15Z and ~21:21Z wake-ups). PR #9 (branch -> main) open, merge
   pending at the Architect's hand.
+- **SWEET-SPOT READ #1 (2026-07-07 ~22:50Z, lull window) + R-7 LIVE:**
+  peak tracking operational - 1,877 births in the ~1h window, 1,636
+  peak-tracked (87% coverage), full percentile distribution measured;
+  time-to-peak measured for the high-peak cohort (FAST - single-digit
+  minutes at the median, strengthening the R-6 WebSocket case). Band
+  analysis delivered to the Architect privately (Sec6 - no thresholds
+  in this repo). R-7 BTC regime tape flowing (first tick 22:27Z via
+  QuickNode Base RPC as a Worker SECRET - read-only key, blast radius =
+  RPC quota only; public RPC rejected Worker IPs). Bulk expiry correct
+  (0 expired; oldest clean row < 24h). Young-set 1,834 vs 900/tick
+  sweep = ~2min sampling cadence. Regime-pair read (pickup window)
+  fires ~00:45Z.
 - **ACCEPTANCE-3 READ (2026-07-07 ~21:25Z, ~6.2h clean tape) - the
   tape's first honest verdict:**
   - **(1) Graduation rate 1.59%** (126 / 7,926) vs the ~2% lore prior -
