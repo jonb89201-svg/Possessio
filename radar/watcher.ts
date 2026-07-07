@@ -35,7 +35,7 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
     return;
   }
   const res = await fetch(env.PUMPFUN_FEED_URL, {
-    headers: { accept: "application/json", "user-agent": "possessio-radar/0.1" },
+    headers: { accept: "application/json", "user-agent": "possessio-radar/0.2" },
   });
   if (!res.ok) {
     console.warn("birth feed", res.status);
@@ -77,7 +77,12 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
 
 export async function discoveryScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
-  const batch = parseInt(env.DISCOVERY_BATCH || "25", 10);
+  // R-2 (2026-07-07): batched discovery. DexScreener's tokens endpoint takes
+  // up to 30 comma-joined addresses per request at 300 req/min (VERIFY-FIRST
+  // against docs.dexscreener.com/api/reference, confirmed 2026-07-07), so a
+  // tick sweeps DISCOVERY_BATCH tokens in ceil(n/30) requests - full
+  // watching-set coverage every 1-3 min at current birth rates.
+  const perTick = parseInt(env.DISCOVERY_BATCH || "300", 10);
   const expireMs = parseInt(env.EXPIRE_HOURS || "24", 10) * 3600_000;
 
   const { results } = await env.RADAR_DB.prepare(
@@ -85,54 +90,89 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
       WHERE status = 'watching'
       ORDER BY last_checked_ms ASC LIMIT ?1`
   )
-    .bind(batch)
+    .bind(perTick)
     .all();
 
+  const stmts: any[] = [];
+  const live: { addr: string }[] = [];
   for (const row of results as any[]) {
-    const addr = row.token_address as string;
-    const born = row.pumpfun_first_seen_ms as number;
-
-    if (now - born > expireMs) {
-      await env.RADAR_DB.prepare(
-        `UPDATE births SET status='expired', last_checked_ms=?2 WHERE token_address=?1`
-      )
-        .bind(addr, now)
-        .run();
-      continue;
+    // Expiry first, no network needed. Post-R-1 this is the COMMON path:
+    // ~98% of births never graduate (the prior; the tape now measures it).
+    if (now - (row.pumpfun_first_seen_ms as number) > expireMs) {
+      stmts.push(
+        env.RADAR_DB.prepare(
+          `UPDATE births SET status='expired', last_checked_ms=?2 WHERE token_address=?1`
+        ).bind(row.token_address, now)
+      );
+    } else {
+      live.push({ addr: row.token_address as string });
     }
+  }
 
-    const res = await fetch(env.DEXSCREENER_TOKEN_URL + addr, {
-      headers: { accept: "application/json", "user-agent": "possessio-radar/0.1" },
+  for (let c = 0; c < live.length; c += 30) {
+    const chunk = live.slice(c, c + 30);
+    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.map((t) => t.addr).join(","), {
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.2" },
     });
     if (res.status === 429) {
       console.warn("dexscreener 429 — yielding this tick");
-      return; // polite backoff; cron returns in 60s
+      break; // polite backoff; cron returns in 60s; batched writes still land
     }
     if (!res.ok) continue;
 
     const data: any = await res.json();
-    const pairs: any[] = data?.pairs ?? [];
-    if (pairs.length > 0) {
-      // DISCOVERY — the index found it. The gap closes here; measure it.
-      const mc = numOrNull(pairs[0]?.marketCap ?? pairs[0]?.fdv);
-      await env.RADAR_DB.prepare(
-        `UPDATE births SET status='discovered',
-                dexscreener_first_seen_ms=?2,
-                gap_ms=?2 - pumpfun_first_seen_ms,
-                mc_at_discovery_usd=?3,
-                last_checked_ms=?2
-          WHERE token_address=?1 AND status='watching'`
-      )
-        .bind(addr, now, mc)
-        .run();
-    } else {
-      await env.RADAR_DB.prepare(
-        `UPDATE births SET last_checked_ms=?2 WHERE token_address=?1`
-      )
-        .bind(addr, now)
-        .run();
+    const byToken = new Map<string, any[]>();
+    for (const p of (data?.pairs ?? []) as any[]) {
+      const base = p?.baseToken?.address;
+      if (!base) continue;
+      const list = byToken.get(base) ?? [];
+      list.push(p);
+      byToken.set(base, list);
+    }
+
+    for (const { addr } of chunk) {
+      const pairs = byToken.get(addr) ?? [];
+      // R-1 (2026-07-07, first-audit finding): DexScreener indexes the pump.fun
+      // BONDING CURVE itself as dexId 'pumpfun' ~60s after birth. That is
+      // machine latency, not the market event. The event is GRADUATION: the
+      // first non-pumpfun pair ($69K MC surface - 6.9x entry, 3.45x TP).
+      const curvePair = pairs.find((p) => p?.dexId === "pumpfun");
+      const gradPairs = pairs.filter((p) => p?.dexId && p.dexId !== "pumpfun");
+
+      if (curvePair) {
+        // telemetry: first sighting of the curve index entry (write-once)
+        stmts.push(
+          env.RADAR_DB.prepare(
+            `UPDATE births SET curve_pair_seen_ms = COALESCE(curve_pair_seen_ms, ?2)
+              WHERE token_address = ?1`
+          ).bind(addr, now)
+        );
+      }
+
+      if (gradPairs.length > 0) {
+        // THE event: graduation surface reached. gap_ms = birth -> graduation.
+        const mc = numOrNull(gradPairs[0]?.marketCap ?? gradPairs[0]?.fdv);
+        stmts.push(
+          env.RADAR_DB.prepare(
+            `UPDATE births SET status='discovered',
+                    dexscreener_first_seen_ms=?2,
+                    gap_ms=?2 - pumpfun_first_seen_ms,
+                    mc_at_discovery_usd=?3,
+                    last_checked_ms=?2
+              WHERE token_address=?1 AND status='watching'`
+          ).bind(addr, now, mc)
+        );
+      } else {
+        stmts.push(
+          env.RADAR_DB.prepare(
+            `UPDATE births SET last_checked_ms=?2 WHERE token_address=?1`
+          ).bind(addr, now)
+        );
+      }
     }
   }
+
+  if (stmts.length > 0) await env.RADAR_DB.batch(stmts);
 }
 
 function numOrNull(v: unknown): number | null {

@@ -37,7 +37,7 @@
     // Object; keyed feeds last resort).
     "PUMPFUN_FEED_URL": "https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=true",
     "DEXSCREENER_TOKEN_URL": "https://api.dexscreener.com/latest/dex/tokens/", // official public API
-    "DISCOVERY_BATCH": "25", // per-tick DexScreener checks; stay polite under rate limits
+    "DISCOVERY_BATCH": "300", // tokens swept per tick; batched 30/request (R-2) = <=10 req/tick, well under DexScreener 300 req/min
     "EXPIRE_HOURS": "24" // birth older than this without discovery -> status 'expired'
   }
 }

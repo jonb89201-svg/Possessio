@@ -5,6 +5,10 @@
 -- The radar core. One row per pump.fun birth observed.
 -- api_created_ms  = what the feed CLAIMS (its created timestamp)
 -- pumpfun_first_seen_ms = when WE first observed it (our clock; substrate-honest distinction)
+-- dexscreener_first_seen_ms = first NON-pumpfun pair (R-1, 2026-07-07): the
+--   GRADUATION surface ($69K MC), not the bonding-curve index entry. DexScreener
+--   indexes the curve itself as dexId 'pumpfun' ~60s after birth (machine
+--   latency, recorded separately as curve_pair_seen_ms - migration 0003).
 -- gap_ms = dexscreener_first_seen_ms - pumpfun_first_seen_ms  ← the product
 CREATE TABLE births (
   token_address TEXT PRIMARY KEY,

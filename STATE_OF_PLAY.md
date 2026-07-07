@@ -211,6 +211,26 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
+- **R-1/R-2 LANDED (2026-07-07, RADAR_FIX_R1R2 handoff) - awaiting
+  deploy + tape wipe:** first audit found the discovery predicate
+  measured DexScreener's ~60s bonding-curve indexing (dexId 'pumpfun'),
+  not the market. Fixed: 'discovered' now = GRADUATION (first
+  non-pumpfun pair, $69K surface); curve sighting kept as write-once
+  telemetry (curve_pair_seen_ms, migration 0003 - applied live by Code
+  Integrity, mirrored in radar/migrations/). R-2: batched discovery,
+  30 addresses/request (VERIFY-FIRST confirmed vs DexScreener docs;
+  300 req/min), DISCOVERY_BATCH=300/tick. gap-stats reframed:
+  graduation_rate + median/quartiles birth->graduation + curve
+  telemetry. PROVEN offline: 6/6 predicate/batching/429 unit tests
+  (radar/test/), bundle green, gap-stats checked against local D1.
+  Acceptance 3 REDEFINED (>=6h clean tape): graduation rate vs ~2%
+  lore prior; median birth->graduation vs ~20-min prior (winners-only
+  survivorship stat); curve telemetry ~= one cron tick. WIPE PROTOCOL:
+  (1) Architect deploys from radar/ -> (2) says "deployed" -> (3) Code
+  Integrity wipes births live + verifies clean tick -> (4) 6h clean
+  tape -> valid Acceptance-3 read. Rulebook Sec1 EXIT-3 amendment
+  (STALL 10min, replacing invalid DexScreener-appearance edge-loss)
+  drafted in the handoff - Architect ratification pending.
 - **RADAR DEPLOYED + TAPE FILLING (2026-07-07 14:17:52Z):**
   `possessio-radar` live (Architect terminal, token auth). First cron
   tick 14:18:33Z captured 50 births, all 'watching', USD mcaps in the

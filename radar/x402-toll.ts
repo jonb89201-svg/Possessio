@@ -77,18 +77,54 @@ export function buildTolledApp(env: Env) {
   // ---- routes: the measurements. ----
   // PRODUCT BOUNDARY (unchanged, HIGH if relaxed): no route returns status='watching'.
 
+  // R-1/R-2 REFRAME (2026-07-07): 'discovered' = GRADUATED (first non-pumpfun
+  // pair, the $69K surface). gap_ms = birth -> graduation, a winners-only
+  // survivorship stat (~2% lore prior; first real measurement is the tape's).
+  // graduation-rate-per-hour is the measured Session Gate signal.
+  // All outputs are AGGREGATES - never rows, never 'watching' addresses.
   app.get("/radar/gap-stats", async (c) => {
-    const stats = await c.env.RADAR_DB.prepare(
-      `SELECT COUNT(*) AS discovered, AVG(gap_ms) AS avg_gap_ms,
-              MIN(gap_ms) AS min_gap_ms, MAX(gap_ms) AS max_gap_ms
+    const db = c.env.RADAR_DB;
+    const counts = await db.prepare(
+      `SELECT COUNT(*) AS births_total,
+              SUM(status='watching')   AS watching_count,
+              SUM(status='discovered') AS graduated_count,
+              SUM(status='expired')    AS expired_count
+         FROM births`
+    ).first<any>();
+    const grad = await db.prepare(
+      `SELECT AVG(gap_ms) AS avg_ms, MIN(gap_ms) AS min_ms, MAX(gap_ms) AS max_ms
          FROM births WHERE status='discovered'`
-    ).first();
-    // watching_count is an AGGREGATE (a number, never rows/addresses) - inside
-    // the product boundary, per the watcher reference implementation.
-    const watching = await c.env.RADAR_DB.prepare(
-      `SELECT COUNT(*) AS n FROM births WHERE status='watching'`
-    ).first();
-    return c.json({ ...(stats ?? {}), watching_count: (watching as any)?.n ?? 0 });
+    ).first<any>();
+    // median + quartiles via ORDER/OFFSET (SQLite has no percentile fn)
+    const pct = async (frac: number) => {
+      const n = Number(counts?.graduated_count ?? 0);
+      if (!n) return null;
+      const row = await db.prepare(
+        `SELECT gap_ms FROM births WHERE status='discovered'
+          ORDER BY gap_ms LIMIT 1 OFFSET ?1`
+      ).bind(Math.min(n - 1, Math.floor(n * frac))).first<any>();
+      return row?.gap_ms ?? null;
+    };
+    // telemetry: the machine's OWN indexing latency (curve sighting), kept
+    // separate so it is never again confused with the market.
+    const curve = await db.prepare(
+      `SELECT COUNT(*) AS n, AVG(curve_pair_seen_ms - pumpfun_first_seen_ms) AS avg_ms
+         FROM births WHERE curve_pair_seen_ms IS NOT NULL`
+    ).first<any>();
+    const total = Number(counts?.births_total ?? 0);
+    const graduated = Number(counts?.graduated_count ?? 0);
+    return c.json({
+      births_total: total,
+      watching_count: Number(counts?.watching_count ?? 0),
+      graduated_count: graduated,
+      expired_count: Number(counts?.expired_count ?? 0),
+      graduation_rate: total > 0 ? graduated / total : null,
+      grad_gap_ms: {
+        avg: grad?.avg_ms ?? null, min: grad?.min_ms ?? null, max: grad?.max_ms ?? null,
+        p25: await pct(0.25), median: await pct(0.5), p75: await pct(0.75),
+      },
+      curve_index_telemetry: { seen: Number(curve?.n ?? 0), avg_ms: curve?.avg_ms ?? null },
+    });
   });
 
   app.get("/radar/session-gate", async (c) => {
