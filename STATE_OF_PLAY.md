@@ -211,7 +211,21 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
-- **Radar remaining:** (1) Architect deploys `possessio-radar`
+- **RADAR DEPLOYED + TAPE FILLING (2026-07-07 14:17:52Z):**
+  `possessio-radar` live (Architect terminal, token auth). First cron
+  tick 14:18:33Z captured 50 births, all 'watching', USD mcaps in the
+  sane $1.7k-$6.5k birth range (unit rule held). Verified by the repo
+  seat reading production D1 directly. Acceptance clock running; 1h
+  read = births accumulation + zero errors + first gap_ms median vs
+  the ~20-min prior.
+- **Production-touch record (2026-07-07):** 14:13:59Z `possessio`
+  console worker re-upload = the Architect's terminal, ACCIDENTAL
+  (deploy run from repo root instead of radar/ - repo seat's
+  instructions at fault). Byte-identical to the PR #7 production code;
+  the only failure was the possessio.io route re-attach (token lacks
+  zone perms) which the existing route never needed. No drift, no
+  leak - recorded so the guard never reads it as unexplained.
+- **Radar remaining:** (1) DONE - Architect deployed `possessio-radar`
   (cd radar && npm install && npx wrangler deploy - keyless, no
   secrets). (2) Acceptance 1-3: cron zero-errors 1h, births
   accumulating, first gap_ms median vs the ~20-min prior - the audit
