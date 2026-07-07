@@ -46,22 +46,31 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
   // Shape is feed-dependent — normalize after live verification (handoff §Feeds).
   const items: any[] = Array.isArray(body) ? body : body?.coins ?? body?.data ?? [];
 
-  for (const it of items.slice(0, 100)) {
+  // R-3 (2026-07-07): capture the WHOLE poll window, not a slice of it. A real
+  // winning token (FY9y...pump, $11K->$22K) was MISSED when >50 births landed
+  // in one 60s tick: the limit=50 feed URL AND this slice(0,100) both silently
+  // dropped the overflow - and burst minutes are exactly the rising-volume
+  // regime trades live in, so the tape was blind where it mattered most.
+  // Fix: feed limit raised to 300 (VERIFY-FIRST: /coins default limit is 1000),
+  // slice raised to 500, and inserts BATCHED so the extra volume is one D1
+  // call rather than N subrequests (avoids the Workers subrequest ceiling).
+  const stmts: any[] = [];
+  for (const it of items.slice(0, 500)) {
     // Shape pinned against the LIVE-VERIFIED frontend-api-v3 /coins response
     // (2026-07-06): `mint`, `created_timestamp` (ms), `usd_market_cap`.
     // UNIT-CORRUPTION RULE: usd_market_cap is the ONLY market-cap field we
     // read - never raw `market_cap` (SOL-denominated on this feed).
     const addr = it.mint ?? it.address ?? it.tokenAddress;
     if (!addr) continue;
-    await env.RADAR_DB.prepare(
-      `INSERT INTO births
-         (token_address, chain, symbol, name, creator, api_created_ms,
-          pumpfun_first_seen_ms, status, last_checked_ms,
-          mc_at_birth_usd, raw_birth_json)
-       VALUES (?1,'solana',?2,?3,?4,?5,?6,'watching',?6,?7,?8)
-       ON CONFLICT(token_address) DO NOTHING`
-    )
-      .bind(
+    stmts.push(
+      env.RADAR_DB.prepare(
+        `INSERT INTO births
+           (token_address, chain, symbol, name, creator, api_created_ms,
+            pumpfun_first_seen_ms, status, last_checked_ms,
+            mc_at_birth_usd, raw_birth_json)
+         VALUES (?1,'solana',?2,?3,?4,?5,?6,'watching',?6,?7,?8)
+         ON CONFLICT(token_address) DO NOTHING`
+      ).bind(
         addr,
         it.symbol ?? null,
         it.name ?? null,
@@ -71,8 +80,9 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
         numOrNull(it.usd_market_cap ?? it.marketCapUsd),
         JSON.stringify(it).slice(0, 4000)
       )
-      .run();
+    );
   }
+  if (stmts.length > 0) await env.RADAR_DB.batch(stmts);
 }
 
 export async function discoveryScan(env: WatcherEnv): Promise<void> {

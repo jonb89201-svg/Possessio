@@ -38,6 +38,8 @@ function env(db, fetchImpl) {
   };
 }
 
+const ENV_BIRTH = { PUMPFUN_FEED_URL: "https://feed.example/coins", DEXSCREENER_TOKEN_URL: "https://dex.example/tokens/", DISCOVERY_BATCH: "300", EXPIRE_HOURS: "24" };
+
 const pairsResponse = (pairs) => ({
   ok: true, status: 200, json: async () => ({ pairs }),
 });
@@ -108,4 +110,40 @@ test("429 -> yields the tick politely, earlier writes still land", async () => {
   }));
   assert.equal(call, 2, "stopped at the 429");
   assert.equal(db.batched.length, 30, "first chunk's writes still landed");
+});
+
+// ---- R-3: birthScan coverage (the winning-token-missed fix) ----
+import { birthScan } from "../watcher.ts";
+
+function birthDb() {
+  const batched = [];
+  return {
+    batched,
+    prepare(sql) { return { bind: (...args) => ({ sql, args }) }; },
+    batch: async (stmts) => { batched.push(...stmts); },
+    // birthScan does not read; only writes via batch.
+  };
+}
+
+test("R-3: birthScan batches EVERY birth in a 120-item burst (no 50/100 cap)", async () => {
+  const items = Array.from({ length: 120 }, (_, i) => ({
+    mint: "M" + i, symbol: "S" + i, created_timestamp: 1783456000000 + i,
+    usd_market_cap: 2300 + i,
+  }));
+  const db = birthDb();
+  globalThis.fetch = async () => ({ ok: true, json: async () => items });
+  await birthScan({ ...ENV_BIRTH, RADAR_DB: db });
+  assert.equal(db.batched.length, 120, "all 120 births captured — no silent truncation");
+  assert.ok(db.batched.every((s) => s.sql.includes("INSERT INTO births")), "all inserts");
+  // usd_market_cap, never raw market_cap, in the mcap bind slot (index 6)
+  assert.equal(db.batched[0].args[6], 2300, "usd_market_cap read (unit rule)");
+});
+
+test("R-3: idle gate still holds when the feed URL is empty", async () => {
+  const db = birthDb();
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; return { ok: true, json: async () => [] }; };
+  await birthScan({ ...ENV_BIRTH, RADAR_DB: db, PUMPFUN_FEED_URL: "" });
+  assert.equal(fetched, false, "no fetch when PUMPFUN_FEED_URL unset");
+  assert.equal(db.batched.length, 0);
 });
