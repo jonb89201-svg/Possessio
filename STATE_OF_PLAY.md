@@ -211,8 +211,18 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
-- **R-1/R-2 LANDED (2026-07-07, RADAR_FIX_R1R2 handoff) - awaiting
-  deploy + tape wipe:** first audit found the discovery predicate
+- **R-1/R-2 DEPLOYED (2026-07-07 15:04:44Z, verified) - awaiting the
+  Code Integrity wipe:** new predicate confirmed executing in
+  production (116 rows carry curve_pair_seen_ms within minutes; only
+  R-1 writes it). Pre-wipe tape shows the poison plainly: 1113/1245
+  births "graduated" (89% vs the ~2% real prior) - old-predicate false
+  discoveries. Production-touch record: 14:54:25Z console re-upload =
+  Architect terminal, ACCIDENTAL (deploy chained from repo root again;
+  repo seat's chained commands at fault - chains retired), byte-
+  identical to production, harmless. OPSEC: the Workers-edit API token
+  was pasted into the relay chat 2026-07-07 - treat as BURNED; the
+  Architect rolls it after today's terminal work.
+- **R-1/R-2 spec record (RADAR_FIX_R1R2 handoff):** first audit found the discovery predicate
   measured DexScreener's ~60s bonding-curve indexing (dexId 'pumpfun'),
   not the market. Fixed: 'discovered' now = GRADUATION (first
   non-pumpfun pair, $69K surface); curve sighting kept as write-once
