@@ -47,6 +47,10 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
   const items: any[] = Array.isArray(body) ? body : body?.coins ?? body?.data ?? [];
 
   for (const it of items.slice(0, 100)) {
+    // Shape pinned against the LIVE-VERIFIED frontend-api-v3 /coins response
+    // (2026-07-06): `mint`, `created_timestamp` (ms), `usd_market_cap`.
+    // UNIT-CORRUPTION RULE: usd_market_cap is the ONLY market-cap field we
+    // read - never raw `market_cap` (SOL-denominated on this feed).
     const addr = it.mint ?? it.address ?? it.tokenAddress;
     if (!addr) continue;
     await env.RADAR_DB.prepare(

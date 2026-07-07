@@ -27,17 +27,15 @@
     "PRICE_GAP_STATS": "$0.005",
     "PRICE_SESSION_GATE": "$0.01",
     "PRICE_TAPE": "$0.02",
-    // Watcher (RADAR_HANDOFF). PUMPFUN_FEED_URL is the VERIFY-FIRST gate:
-    // birthScan idles until it holds a LIVE-VERIFIED endpoint (this sandbox
-    // cannot reach the feeds - verification is the MCP seat's / Architect's).
-    // Candidates researched 2026-07-06 (VERIFY LIVE before wiring, shapes drift):
-    //  - https://frontend-api-v3.pump.fun/coins/latest  (frontend API; recent
-    //    community docs say it now wants a JWT bearer - a problem for a
-    //    keyless worker; verify whether anon works)
-    //  - PumpPortal WebSocket (third-party; needs the Durable Object upgrade
-    //    seam from the handoff, not the polling path)
-    //  - Bitquery / Moralis pump.fun feeds (keyed, paid tiers - last resort)
-    "PUMPFUN_FEED_URL": "",
+    // Watcher (RADAR_HANDOFF). VERIFY-FIRST gate CLEARED 2026-07-06: the
+    // Architect's terminal proved this exact route answers 200 ANONYMOUSLY
+    // with live token objects newest-first, shape matching the normalizer
+    // (mint / created_timestamp / usd_market_cap). limit=50 for the poller's
+    // lookback window; includeNsfw=true stays - a birth radar that filters
+    // births isn't a birth radar. If this ever starts demanding a JWT, the
+    // fallback seams from the handoff apply (PumpPortal WS via Durable
+    // Object; keyed feeds last resort).
+    "PUMPFUN_FEED_URL": "https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=true",
     "DEXSCREENER_TOKEN_URL": "https://api.dexscreener.com/latest/dex/tokens/", // official public API
     "DISCOVERY_BATCH": "25", // per-tick DexScreener checks; stay polite under rate limits
     "EXPIRE_HOURS": "24" // birth older than this without discovery -> status 'expired'

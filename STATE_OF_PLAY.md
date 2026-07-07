@@ -204,17 +204,23 @@ failure - see `STATEMENT_console_markets_final.md`.
   real (planted >24h watching row flipped to 'expired', last_checked_ms
   stamped, discovered row untouched); gap-stats gained the
   watching_count aggregate (a count, inside the boundary).
-- **Radar remaining:** (1) VERIFY-FIRST the birth feed from a seat with
-  egress - candidates in radar/wrangler.jsonc (frontend-api-v3
-  /coins/latest may now want a JWT - problem for a keyless worker;
-  PumpPortal WS = the Durable Object seam; Bitquery/Moralis keyed last
-  resorts); set PUMPFUN_FEED_URL + normalize the item shape. (2)
-  Architect deploys `possessio-radar` (cd radar && npm install && npx
-  wrangler deploy - keyless, no secrets). (3) Acceptance 1-3 (cron
-  zero-errors 1h, births accumulating, first gap_ms vs the ~20-min
-  prior) need the live feed; acceptance 4 partially proven (aggregates
-  sane, boundary held) - re-test on live. (4) Acceptance 6 armed-toll
-  round-trip: Architect terminal.
+- **Feed VERIFY-FIRST CLEARED (2026-07-06, Architect terminal):**
+  frontend-api-v3 /coins route answers 200 ANONYMOUSLY, newest-first,
+  shape matches the normalizer (mint / created_timestamp /
+  usd_market_cap). PUMPFUN_FEED_URL set in radar/wrangler.jsonc
+  (limit=50 lookback, includeNsfw=true); normalizer pinned with the
+  unit-corruption rule (usd_market_cap only, never SOL-denominated
+  market_cap).
+- **Radar remaining:** (1) Architect deploys `possessio-radar`
+  (cd radar && npm install && npx wrangler deploy - keyless, no
+  secrets). (2) Acceptance 1-3: cron zero-errors 1h, births
+  accumulating, first gap_ms median vs the ~20-min prior - the audit
+  seat reads the live D1 directly ~1h post-deploy. (3) Acceptance 4
+  re-test on live (locally proven). (4) Acceptance 6 armed-toll
+  round-trip: Architect terminal. NOTE (ledger item 6): the 23:44:17Z
+  production redeploy stands UNCONFIRMED - runbook 0.10 dashboard
+  verification is BLOCKING at GATE 0 until the Architect claims or
+  disowns it.
 
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
