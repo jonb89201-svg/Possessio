@@ -211,8 +211,15 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
-- **R-1/R-2 DEPLOYED (2026-07-07 15:04:44Z, verified) - awaiting the
-  Code Integrity wipe:** new predicate confirmed executing in
+- **TAPE WIPED CLEAN (2026-07-07 15:10Z):** 1,336 poisoned rows deleted
+  (DELETE FROM births), zero verified, trades untouched (was empty).
+  Executed by the REPO seat on the Architect's direct order - a
+  recorded deviation from the wipe protocol's letter (step 3 assigned
+  Code Integrity); the Architect may redirect their own protocol.
+  Clean-tick verification + the 6h Acceptance-3 read are scheduled
+  (15:15Z and ~21:21Z wake-ups). PR #9 (branch -> main) open, merge
+  pending at the Architect's hand.
+- **R-1/R-2 DEPLOYED (2026-07-07 15:04:44Z, verified):** new predicate confirmed executing in
   production (116 rows carry curve_pair_seen_ms within minutes; only
   R-1 writes it). Pre-wipe tape shows the poison plainly: 1113/1245
   births "graduated" (89% vs the ~2% real prior) - old-predicate false
