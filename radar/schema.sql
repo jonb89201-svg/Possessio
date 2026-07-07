@@ -24,6 +24,8 @@ CREATE TABLE births (
   last_checked_ms INTEGER,
   mc_at_birth_usd REAL,
   mc_at_discovery_usd REAL,
+  curve_pair_seen_ms INTEGER,        -- migration 0003: first curve-index sighting (machine latency telemetry)
+  graduation_dex TEXT,               -- migration 0004: dex that triggered discovery (true grad vs side-pool; rug-gate input)
   raw_birth_json TEXT
 );
 CREATE INDEX idx_births_status ON births(status);
