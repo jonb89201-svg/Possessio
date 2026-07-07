@@ -28,6 +28,8 @@ export type WatcherEnv = Env & {
   DISCOVERY_BATCH: string;
   EXPIRE_HOURS: string;
   YOUNG_WINDOW_MIN: string;
+  BASE_RPC_URL?: string;
+  CHAINLINK_BTC_USD?: string;
 };
 
 export async function birthScan(env: WatcherEnv): Promise<void> {
@@ -208,6 +210,34 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
   }
 
   if (stmts.length > 0) await env.RADAR_DB.batch(stmts);
+}
+
+// R-7 (2026-07-07): the BTC regime tape. Memecoin risk appetite rides BTC;
+// news acts on this market THROUGH BTC, so one Chainlink read per tick gives
+// the Session Gate an objective regime input. Feed self-verified on-chain
+// (description() == "BTC / USD"). Failure here never touches the birth tape.
+export async function btcScan(env: WatcherEnv): Promise<void> {
+  const feed = env.CHAINLINK_BTC_USD || "0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F";
+  const rpc = env.BASE_RPC_URL || "https://mainnet.base.org";
+  const res = await fetch(rpc, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: feed, data: "0xfeaf968c" }, "latest"] }), // latestRoundData()
+  });
+  if (!res.ok) { console.warn("btc feed rpc", res.status); return; }
+  const j: any = await res.json();
+  const hex: string = j?.result;
+  if (!hex || hex.length < 2 + 64 * 5) { console.warn("btc feed short result"); return; }
+  const word = (i: number) => BigInt("0x" + hex.slice(2 + 64 * i, 2 + 64 * (i + 1)));
+  const answer = word(1);            // int256 price, 8 decimals (positive in practice)
+  const updatedAt = Number(word(3)); // unix seconds
+  const price = Number(answer) / 1e8;
+  if (!(price > 0)) return;
+  await env.RADAR_DB.prepare(
+    `INSERT INTO regime_ticks (ts_ms, btc_usd, feed_updated_at)
+     VALUES (?1, ?2, ?3) ON CONFLICT(ts_ms) DO NOTHING`
+  ).bind(Date.now(), price, updatedAt * 1000).run();
 }
 
 function numOrNull(v: unknown): number | null {

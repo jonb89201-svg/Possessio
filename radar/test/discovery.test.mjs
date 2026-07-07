@@ -169,3 +169,18 @@ test("R-3: idle gate still holds when the feed URL is empty", async () => {
   assert.equal(fetched, false, "no fetch when PUMPFUN_FEED_URL unset");
   assert.equal(db.batched.length, 0);
 });
+
+// ---- R-7: BTC regime tape ----
+import { btcScan } from "../watcher.ts";
+
+test("R-7: btcScan decodes latestRoundData and writes one regime tick", async () => {
+  // real response shape captured live 2026-07-07 (answer=$63,369.45, 8 dec)
+  const hex = "0x0000000000000000000000000000000000000000000000020000000000006657000000000000000000000000000000000000000000000000000005c36f5a1c10000000000000000000000000000000000000000000000000000000006a4d7651000000000000000000000000000000000000000000000000000000006a4d765f0000000000000000000000000000000000000000000000020000000000006657";
+  const runs = [];
+  const db = { prepare: (sql) => ({ bind: (...args) => ({ run: async () => { runs.push({ sql, args }); } }) }) };
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: hex }) });
+  await btcScan({ RADAR_DB: db });
+  assert.equal(runs.length, 1, "one tick written");
+  assert.ok(runs[0].sql.includes("regime_ticks"));
+  assert.ok(Math.abs(runs[0].args[1] - 63369.45) < 0.01, "price decoded: $63,369.45");
+});
