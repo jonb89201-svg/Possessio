@@ -1,0 +1,11 @@
+{
+  "name": "possessio-radar",
+  "private": true,
+  "description": "Radar worker: toll'd measurements API over possessio-radar-ledger (D1). x402 v2 stack - VERIFY-FIRST executed 2026-07-06: x402-hono (v1) is deprecated, @x402/* is current.",
+  "dependencies": {
+    "@x402/core": "^2.17.0",
+    "@x402/evm": "^2.17.0",
+    "@x402/hono": "^2.17.0",
+    "hono": "^4.12.28"
+  }
+}

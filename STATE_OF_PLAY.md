@@ -172,6 +172,90 @@ failure - see `STATEMENT_console_markets_final.md`.
   (0.02 ETH / 100 USDC / 12 h). Full-suite certification run stays on
   the Architect terminal per GATE 5.
 
+## Radar sell-side + fuel computer (SESSION_LEDGER_20260706, landed 2026-07-06)
+- **Live D1 VERIFIED by read-back** (`possessio-radar-ledger`
+  e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde): exactly 4 tables (births,
+  sessions, spends, trades) + 6 indexes; `spends` DDL matches
+  migration_0002 byte-for-byte. Recorded as `radar/schema.live.sql`
+  (read-back provenance) + `radar/migrations/0002_spends.sql`.
+- **VERIFY-FIRST catch:** the handed-off toll snapshot named `x402-hono`
+  (v1) - that package is DEPRECATED (security patches only). Current
+  official stack is x402 v2: `@x402/hono` 2.17.0 + `@x402/core` +
+  `@x402/evm`; API verified from the package's own README/types
+  (CAIP-2 networks, x402ResourceServer + HTTPFacilitatorClient, default
+  facilitator https://facilitator.x402.org).
+- **`radar/` worker COMPILED + acceptance 5 and 7 PROVEN in-sandbox:**
+  own worker (possessio-radar), real @x402 middleware wired
+  (nodejs_compat), D1-bound, bundle dry-run green. Local run: all three
+  routes 200 + `x-possessio-toll: TOLL_NOT_ARMED` while sink is zero
+  (acceptance 5); planted `watching` row leaked NOWHERE (acceptance 7 -
+  the product boundary held). Acceptance 6 (armed 402 -> paid 200 ->
+  on-chain settlement) needs the facilitator + a funded x402 client:
+  Architect terminal.
+- **Landed:** SESSION_LEDGER_20260706.md, FUEL_COMPUTER_SPEC.md,
+  `fuel.config.json` (spec schema verbatim; ceilings/prices remain OPEN
+  proposals - ledger OPEN item 5).
+- **WATCHER landed + locally proven (2026-07-06, RADAR_HANDOFF):**
+  `radar/watcher.ts` (jobs verbatim from the handoff) + cron trigger +
+  vars; `radar/schema.sql` (authored mirror) replaces the read-back
+  copy. Sandbox proofs: bundle green; local cron tick via
+  `--test-scheduled` ran both jobs zero-crash; birthScan idle gate held
+  (PUMPFUN_FEED_URL empty); discoveryScan's EXPIRY branch executed for
+  real (planted >24h watching row flipped to 'expired', last_checked_ms
+  stamped, discovered row untouched); gap-stats gained the
+  watching_count aggregate (a count, inside the boundary).
+- **Feed VERIFY-FIRST CLEARED (2026-07-06, Architect terminal):**
+  frontend-api-v3 /coins route answers 200 ANONYMOUSLY, newest-first,
+  shape matches the normalizer (mint / created_timestamp /
+  usd_market_cap). PUMPFUN_FEED_URL set in radar/wrangler.jsonc
+  (limit=50 lookback, includeNsfw=true); normalizer pinned with the
+  unit-corruption rule (usd_market_cap only, never SOL-denominated
+  market_cap).
+- **R-1/R-2 LANDED (2026-07-07, RADAR_FIX_R1R2 handoff) - awaiting
+  deploy + tape wipe:** first audit found the discovery predicate
+  measured DexScreener's ~60s bonding-curve indexing (dexId 'pumpfun'),
+  not the market. Fixed: 'discovered' now = GRADUATION (first
+  non-pumpfun pair, $69K surface); curve sighting kept as write-once
+  telemetry (curve_pair_seen_ms, migration 0003 - applied live by Code
+  Integrity, mirrored in radar/migrations/). R-2: batched discovery,
+  30 addresses/request (VERIFY-FIRST confirmed vs DexScreener docs;
+  300 req/min), DISCOVERY_BATCH=300/tick. gap-stats reframed:
+  graduation_rate + median/quartiles birth->graduation + curve
+  telemetry. PROVEN offline: 6/6 predicate/batching/429 unit tests
+  (radar/test/), bundle green, gap-stats checked against local D1.
+  Acceptance 3 REDEFINED (>=6h clean tape): graduation rate vs ~2%
+  lore prior; median birth->graduation vs ~20-min prior (winners-only
+  survivorship stat); curve telemetry ~= one cron tick. WIPE PROTOCOL:
+  (1) Architect deploys from radar/ -> (2) says "deployed" -> (3) Code
+  Integrity wipes births live + verifies clean tick -> (4) 6h clean
+  tape -> valid Acceptance-3 read. Rulebook Sec1 EXIT-3 amendment
+  (STALL 10min, replacing invalid DexScreener-appearance edge-loss)
+  drafted in the handoff - Architect ratification pending.
+- **RADAR DEPLOYED + TAPE FILLING (2026-07-07 14:17:52Z):**
+  `possessio-radar` live (Architect terminal, token auth). First cron
+  tick 14:18:33Z captured 50 births, all 'watching', USD mcaps in the
+  sane $1.7k-$6.5k birth range (unit rule held). Verified by the repo
+  seat reading production D1 directly. Acceptance clock running; 1h
+  read = births accumulation + zero errors + first gap_ms median vs
+  the ~20-min prior.
+- **Production-touch record (2026-07-07):** 14:13:59Z `possessio`
+  console worker re-upload = the Architect's terminal, ACCIDENTAL
+  (deploy run from repo root instead of radar/ - repo seat's
+  instructions at fault). Byte-identical to the PR #7 production code;
+  the only failure was the possessio.io route re-attach (token lacks
+  zone perms) which the existing route never needed. No drift, no
+  leak - recorded so the guard never reads it as unexplained.
+- **Radar remaining:** (1) DONE - Architect deployed `possessio-radar`
+  (cd radar && npm install && npx wrangler deploy - keyless, no
+  secrets). (2) Acceptance 1-3: cron zero-errors 1h, births
+  accumulating, first gap_ms median vs the ~20-min prior - the audit
+  seat reads the live D1 directly ~1h post-deploy. (3) Acceptance 4
+  re-test on live (locally proven). (4) Acceptance 6 armed-toll
+  round-trip: Architect terminal. NOTE (ledger item 6): the 23:44:17Z
+  production redeploy stands UNCONFIRMED - runbook 0.10 dashboard
+  verification is BLOCKING at GATE 0 until the Architect claims or
+  disowns it.
+
 ## Tunables (ledger-driven, RULEBOOK - not frozen)
 Session-gate cutoff 0.65; rug creator-holding 15%; entry-MC band edges
 (target ~$10k ratified, band edges NON-RATIFIED).
