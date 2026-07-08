@@ -92,7 +92,7 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
   const perTick = parseInt(env.DISCOVERY_BATCH || "900", 10);
   const expireMs = parseInt(env.EXPIRE_HOURS || "24", 10) * 3600_000;
-  const youngMs = parseInt(env.YOUNG_WINDOW_MIN || "120", 10) * 60_000;
+  const youngMs = parseInt(env.YOUNG_WINDOW_MIN || "30", 10) * 60_000; // R-8: default fallback matches the tightened config
 
   // R-5 (2026-07-07, from the Acceptance-3 read): expire the aged-out watching
   // set in ONE bulk write - no per-token polling. At ~1,277 births/hr a 24h
