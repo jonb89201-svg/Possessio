@@ -211,8 +211,132 @@ failure - see `STATEMENT_console_markets_final.md`.
   (limit=50 lookback, includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
-- **R-1/R-2 LANDED (2026-07-07, RADAR_FIX_R1R2 handoff) - awaiting
-  deploy + tape wipe:** first audit found the discovery predicate
+- **graduation_dex (migration 0004, 2026-07-07) - the anomaly was
+  inventory:** the R-1 predicate fires on the first non-pumpfun pair,
+  but some are SIDE-POOLS / LP-at-birth, not true graduations. One-line
+  patch records gradPairs[0].dexId at detection so the read segments
+  true grads (pumpswap/raydium) from side-pools. Payoff: an LP at birth
+  is a strong BAIT marker -> side-pool flag becomes a rug-gate input
+  (Rulebook Sec2). Column verified live (births = 16 cols); 6/6 tests
+  pass with the graduation_dex assertion; gap-stats gains
+  graduation_by_dex. NOTE: running worker is the 15:04Z build - writes
+  NULL until redeployed; the 21:21Z read segments non-NULL rows and
+  reports the NULL bucket honestly.
+- **COLD-SEAT REVIEW: PASS (Code Integrity, from the production
+  bundle):** predicate faithful, telemetry write-once, batch writes
+  present, 429 yields in, product boundary holding (aggregates only).
+  Wipe deviation ACCEPTED as recorded (Architect redirecting his own
+  protocol, logged = system working). Token burn CLOSED: a chat-pasted
+  credential hit a 30-day two-scope disposable key, rolled within the
+  hour - zero blast radius; least-privilege proven by live fire.
+- **Sec6 REPO POSTURE - RATIFIED 2026-07-07 (Architect: split, reds
+  private): the SENSITIVE method material (`RULEBOOK_TradingAgent.md` +
+  every calibration constant) goes PRIVATE; the machine stays public.
+  Mechanism DELEGATED to council (Architect: "council has a better
+  idea than me"). Options for the council memo: (A) whole repo private
+  - owner toggle, simplest, loses the public-machine asset; (B) repo
+  public, RULEBOOK + constants relocated to private repo/env config -
+  keeps the asset, needs a history removal (collides w/ the new
+  force-push guard on main); (C) born-private - new tape-calibrated
+  numbers land only in private storage going forward. CAVEAT ON
+  RECORD: repo public for hours = today's snapshot assumed crawled;
+  going private is forward-looking, not a scrub. NOT YET EXECUTED -
+  visibility flip is owner-only + council picks the mechanism first.
+  (audit-seat rec:
+  SPLIT):** repo is PUBLIC. The machine being public is an asset
+  (grants, trust, verifiability); the method's tape-calibrated NUMBERS
+  are the one proprietary sliver, and the real risk is BAIT (public
+  deterministic entry band + rug-gates hand adversarial creators the
+  profile to farm). Repo already public for hours = assume snapshot
+  crawled, so a panic-toggle is theater. Recommendation: repo stays
+  public (structure only); `RULEBOOK_TradingAgent.md` + every
+  calibration constant (stall N, session-gate cutoffs, refined bands)
+  born/moved PRIVATE (private repo or env-injected config). Architect's
+  signature; the ask is that it is a booked decision, not a default.
+- **TAPE WIPED CLEAN (2026-07-07 15:10Z):** 1,336 poisoned rows deleted
+  (DELETE FROM births), zero verified, trades untouched (was empty).
+  Executed by the REPO seat on the Architect's direct order - a
+  recorded deviation from the wipe protocol's letter (step 3 assigned
+  Code Integrity); the Architect may redirect their own protocol.
+  Clean-tick verification + the 6h Acceptance-3 read are scheduled
+  (15:15Z and ~21:21Z wake-ups). PR #9 (branch -> main) open, merge
+  pending at the Architect's hand.
+- **REGIME-PAIR READ (2026-07-08 00:45Z):** the Architect's session
+  rhythm DIRECTIONALLY CONFIRMED - birth rate rose ~14% (21->24/min)
+  right at the stated ~6:30pm CDT pickup. Launch-quality comparison
+  deliberately WITHHELD: the pickup cohort is right-censored (young
+  tokens haven't matured); re-read after ~1h. BTC regime tape's first
+  evening: 138 ticks, quiet risk-on drift to the session high - matches
+  the "pickup is news-conditional, news quiet" claim. The window ratio
+  = the first measured Session Gate reading (band numbers private,
+  Sec6). R-5 discovery kept pace at pickup volume.
+- **MATURATION RE-READ (2026-07-08 ~01:52Z):** once the pickup cohort
+  fully matured, the earlier lean reversed - launch-QUALITY did NOT
+  track the rhythm. The matured pickup window converted at a LOWER
+  rate than the lull, coinciding with BTC pulling back off its session
+  high. Key generalizable finding for the Session Gate design: **volume
+  increase != quality increase.** A gate keyed on activity alone would
+  have opened on a worse cohort tonight. BTC context (regime_ticks) is
+  necessary alongside birth-rate, not optional. Band numbers private
+  per Sec6.
+- **SWEET-SPOT READ #1 (2026-07-07 ~22:50Z, lull window) + R-7 LIVE:**
+  peak tracking operational - 1,877 births in the ~1h window, 1,636
+  peak-tracked (87% coverage), full percentile distribution measured;
+  time-to-peak measured for the high-peak cohort (FAST - single-digit
+  minutes at the median, strengthening the R-6 WebSocket case). Band
+  analysis delivered to the Architect privately (Sec6 - no thresholds
+  in this repo). R-7 BTC regime tape flowing (first tick 22:27Z via
+  QuickNode Base RPC as a Worker SECRET - read-only key, blast radius =
+  RPC quota only; public RPC rejected Worker IPs). Bulk expiry correct
+  (0 expired; oldest clean row < 24h). Young-set 1,834 vs 900/tick
+  sweep = ~2min sampling cadence. Regime-pair read (pickup window)
+  fires ~00:45Z.
+- **ACCEPTANCE-3 READ (2026-07-07 ~21:25Z, ~6.2h clean tape) - the
+  tape's first honest verdict:**
+  - **(1) Graduation rate 1.59%** (126 / 7,926) vs the ~2% lore prior -
+    CONSISTENT, and it's a LOWER BOUND (see R-5 below), so true rate
+    likely sits right at ~2%. Acceptance 1 PASS.
+  - **(2) Segmentation LIVE (graduation_dex working):** TRUE graduations
+    = **pumpswap 31** (avg MC ~$25.6k); **meteora 1** = a SIDE-POOL
+    ($5k MC, not a $69k migration - the bait population the rug-gate
+    wants); **94 NULL** = pre-0004-redeploy, unsegmentable (honest
+    bucket). Acceptance 2 PASS.
+  - **(3) True-graduation (pumpswap) birth->graduation gap: p25 23min /
+    median 41min / p75 56min** vs the ~20-min prior. MEASURED ~2x the
+    prior BUT polling-latency-inflated (R-5) - real median sits between
+    20 and 41 min; the prior is not refuted, the bias is now understood.
+    Winners-only survivorship stat. Acceptance 3 INFORMATIVE (pin after
+    R-5).
+  - **(4) Curve telemetry median ~15 min** (NOT ~1 cron tick as the
+    handoff expected) - this is the R-5 tell: it measures OUR poll
+    cadence, not DexScreener indexing.
+  - **(5) Expiry 0** (correct at 6h; 24h threshold). **Births/hr 1,277**
+    - far above expectations.
+- **R-5 FINDING (from the Acceptance read) - discovery throughput
+  can't keep up:** at 1,277 births/hr with 24h expiry, the watching set
+  heads toward ~30k; at DISCOVERY_BATCH=300/tick x 60 = 18k checks/hr,
+  each token is polled only ~0.6x/hr (~once per 1.7h) - but graduation
+  happens in the first ~23-56 min. So we UNDER-SAMPLE the graduation
+  window: grad rate is a lower bound, gap timing inflated. FIX =
+  age-prioritized discovery (poll young tokens where graduation actually
+  happens, let old ones age out) - prerequisite for R-4 peak-tracking to
+  be meaningful. Not yet built.
+- **Session Gate signal:** graduation-rate-per-hour is the measured §0
+  regime reading (as data, not feel) - flagged for the council.
+- **Repo state at read time:** PR #9 OPEN (mergeable_state clean, not
+  merged); `main` protected:true (JohnRules holding); R-3 + graduation_dex
+  builds deployed (20:21Z / 15:04Z).
+- **R-1/R-2 DEPLOYED (2026-07-07 15:04:44Z, verified):** new predicate confirmed executing in
+  production (116 rows carry curve_pair_seen_ms within minutes; only
+  R-1 writes it). Pre-wipe tape shows the poison plainly: 1113/1245
+  births "graduated" (89% vs the ~2% real prior) - old-predicate false
+  discoveries. Production-touch record: 14:54:25Z console re-upload =
+  Architect terminal, ACCIDENTAL (deploy chained from repo root again;
+  repo seat's chained commands at fault - chains retired), byte-
+  identical to production, harmless. OPSEC: the Workers-edit API token
+  was pasted into the relay chat 2026-07-07 - treat as BURNED; the
+  Architect rolls it after today's terminal work.
+- **R-1/R-2 spec record (RADAR_FIX_R1R2 handoff):** first audit found the discovery predicate
   measured DexScreener's ~60s bonding-curve indexing (dexId 'pumpfun'),
   not the market. Fixed: 'discovered' now = GRADUATION (first
   non-pumpfun pair, $69K surface); curve sighting kept as write-once

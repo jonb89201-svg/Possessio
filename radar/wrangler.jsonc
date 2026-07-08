@@ -35,9 +35,10 @@
     // births isn't a birth radar. If this ever starts demanding a JWT, the
     // fallback seams from the handoff apply (PumpPortal WS via Durable
     // Object; keyed feeds last resort).
-    "PUMPFUN_FEED_URL": "https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=true",
+    "PUMPFUN_FEED_URL": "https://frontend-api-v3.pump.fun/coins?offset=0&limit=300&sort=created_timestamp&order=DESC&includeNsfw=true", // R-3: limit 50->300 (feed default is 1000) so a burst minute (>50 births) is fully captured, not silently truncated
     "DEXSCREENER_TOKEN_URL": "https://api.dexscreener.com/latest/dex/tokens/", // official public API
-    "DISCOVERY_BATCH": "300", // tokens swept per tick; batched 30/request (R-2) = <=10 req/tick, well under DexScreener 300 req/min
-    "EXPIRE_HOURS": "24" // birth older than this without discovery -> status 'expired'
+    "DISCOVERY_BATCH": "900", // R-5: young tokens swept per tick; batched 30/request = <=30 req/tick, well under DexScreener 300 req/min
+    "EXPIRE_HOURS": "24", // birth older than this without discovery -> status 'expired' (bulk sweep)
+    "YOUNG_WINDOW_MIN": "30" // R-8 (2026-07-08): tightened 120->30 per the Architect - trading only cares about <30min coins; tape's own data (median time-to-peak 8min) supports it. TRADEOFF: true graduations (measured median gap 41min) mostly happen AFTER 30min and will now go unrecorded (token ages out of the poll window, sits watching until 24h auto-expire). Population-level graduation-rate stats are DEGRADED from here forward; tonight's validated priors (1.59% grad rate) stand as the last clean measurement.
   }
 }

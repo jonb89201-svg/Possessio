@@ -10,8 +10,9 @@ const NOW_STALE = Date.now() - 25 * 3600_000; // >24h - must expire
 
 function mockDb(watchingRows) {
   const batched = [];
+  const runs = [];
   const db = {
-    batched,
+    batched, runs,
     prepare(sql) {
       return {
         bind(...args) {
@@ -19,6 +20,7 @@ function mockDb(watchingRows) {
             sql, args,
             all: async () => ({ results: watchingRows }),
             first: async () => null,
+            run: async () => { runs.push({ sql, args }); return { success: true }; },
           };
         },
       };
@@ -33,10 +35,13 @@ function env(db, fetchImpl) {
   return {
     RADAR_DB: db,
     DEXSCREENER_TOKEN_URL: "https://dex.example/tokens/",
-    DISCOVERY_BATCH: "300",
+    DISCOVERY_BATCH: "900",
     EXPIRE_HOURS: "24",
+    YOUNG_WINDOW_MIN: "120",
   };
 }
+
+const ENV_BIRTH = { PUMPFUN_FEED_URL: "https://feed.example/coins", DEXSCREENER_TOKEN_URL: "https://dex.example/tokens/", DISCOVERY_BATCH: "300", EXPIRE_HOURS: "24" };
 
 const pairsResponse = (pairs) => ({
   ok: true, status: 200, json: async () => ({ pairs }),
@@ -63,7 +68,24 @@ test("non-pumpfun pair -> GRADUATION: discovered with gap + grad mcap", async ()
   assert.ok(disc, "graduation fires discovery");
   assert.equal(disc.args[0], "BBB");
   assert.equal(disc.args[2], 71000, "mcap from the GRADUATION pair, not the curve");
+  assert.equal(disc.args[3], "raydium", "graduation_dex = the triggering non-pumpfun dex (0004)");
   assert.ok(db.batched.some((s) => s.sql.includes("curve_pair_seen_ms")), "curve telemetry still recorded");
+  const peak = db.batched.find((s) => s.sql.includes("mc_peak_usd"));
+  assert.ok(peak, "R-4: peak MC recorded");
+  assert.equal(peak.args[1], 71000, "peak = max marketCap across pairs (the graduation pair)");
+});
+
+test("R-4: curve pump WITHOUT graduation records peak, stays watching (the Binface case)", async () => {
+  // Token on the curve at $25k - pumped past the buy zone, never graduated.
+  // This is EXACTLY the trade that was invisible before R-4.
+  const db = mockDb([{ token_address: "PUMP", pumpfun_first_seen_ms: NOW_FRESH }]);
+  await discoveryScan(env(db, async () => pairsResponse([
+    { dexId: "pumpfun", baseToken: { address: "PUMP" }, marketCap: 25000 },
+  ])));
+  const peak = db.batched.find((s) => s.sql.includes("mc_peak_usd"));
+  assert.ok(peak, "peak recorded for a pumping-but-not-graduated token");
+  assert.equal(peak.args[1], 25000, "peak = the curve MC");
+  assert.ok(!db.batched.some((s) => s.sql.includes("status='discovered'")), "no graduation - stays watching");
 });
 
 test("no pairs at all -> only last_checked bump", async () => {
@@ -73,12 +95,15 @@ test("no pairs at all -> only last_checked bump", async () => {
   assert.ok(db.batched[0].sql.includes("SET last_checked_ms"));
 });
 
-test(">24h without graduation -> expired, no fetch for that token", async () => {
+test("R-5: aged-out tokens expire via ONE bulk write, never polled", async () => {
+  // young-select returns only fresh rows; the bulk expiry is a separate .run().
   let fetches = 0;
-  const db = mockDb([{ token_address: "DDD", pumpfun_first_seen_ms: NOW_STALE }]);
+  const db = mockDb([]); // no young tokens this tick
   await discoveryScan(env(db, async () => { fetches++; return pairsResponse([]); }));
-  assert.equal(fetches, 0, "expired rows never reach the network");
-  assert.ok(db.batched[0].sql.includes("status='expired'"));
+  assert.equal(fetches, 0, "nothing polled when the young set is empty");
+  const exp = db.runs.find((r) => r.sql.includes("status='expired'"));
+  assert.ok(exp, "bulk expiry UPDATE ran");
+  assert.ok(exp.sql.includes("pumpfun_first_seen_ms < ?2"), "expires by age, in bulk");
 });
 
 test("R-2: 65 live tokens -> 3 batched requests of <=30, all swept", async () => {
@@ -107,4 +132,55 @@ test("429 -> yields the tick politely, earlier writes still land", async () => {
   }));
   assert.equal(call, 2, "stopped at the 429");
   assert.equal(db.batched.length, 30, "first chunk's writes still landed");
+});
+
+// ---- R-3: birthScan coverage (the winning-token-missed fix) ----
+import { birthScan } from "../watcher.ts";
+
+function birthDb() {
+  const batched = [];
+  return {
+    batched,
+    prepare(sql) { return { bind: (...args) => ({ sql, args }) }; },
+    batch: async (stmts) => { batched.push(...stmts); },
+    // birthScan does not read; only writes via batch.
+  };
+}
+
+test("R-3: birthScan batches EVERY birth in a 120-item burst (no 50/100 cap)", async () => {
+  const items = Array.from({ length: 120 }, (_, i) => ({
+    mint: "M" + i, symbol: "S" + i, created_timestamp: 1783456000000 + i,
+    usd_market_cap: 2300 + i,
+  }));
+  const db = birthDb();
+  globalThis.fetch = async () => ({ ok: true, json: async () => items });
+  await birthScan({ ...ENV_BIRTH, RADAR_DB: db });
+  assert.equal(db.batched.length, 120, "all 120 births captured — no silent truncation");
+  assert.ok(db.batched.every((s) => s.sql.includes("INSERT INTO births")), "all inserts");
+  // usd_market_cap, never raw market_cap, in the mcap bind slot (index 6)
+  assert.equal(db.batched[0].args[6], 2300, "usd_market_cap read (unit rule)");
+});
+
+test("R-3: idle gate still holds when the feed URL is empty", async () => {
+  const db = birthDb();
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; return { ok: true, json: async () => [] }; };
+  await birthScan({ ...ENV_BIRTH, RADAR_DB: db, PUMPFUN_FEED_URL: "" });
+  assert.equal(fetched, false, "no fetch when PUMPFUN_FEED_URL unset");
+  assert.equal(db.batched.length, 0);
+});
+
+// ---- R-7: BTC regime tape ----
+import { btcScan } from "../watcher.ts";
+
+test("R-7: btcScan decodes latestRoundData and writes one regime tick", async () => {
+  // real response shape captured live 2026-07-07 (answer=$63,369.45, 8 dec)
+  const hex = "0x0000000000000000000000000000000000000000000000020000000000006657000000000000000000000000000000000000000000000000000005c36f5a1c10000000000000000000000000000000000000000000000000000000006a4d7651000000000000000000000000000000000000000000000000000000006a4d765f0000000000000000000000000000000000000000000000020000000000006657";
+  const runs = [];
+  const db = { prepare: (sql) => ({ bind: (...args) => ({ run: async () => { runs.push({ sql, args }); } }) }) };
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: hex }) });
+  await btcScan({ RADAR_DB: db });
+  assert.equal(runs.length, 1, "one tick written");
+  assert.ok(runs[0].sql.includes("regime_ticks"));
+  assert.ok(Math.abs(runs[0].args[1] - 63369.45) < 0.01, "price decoded: $63,369.45");
 });
