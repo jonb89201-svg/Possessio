@@ -261,6 +261,15 @@ failure - see `STATEMENT_console_markets_final.md`.
   Clean-tick verification + the 6h Acceptance-3 read are scheduled
   (15:15Z and ~21:21Z wake-ups). PR #9 (branch -> main) open, merge
   pending at the Architect's hand.
+- **REGIME-PAIR READ (2026-07-08 00:45Z):** the Architect's session
+  rhythm DIRECTIONALLY CONFIRMED - birth rate rose ~14% (21->24/min)
+  right at the stated ~6:30pm CDT pickup. Launch-quality comparison
+  deliberately WITHHELD: the pickup cohort is right-censored (young
+  tokens haven't matured); re-read after ~1h. BTC regime tape's first
+  evening: 138 ticks, quiet risk-on drift to the session high - matches
+  the "pickup is news-conditional, news quiet" claim. The window ratio
+  = the first measured Session Gate reading (band numbers private,
+  Sec6). R-5 discovery kept pace at pickup volume.
 - **SWEET-SPOT READ #1 (2026-07-07 ~22:50Z, lull window) + R-7 LIVE:**
   peak tracking operational - 1,877 births in the ~1h window, 1,636
   peak-tracked (87% coverage), full percentile distribution measured;
