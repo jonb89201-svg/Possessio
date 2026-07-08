@@ -270,6 +270,15 @@ failure - see `STATEMENT_console_markets_final.md`.
   the "pickup is news-conditional, news quiet" claim. The window ratio
   = the first measured Session Gate reading (band numbers private,
   Sec6). R-5 discovery kept pace at pickup volume.
+- **MATURATION RE-READ (2026-07-08 ~01:52Z):** once the pickup cohort
+  fully matured, the earlier lean reversed - launch-QUALITY did NOT
+  track the rhythm. The matured pickup window converted at a LOWER
+  rate than the lull, coinciding with BTC pulling back off its session
+  high. Key generalizable finding for the Session Gate design: **volume
+  increase != quality increase.** A gate keyed on activity alone would
+  have opened on a worse cohort tonight. BTC context (regime_ticks) is
+  necessary alongside birth-rate, not optional. Band numbers private
+  per Sec6.
 - **SWEET-SPOT READ #1 (2026-07-07 ~22:50Z, lull window) + R-7 LIVE:**
   peak tracking operational - 1,877 births in the ~1h window, 1,636
   peak-tracked (87% coverage), full percentile distribution measured;
