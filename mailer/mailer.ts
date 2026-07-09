@@ -28,11 +28,11 @@ function pitchEmail(lead: Lead, fromName: string) {
   const subject = `Available for contract work / collaboration — real, live proof of what I build`;
   const text = `Hi ${owner},
 
-I'm a developer open to collaborating or taking on contract work if the scope and price line up. Rather than just describe what I do, here's real, live proof instead of a portfolio page:
+I'm a developer open to collaborating or taking on contract work if the scope and price line up. Rather than just describe what I do, here's real, live proof — two deployed products, not a portfolio page:
 
-https://superfoods-logan.jonb89201.workers.dev
+https://superfoods-logan.jonb89201.workers.dev — an installable app with live inventory sync from a real vendor data feed, real-time pricing, an Android/Play Store packaging pipeline, and its own backend. Live and in use right now.
 
-That's a fully built, deployed product — an installable app with live inventory sync from a real vendor data feed, real-time pricing, an Android/Play Store packaging pipeline, and its own backend infrastructure. Not a demo, not a mockup — live and in use right now.
+https://possessio.io — a deployed multi-chain DeFi console (in preview): wallet integration, treasury dashboard, smart-contract panels, and the Solidity contracts behind it. Not demos, not mockups.
 
 Background: Cloudflare Workers / serverless architecture, PWA development, real-time data integration from third-party platforms, crypto/payment protocol integration (x402).
 

@@ -12,11 +12,11 @@ Full-Stack Developer — I build and run complete systems, frontend to smart con
 
 ## Overview
 
-Most profiles show you a mockup. I'll show you a live product instead:
+Most profiles show you a mockup. I'll show you two live products instead:
 
-**https://superfoods-logan.jonb89201.workers.dev**
+**https://superfoods-logan.jonb89201.workers.dev** — an installable app I built end-to-end for a small-town grocery store: live inventory synced from the store's vendor data feed (~600 items, real prices and photos, updated automatically), the weekly printed ad as its own curated view, offline support, and an Android/Play Store packaging pipeline. Serverless backend, its own database, self-updating. Built solo, deployed, in use right now.
 
-I built that end-to-end for a small-town grocery store — an installable app with live inventory synced from the store's vendor data feed (~600 items, real prices and photos, updated automatically), the weekly printed ad as its own curated view, offline support, and an Android/Play Store packaging pipeline on top. Serverless backend, its own database, self-updating. Built solo, deployed, in use right now.
+**https://possessio.io** — a deployed DeFi console (currently in preview): multi-chain wallet integration (Base / Ethereum), a treasury dashboard, dynamic smart-contract panels, and a guided launch wizard. The frontend is live; the on-chain deploy path is intentionally gated off until the contracts are ratified for mainnet. Same person built the Solidity contracts behind it.
 
 I work the whole stack — not "I know React and can fake the rest," but genuinely front-to-back:
 
@@ -37,4 +37,5 @@ How I work: I verify before I ship, I tell you what actually happened — includ
 
 - **Rate** is the first thing clients filter on. Pick a number even if you adjust it later — a blank rate reads as "doesn't know their worth." For your range of skills, don't lowball; mid-tier full-stack on Upwork commonly runs $40–85/hr, specialized (crypto/edge) higher.
 - **Crypto placement:** kept as one pillar among many, not the lead — that way plain web-app clients aren't scared off, but the differentiator is still there for anyone who wants it. Say the word if you'd rather foreground it.
-- **The live link is your strongest asset.** Keep it working — if the Superfoods app ever goes down, this pitch loses its punch. (Worth pointing the eventual possessio.io portfolio page at it too.)
+- **The two live links are your strongest asset.** Keep them working — if either app goes down, the pitch loses its punch. Two live products (one finished consumer app, one sophisticated crypto console) is a stronger one-two than either alone.
+- **possessio.io is framed as "preview" on purpose** — it's true and it's still impressive. Never claim it moves real funds yet; the honesty is part of what makes the whole pitch credible.
