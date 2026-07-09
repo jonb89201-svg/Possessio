@@ -28,11 +28,17 @@ function pitchEmail(lead: Lead, fromName: string) {
   const subject = `Available for contract work / collaboration — real, live proof of what I build`;
   const text = `Hi ${owner},
 
-I'm a developer open to collaborating or taking on contract work if the scope and price line up. Rather than just describe what I do, here's real, live proof — two deployed products, not a portfolio page:
+I'm a systems architect and developer open to collaborating or taking on contract work if the scope and price line up. Rather than describe what I do, here's shipped, verifiable proof:
 
-https://superfoods-logan.jonb89201.workers.dev — an installable app with live inventory sync from a real vendor data feed, real-time pricing, an Android/Play Store packaging pipeline, and its own backend. Live and in use right now.
+Live on Base mainnet (verifiable on BaseScan):
+- PossessioPayments (0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91) — non-custodial merchant payment processor
+- LSTExchangeRate (0xDDb75e974d99FcF95E241adbFD376861c47a8548) — fail-closed cbETH valuation guard
 
-https://possessio.io — a deployed multi-chain DeFi console (in preview): wallet integration, treasury dashboard, smart-contract panels, and the Solidity contracts behind it. Not demos, not mockups.
+Both are part of POSSESSIO, a non-custodial DeFi protocol on Base: Uniswap V4 hooks, Chainlink automation, 690 passing tests. I architected it and directed a multi-model AI build through rigorous verification — built mobile-only.
+
+And a live consumer app built solo end-to-end: https://superfoods-logan.jonb89201.workers.dev — installable, live inventory sync from a real vendor feed, Play Store pipeline, its own backend.
+
+Solidity/Foundry, Cloudflare Workers, PWAs, real-time data integration, and AI-orchestrated builds. Not demos — deployed.
 
 Background: Cloudflare Workers / serverless architecture, PWA development, real-time data integration from third-party platforms, crypto/payment protocol integration (x402).
 

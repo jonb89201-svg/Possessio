@@ -1,41 +1,46 @@
 # Freelance Profile — Jon Solo
 
-_Paste into Upwork / Fiverr / Contra / a portfolio page. Fill the two [BRACKETS] before posting._
+_Paste into Upwork / Fiverr / Contra / a portfolio page. Fill the [RATE] bracket before posting._
 
 ---
 
 ## Headline
 
-Full-Stack Developer — I build and run complete systems, frontend to smart contract. Live proof, not mockups.
+Systems architect & AI-orchestration developer — I design production systems and direct multi-AI builds that ship. Live mainnet contracts + live apps as proof.
 
 ---
 
 ## Overview
 
-Most profiles show you a mockup. I'll show you two live products instead:
+Most profiles show a mockup. I'll show you shipped, verifiable work instead.
 
-**https://superfoods-logan.jonb89201.workers.dev** — an installable app I built end-to-end for a small-town grocery store: live inventory synced from the store's vendor data feed (~600 items, real prices and photos, updated automatically), the weekly printed ad as its own curated view, offline support, and an Android/Play Store packaging pipeline. Serverless backend, its own database, self-updating. Built solo, deployed, in use right now.
+**Live on Base mainnet — check them on BaseScan right now:**
+- **PossessioPayments** `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` — non-custodial merchant payment processor (Stripe/PayPal-compatible settlement, treasury routing, zero protocol custody).
+- **LSTExchangeRate** `0xDDb75e974d99FcF95E241adbFD376861c47a8548` — fail-closed dual-source cbETH valuation guard (Chainlink feed + Aerodrome TWAP, halts on >2% divergence).
 
-**https://possessio.io** — a deployed DeFi console (currently in preview): multi-chain wallet integration (Base / Ethereum), a treasury dashboard, dynamic smart-contract panels, and a guided launch wizard. The frontend is live; the on-chain deploy path is intentionally gated off until the contracts are ratified for mainnet. Same person built the Solidity contracts behind it.
+Those are part of POSSESSIO — a deterministic, non-custodial DeFi protocol on Base with an Ethereum-L1 settlement extension: Uniswap V4 hooks (CREATE3 salt-mined, bytecode-independent addresses), Chainlink Automation, a per-merchant institutional-settlement architecture, and **690 passing tests across 33 suites**. I architected the system and directed a multi-model AI build (Claude, GPT, Gemini, Grok) through rigorous verification — designing the principles, routing the work, adjudicating decisions, and gating every deploy on a green two-chain test sweep. The entire body of work was produced **mobile-only** — built and shipped from a phone.
 
-I work the whole stack — not "I know React and can fake the rest," but genuinely front-to-back:
+**And a live consumer app, built solo end-to-end:**
+- **https://superfoods-logan.jonb89201.workers.dev** — an installable app for a small-town grocery store: live inventory synced from the store's vendor data feed (~600 items, real prices and photos, auto-updating), the weekly ad as its own curated view, offline support, and an Android/Play Store packaging pipeline. Serverless backend, its own database, self-updating. In use right now.
 
-- **Frontend** — Progressive Web Apps, service workers, offline caching, responsive UI, real asset/font pipelines.
-- **Backend & edge** — Cloudflare Workers, D1 (edge SQLite), KV, cron-driven data pipelines, secrets/infra. I build systems that run themselves: one of mine polls live market data every 60 seconds, self-corrects its own measurement biases, and has run unattended for days.
-- **Data integration** — reverse-engineering client-rendered SPAs and undocumented third-party APIs into clean, normalized, usable data feeds.
-- **Mobile** — PWA-to-Play-Store packaging via Trusted Web Activities, subscription/billing paths.
-- **Smart contracts & payments** — Solidity/Foundry, EVM on-chain reads, the x402 payment protocol, EIP-3009, Chainlink price feeds.
-- **Infra & delivery** — DNS, domains, deployment across multiple services, and the discipline to verify before I ship.
+### What I actually do
 
-How I work: I verify before I ship, I tell you what actually happened — including when something fails — and I'd rather scope a job honestly than oversell it. Open to contract work, one-off builds, or ongoing collaboration if the scope and price line up.
+- **Systems architecture & AI orchestration** — I design the system, then direct multiple AI models to build it under tight structural discipline: documented principles, procedural governance, verification after every step. This is how POSSESSIO shipped — and it's a repeatable way to build fast without sacrificing rigor.
+- **Smart contracts** — Solidity, Foundry, Uniswap V4 hooks, CREATE3, Chainlink (feeds + Automation), adversarial/invariant/fork testing. Live mainnet deploys, not testnet demos.
+- **Backend & edge** — Cloudflare Workers, D1, KV, cron-driven pipelines. Self-running systems: one polls live market data every 60s, self-corrects its own measurement biases, and has run unattended for days.
+- **Frontend & mobile** — PWAs, service workers, offline caching, responsive UI, PWA-to-Play-Store packaging.
+- **Data integration** — reverse-engineering client-rendered SPAs and undocumented APIs into clean, normalized feeds.
 
-**Rate:** [FILL IN — e.g. "$__/hr" or "Projects starting at $___"]
+How I work: verify before shipping, report what actually happened (including failures), and scope honestly rather than oversell. Open to contract work, one-off builds, or ongoing collaboration if the scope and price line up.
+
+**Rate:** [RATE — e.g. "$__/hr" or "Projects starting at $___"]
 
 ---
 
 ## Notes for you (delete before posting)
 
-- **Rate** is the first thing clients filter on. Pick a number even if you adjust it later — a blank rate reads as "doesn't know their worth." For your range of skills, don't lowball; mid-tier full-stack on Upwork commonly runs $40–85/hr, specialized (crypto/edge) higher.
-- **Crypto placement:** kept as one pillar among many, not the lead — that way plain web-app clients aren't scared off, but the differentiator is still there for anyone who wants it. Say the word if you'd rather foreground it.
-- **The two live links are your strongest asset.** Keep them working — if either app goes down, the pitch loses its punch. Two live products (one finished consumer app, one sophisticated crypto console) is a stronger one-two than either alone.
-- **possessio.io is framed as "preview" on purpose** — it's true and it's still impressive. Never claim it moves real funds yet; the honesty is part of what makes the whole pitch credible.
+- **Rate** is the first filter clients apply. Pick a number even if you adjust later. Your range (live mainnet Solidity + full-stack + AI orchestration) is not entry-level — don't lowball. Blockchain/Solidity contract work commonly runs $75–150+/hr; you can anchor high and let scope negotiate down.
+- **The AI-orchestration framing is your differentiator, not a liability.** It's true to the repo (the README says exactly this), it's rare, and "ships verified mainnet contracts by directing a multi-AI build" is a 2026 skill most devs can't claim. It survives a client reading the repo — which is the whole point.
+- **The verifiable mainnet addresses are your strongest asset.** Anyone can paste them into BaseScan and confirm real, deployed code. That's proof no mockup can match — keep them front and center.
+- **Superfoods stays too** — it proves you also build and ship complete products solo, front to back, not just orchestrate. The two together (solo consumer app + directed protocol build) cover the full range.
+- **Repo:** POSSESSIO is currently private. If you point clients at it, you'll need to grant access or make it public — decide before you cite "read the source" as a selling point.
