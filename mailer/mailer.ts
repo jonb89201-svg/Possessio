@@ -17,7 +17,7 @@ export interface MailerEnv {
 
 interface Lead {
   id: number;
-  store_name: string;
+  store_name: string; // holds the company/entity name generically, not grocery-specific
   town: string | null;
   contact_email: string;
   contact_name: string | null;
@@ -25,19 +25,18 @@ interface Lead {
 
 function pitchEmail(lead: Lead, fromName: string) {
   const owner = lead.contact_name || "there";
-  const subject = `A working weekly-ad app for ${lead.store_name} — built, live, ready to show you`;
+  const subject = `Available for contract work / collaboration — real, live proof of what I build`;
   const text = `Hi ${owner},
 
-I'm a local developer, and I recently built a real, working app for an independent grocery store — not a mockup, an actual installable app people can put on their phone right now:
+I'm a developer open to collaborating or taking on contract work if the scope and price line up. Rather than just describe what I do, here's real, live proof instead of a portfolio page:
 
-- This week's real prices and photos, synced straight from the store's own data
-- Works like a native app (installs to the home screen, works offline)
-- The weekly printed ad shown as its own section, alongside the full current inventory
-- No extra work on your end — I handle the setup and the weekly update
+https://superfoods-logan.jonb89201.workers.dev
 
-I'd like to show you the real thing running, not just describe it. Takes five minutes, and there's no cost or commitment to just take a look.
+That's a fully built, deployed product — an installable app with live inventory sync from a real vendor data feed, real-time pricing, an Android/Play Store packaging pipeline, and its own backend infrastructure. Not a demo, not a mockup — live and in use right now.
 
-Would you have a few minutes this week for me to send over the link or stop by?
+Background: Cloudflare Workers / serverless architecture, PWA development, real-time data integration from third-party platforms, crypto/payment protocol integration (x402).
+
+If you've got overflow work, a project that needs another set of hands, or something specific in mind, I'd like to hear about it.
 
 Thanks,
 ${fromName}`;
