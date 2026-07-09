@@ -1,0 +1,5 @@
+{
+  "name": "possessio-mailer",
+  "private": true,
+  "description": "Sends real outreach emails via Resend, cron-triggered, small paced batches. Leads inserted directly into D1 by the repo seat (WebSearch-verified only, never fabricated addresses)."
+}

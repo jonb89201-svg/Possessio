@@ -1,0 +1,24 @@
+// possessio-mailer — sends real outreach emails via Resend, paced and
+// cron-triggered (same pattern as possessio-radar). Deploy:
+//   cd mailer && npm install && npx wrangler deploy
+// Then set the one secret this worker needs:
+//   npx wrangler secret put RESEND_API_KEY
+{
+  "name": "possessio-mailer",
+  "main": "mailer.ts",
+  "compatibility_date": "2026-07-09",
+  "triggers": { "crons": ["*/30 * * * *"] }, // every 30 min, small batch each time -- deliberate pace, not a blast
+
+  "d1_databases": [
+    {
+      "binding": "LEADS_DB",
+      "database_name": "possessio-mailer-leads",
+      "database_id": "4ccf7d44-2756-4801-9dfe-faa49888b74b"
+    }
+  ],
+  "vars": {
+    "FROM_EMAIL": "jon@possessio.io",
+    "FROM_NAME": "Jon Solo",
+    "MAX_PER_TICK": "2"
+  }
+}
