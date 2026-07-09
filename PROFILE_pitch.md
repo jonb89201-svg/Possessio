@@ -6,13 +6,13 @@ _Paste into Upwork / Fiverr / Contra / a portfolio page. Fill the [RATE] bracket
 
 ## Headline
 
-Systems architect & AI-orchestration developer — I design production systems and direct multi-AI builds that ship. Live mainnet contracts + live apps as proof.
+Systems architect & AI-orchestration developer — I ship live mainnet contracts and full-stack apps, built entirely from a phone. Verifiable proof, not mockups.
 
 ---
 
 ## Overview
 
-Most profiles show a mockup. I'll show you shipped, verifiable work instead.
+Most profiles show a mockup. I'll show you shipped, verifiable work instead — and every line of it was built and deployed **mobile-only, from a phone.** Live Solidity on Base mainnet, a full-stack consumer app, a self-running data platform: no desktop, no "we used a real computer for the hard parts." That's not a gimmick — mobile-only forces a discipline (one command at a time, atomic commits, verify after every push) that shows up directly in the rigor of the work.
 
 **Live on Base mainnet — check them on BaseScan right now:**
 - **PossessioPayments** `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` — non-custodial merchant payment processor (Stripe/PayPal-compatible settlement, treasury routing, zero protocol custody).
@@ -42,5 +42,6 @@ How I work: verify before shipping, report what actually happened (including fai
 - **Rate** is the first filter clients apply. Pick a number even if you adjust later. Your range (live mainnet Solidity + full-stack + AI orchestration) is not entry-level — don't lowball. Blockchain/Solidity contract work commonly runs $75–150+/hr; you can anchor high and let scope negotiate down.
 - **The AI-orchestration framing is your differentiator, not a liability.** It's true to the repo (the README says exactly this), it's rare, and "ships verified mainnet contracts by directing a multi-AI build" is a 2026 skill most devs can't claim. It survives a client reading the repo — which is the whole point.
 - **The verifiable mainnet addresses are your strongest asset.** Anyone can paste them into BaseScan and confirm real, deployed code. That's proof no mockup can match — keep them front and center.
+- **Mobile-only is a headline, not a footnote.** "Shipped live mainnet DeFi contracts from a phone" is a story that makes people stop scrolling. It signals discipline and resourcefulness in a way a normal dev résumé can't. Lean on it.
 - **Superfoods stays too** — it proves you also build and ship complete products solo, front to back, not just orchestrate. The two together (solo consumer app + directed protocol build) cover the full range.
 - **Repo:** POSSESSIO is currently private. If you point clients at it, you'll need to grant access or make it public — decide before you cite "read the source" as a selling point.

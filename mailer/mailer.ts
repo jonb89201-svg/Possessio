@@ -34,7 +34,7 @@ Live on Base mainnet (verifiable on BaseScan):
 - PossessioPayments (0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91) — non-custodial merchant payment processor
 - LSTExchangeRate (0xDDb75e974d99FcF95E241adbFD376861c47a8548) — fail-closed cbETH valuation guard
 
-Both are part of POSSESSIO, a non-custodial DeFi protocol on Base: Uniswap V4 hooks, Chainlink automation, 690 passing tests. I architected it and directed a multi-model AI build through rigorous verification — built mobile-only.
+Both are part of POSSESSIO, a non-custodial DeFi protocol on Base: Uniswap V4 hooks, Chainlink automation, 690 passing tests. I architected it and directed a multi-model AI build through rigorous verification — and the entire thing was built and deployed from a phone, mobile-only. No desktop.
 
 And a live consumer app built solo end-to-end: https://superfoods-logan.jonb89201.workers.dev — installable, live inventory sync from a real vendor feed, Play Store pipeline, its own backend.
 
