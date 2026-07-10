@@ -35,18 +35,26 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## Status board (what's real, honestly tiered)
 
-**Live & code-verified on Base mainnet:**
-- PossessioPayments `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91`
-- LSTExchangeRate `0xDDb75e974d99FcF95E241adbFD376861c47a8548`
-- PLATE v1 `0x726D6a7A598A4D12aDe7019Dc2598D955391E298` (dormant)
+**Tier 1 — Live & code-verified on Base mainnet** (deployed; verify on BaseScan):
+- PossessioPayments `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` — payment engine; also the shared treasury sink the factory routes fees to
+- LSTExchangeRate `0xDDb75e974d99FcF95E241adbFD376861c47a8548` — fail-closed cbETH valuation guard
+- PLATE v1 `0x726D6a7A598A4D12aDe7019Dc2598D955391E298` — treasury-engine token (dormant)
 
-**Fork-tested, ready to deploy:** V3 treasury engine (`POSSESSIO_v2-6-3.sol`), L1Anchor (Ethereum settlement)
+**Tier 2 — Fork-tested, ready to deploy** (fork-proven; mainnet deploy pending):
+- V3 treasury engine (`src/POSSESSIO_v2-6-3.sol`) — Uniswap V4 hook, CREATE3 3/3
+- L1Anchor (`src/L1Anchor.sol`) — per-merchant Ethereum settlement → MAVAN staking + Morpho lending (MAVAN interface still a placeholder)
 
-**Built, pre-fork/deploy:** x402Core (mock-green; fork run + deploy pending)
+**Tier 3 — Built & forge-verified, deploy pending** (real code + passing tests in the public repo; NOT deployed; pending final pre-deploy sweep):
+- **PossessioFactory** (`src/PossessioFactory.sol`) — the deployment-fee engine. One atomic tx: EIP-3009 USDC fee settle → forward to the live Payments treasury sink → CreateX deploy → ownership to the caller. Immutable `DEPLOYMENT_FEE`, no admin setter, USDC-only; a failed deploy unwinds the whole tx, fee included. Forge-verified (17 tests). **This is the "no factory configured for chain 8453" the console shows — built, not yet deployed.**
+- **PossessioSaltPool** (`src/PossessioSaltPool.sol`) — CREATE3 pre-mined salt pool the factory draws from. Built & tested (21 tests).
+- **PossessioTestnetLaunchPool** (`src/PossessioTestnetLaunchPool.sol`) — Base Sepolia ONLY fuel pool: aggregates faucet drips; operator-gated stipends cover console testnet launches (gas + factory fee). Chain-locked to 84532 (structurally cannot deploy on mainnet), role-separated, `PoolEmpty()` guard. Built & tested. **DEPLOY: address to be recovered from a prior session. FUNDING: still to fill (see to-do).**
 
-**Running:** the console (possessio.io), the Solana radar, the Superfoods app
+**Tier 4 — Built, pre-fork-run & pre-deploy**:
+- **x402Core** (`src/PossessioX402Core.sol`) — the reusable pay-per-call payment engine (EIP-3009); the foundation the data-product APIs (and PITI) are built on. Testnet deploy lane built (`script/DeployX402Testnet.s.sol`, ratified *placeholder* economics). Tests pass OFFLINE against mocks (`test/X402TestnetMocks.sol`) + decay suite (ffi). **PENDING, in order:** (1) fork run — `X402_FORK_RPC=<Base Sepolia RPC>` against real chain state; (2) testnet `--broadcast` deploy (no address exists yet); (3) ratify real economics (placeholders now); (4) mainnet deploy. **THIS IS THE GATE for PITI.**
 
-**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites.
+**Running (off-chain infra):** the console (possessio.io — operates the live contracts, real wallet-confirmed txns), the Solana radar (self-running), the Superfoods app (live).
+
+**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven.
 
 ---
 
