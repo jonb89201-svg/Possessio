@@ -13,6 +13,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 - [ ] **x402Core — mainnet** → ratify real economics (testnet uses placeholders), then mainnet deploy.
 - [ ] **V3 — mainnet deploy** → fork-proven (CREATE3 3/3), ready; deploy pending.
 - [ ] **PITI** → rebuild on x402Core. **Do not start until x402 is confirmed fully deployed** (your gate). First contract; will use x402Core's pay-per-call engine, not the old fee-on-transfer draft.
+- [ ] **Factory → Pool wiring upgrade** (the "we fix factory later" item). Today `PossessioFactory` forwards the deploy fee with a plain `payTokenERC20.safeTransfer(feeSink, DEPLOYMENT_FEE)` to the live Payments sink — correct for that destination. To route deploy fees into PossessioPool (the Heart), the factory must instead `approve` + call the pool's **accounted** `receiveInfraFunds()` (x402Core's method — a raw transfer would be stranded, uncredited, per Pool DoD #14), AND the factory address must be in the pool's immutable `isAuthorizedSource` set at construction. Downstream of the pool going live; not before.
 
 ## Base / grants
 
