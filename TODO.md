@@ -59,7 +59,9 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 **Running (off-chain infra):** the console (possessio.io — operates the live contracts, real wallet-confirmed txns), the Solana radar (self-running), the Superfoods app (live).
 
-**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven.
+**Named provable accomplishment — in-app mobile debug console ("MIB DEBUG"):** a live on-device inspector built into the console — timestamped logs, bridge status, and full raw JSON-RPC transaction payloads with exact wallet error/revert codes (e.g. `eth_sendTransaction` calldata, `to`, gas, `code: 4001 ACTION_REJECTED`, ethers version). Desktop-F12-grade inspection **on a phone**, where mobile browsers provide none — the enabling tooling that makes phone-only contract development and debugging actually possible, not a boast. **Provable:** open possessio.io and tap DBG. (Evidence: console screenshot 2026-07-09, showing the raw `eth_sendTransaction` to PossessioPayments `0x1c0F…AB91` and the live "no factory configured for chain 8453" RAIL log.)
+
+**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven. The mobile-only claim is backed, not asserted: mainnet deploys go out from the phone, and the on-device MIB DEBUG console (above) provides the F12-grade inspection that makes debugging on a phone real.
 
 ---
 
@@ -73,6 +75,6 @@ Updated as things get named or done. Last updated: 2026-07-10._
 >
 > The whole point is access — and access starts with safety. You learn by doing the real thing, not reading about it: deploy and run an actual contract on testnet, free, with practice funds provided, until it feels like second nature — then go to mainnet when you decide you're ready. The mainnet deployment fee (testnet is free) routes to a protocol-owned pool, alongside usage fees from x402Core — the reusable pay-per-call engine the protocol's data APIs are built on (the first, an autonomous-trading intelligence layer, in development). A closed flywheel: every deployment and every API call compounds the protocol's own resources.
 >
-> All of it — every contract, test, and deploy — was architected and shipped from a phone, by one person directing a council of AI models under strict verification discipline.
+> All of it — every contract, test, and deploy — was architected and shipped from a phone, by one person directing a council of AI models under strict verification discipline. That's not a slogan: the console carries its own on-device debug inspector (raw JSON-RPC payloads, exact wallet error codes — desktop-F12-grade, on a phone), because mobile browsers give you no F12, and you can't build on-chain from a phone without one. Open it yourself.
 >
 > A normal person, not just a crypto native, holding and moving money on-chain from their pocket — and truly owning it. That's the on-ramp.
