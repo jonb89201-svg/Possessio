@@ -17,7 +17,7 @@ export interface MailerEnv {
 
 interface Lead {
   id: number;
-  store_name: string;
+  store_name: string; // holds the company/entity name generically, not grocery-specific
   town: string | null;
   contact_email: string;
   contact_name: string | null;
@@ -25,19 +25,24 @@ interface Lead {
 
 function pitchEmail(lead: Lead, fromName: string) {
   const owner = lead.contact_name || "there";
-  const subject = `A working weekly-ad app for ${lead.store_name} — built, live, ready to show you`;
+  const subject = `Available for contract work / collaboration — real, live proof of what I build`;
   const text = `Hi ${owner},
 
-I'm a local developer, and I recently built a real, working app for an independent grocery store — not a mockup, an actual installable app people can put on their phone right now:
+I'm a systems architect and developer open to collaborating or taking on contract work if the scope and price line up. Rather than describe what I do, here's shipped, verifiable proof:
 
-- This week's real prices and photos, synced straight from the store's own data
-- Works like a native app (installs to the home screen, works offline)
-- The weekly printed ad shown as its own section, alongside the full current inventory
-- No extra work on your end — I handle the setup and the weekly update
+Live on Base mainnet (verifiable on BaseScan):
+- PossessioPayments (0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91) — non-custodial merchant payment processor
+- LSTExchangeRate (0xDDb75e974d99FcF95E241adbFD376861c47a8548) — fail-closed cbETH valuation guard
 
-I'd like to show you the real thing running, not just describe it. Takes five minutes, and there's no cost or commitment to just take a look.
+Both are part of POSSESSIO, a non-custodial DeFi protocol on Base: Uniswap V4 hooks, Chainlink automation, 690 passing tests. I architected it and directed a multi-model AI build through rigorous verification — and the entire thing was built and deployed from a phone, mobile-only. No desktop.
 
-Would you have a few minutes this week for me to send over the link or stop by?
+And a live consumer app built solo end-to-end: https://superfoods-logan.jonb89201.workers.dev — installable, live inventory sync from a real vendor feed, Play Store pipeline, its own backend.
+
+Solidity/Foundry, Cloudflare Workers, PWAs, real-time data integration, and AI-orchestrated builds. Not demos — deployed.
+
+Background: Cloudflare Workers / serverless architecture, PWA development, real-time data integration from third-party platforms, crypto/payment protocol integration (x402).
+
+If you've got overflow work, a project that needs another set of hands, or something specific in mind, I'd like to hear about it.
 
 Thanks,
 ${fromName}`;
