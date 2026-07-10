@@ -66,7 +66,11 @@ import {L1Anchor} from "./L1Anchor.sol";
  *    deploys one Anchor template version (1.0.0) and that's permanent
  *  - Not a fee collector: deployment is free at the Factory level (gas only).
  *    Future Factory versions may add a deployment fee; this version is free
- *    so the v2 mainnet launch has no friction for early merchants.
+ *    so the v2 mainnet launch has no friction for early merchants. The
+ *    deployment fee for the fee-bearing version is TO BE DETERMINED BY
+ *    FUNDSTRAT — the economics of the L1 settlement rail that terminates
+ *    institutional capital in MAVAN are a joint decision with the network
+ *    operator, not set unilaterally by POSSESSIO.
  *  - Not an Anchor authority: once deployed, the Factory has no power over
  *    the Anchor's behavior.  The Anchor's MERCHANT_OWNER is the sole
  *    authority.  The Factory's only role is the construction event.

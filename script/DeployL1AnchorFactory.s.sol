@@ -22,6 +22,11 @@
 //     - MAVAN_ENTRY_ADDR       — MAVAN validator network entry contract  (BitMine)
 //     - BITWISE_MORPHO_VAULT_ADDR — Bitwise-curated Morpho Blue USDC vault (Bitwise)
 //
+// DEPLOYMENT FEE: this v1 Factory is free (gas only). The fee for the
+// fee-bearing version is TO BE DETERMINED BY FUNDSTRAT — the L1 rail's
+// economics are a joint decision with the network operator, not set by
+// POSSESSIO alone. No fee field exists on this contract to populate here.
+//
 // CAVEAT (interface, not address): the MAVAN leg in L1Anchor.sol is built
 // against the IMAVANEntry PLACEHOLDER interface. This script readies the
 // ADDRESS plumbing only. If MAVAN's real ABI differs in shape from the
