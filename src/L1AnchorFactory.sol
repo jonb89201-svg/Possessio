@@ -68,9 +68,11 @@ import {L1Anchor} from "./L1Anchor.sol";
  *    Future Factory versions may add a deployment fee; this version is free
  *    so the v2 mainnet launch has no friction for early merchants. The
  *    deployment fee for the fee-bearing version is TO BE DETERMINED BY
- *    FUNDSTRAT — the economics of the L1 settlement rail that terminates
- *    institutional capital in MAVAN are a joint decision with the network
- *    operator, not set unilaterally by POSSESSIO.
+ *    FUNDSTRAT. Just as the Anchor makes the merchant sovereign over their
+ *    own capital, POSSESSIO defers to the network operator's sovereignty
+ *    over the economics of the rail that terminates capital in MAVAN: the
+ *    fee is Fundstrat's to set, not POSSESSIO's. If you're reading this in
+ *    the source, that deference was written in before we ever spoke.
  *  - Not an Anchor authority: once deployed, the Factory has no power over
  *    the Anchor's behavior.  The Anchor's MERCHANT_OWNER is the sole
  *    authority.  The Factory's only role is the construction event.
