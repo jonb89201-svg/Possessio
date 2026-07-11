@@ -33,6 +33,14 @@ const EARLY_MC        = 4_000;
 const EARLY_MAX_AGE   = AGE_MIN_MS;      // screen 0 closes where screen 1 opens
 const TICKS_KEEP_MS   = 48 * 3600_000;   // tape retention (matches DEX_TRACK_WINDOW)
 
+// §0 EARLY PLAY (Architect-ratified 2026-07-11: "4k is right. a target of 8k
+// by 2min... this makes it tradable by an agent"). Paper rule: entry = the
+// $4k crossing, target $8k, exit at coin AGE 2:00 either way. Crossings after
+// 2min can't play ('late'). The ledger proves or kills this band BEFORE any
+// agent trades it — same gate §1 lives behind.
+const PLAY_TARGET_MC  = 8_000;
+const PLAY_EXIT_AGE_MS = 2 * 60_000;
+
 function numOrNull(v: unknown): number | null {
   const n = typeof v === "string" ? parseFloat(v) : (v as number);
   return Number.isFinite(n) ? n : null;
@@ -206,6 +214,53 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   stmts.push(env.RADAR_DB.prepare(
     `DELETE FROM mc_ticks WHERE ms < ?1`
   ).bind(now - TICKS_KEEP_MS));
+
+  // (0.5) §0 EARLY PLAY scoring. First trigger wins: target ($8k) beats the
+  //       2:00 exit within a pass; peak tracked while unresolved.
+  const { results: plays } = await env.RADAR_DB.prepare(
+    `SELECT token_address, first_hit_ms, first_hit_mc, age_sec_at_hit
+       FROM earlies WHERE play_outcome IS NULL`
+  ).all();
+  for (const e of plays as any[]) {
+    const addr = e.token_address as string;
+    const born = Number(e.first_hit_ms) - Number(e.age_sec_at_hit) * 1000;
+    const mc = mcOf(addr);
+    if (Number(e.age_sec_at_hit) * 1000 > PLAY_EXIT_AGE_MS) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE earlies SET play_outcome='late', play_outcome_ms=?2
+          WHERE token_address=?1 AND play_outcome IS NULL`
+      ).bind(addr, now));
+      continue;
+    }
+    // Detected already at/above target: the 4k->8k move happened before an
+    // entry existed. Scoring that a 'target' would fake the tally — 'gap'.
+    if (Number(e.first_hit_mc) >= PLAY_TARGET_MC) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE earlies SET play_outcome='gap', play_exit_mc=?2, play_outcome_ms=?3
+          WHERE token_address=?1 AND play_outcome IS NULL`
+      ).bind(addr, e.first_hit_mc, now));
+      continue;
+    }
+    if (mc !== null) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE earlies
+            SET peak_ms=CASE WHEN ?2 > COALESCE(peak_mc,0) THEN ?3 ELSE peak_ms END,
+                peak_mc=MAX(COALESCE(peak_mc,0), ?2)
+          WHERE token_address=?1`
+      ).bind(addr, mc, now));
+    }
+    if (mc !== null && mc >= PLAY_TARGET_MC) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE earlies SET play_outcome='target', play_exit_mc=?2, play_outcome_ms=?3
+          WHERE token_address=?1 AND play_outcome IS NULL`
+      ).bind(addr, mc, now));
+    } else if (now - born >= PLAY_EXIT_AGE_MS) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE earlies SET play_outcome='exit2m', play_exit_mc=?2, play_outcome_ms=?3
+          WHERE token_address=?1 AND play_outcome IS NULL`
+      ).bind(addr, mc, now));
+    }
+  }
 
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.

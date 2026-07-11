@@ -59,7 +59,8 @@ export const FEED_HTML = `<!doctype html>
     <div class="note" id="note">Most picks fail by design — the method runs a low win rate on purpose, and the ~2.5:1 asymmetry (up ~2x / down ~40–60%) is what carries it. You are not watching "hot buys." You are watching a discipline.</div>
   </div>
 
-  <h2>Early radar — crossed $4k before 4min</h2>
+  <h2>Early radar — crossed $4k before 4min &middot; §0 paper play: $4k &#8594; $8k by 2:00</h2>
+  <div id="epstats" class="sub"></div>
   <div id="early"><div class="empty">scanning newborns…</div></div>
 
   <h2>Live — in the entry window now</h2>
@@ -146,14 +147,22 @@ export const FEED_HTML = `<!doctype html>
       ' &middot; liq '+fmt(c.dex_liq_usd)+' &middot; vol1h '+fmt(c.dex_vol_h1)+
       ' &middot; 5m '+chg(c.dex_chg_m5)+' &middot; 1h '+chg(c.dex_chg_h1)+'</div>'; }
 
+  function playBadge(c){
+    if(c.play_outcome==="target") return '<span class="badge b-target">8k &#10003;</span>';
+    if(c.play_outcome==="exit2m") return '<span class="badge b-timestop">2:00 exit '+pct(c.first_hit_mc,c.play_exit_mc)+'</span>';
+    if(c.play_outcome==="gap")    return '<span class="badge b-graduated">gap</span>';
+    if(c.play_outcome==="late")   return '<span class="badge b-timestop">late</span>';
+    return '<span class="badge b-early">early</span>';
+  }
   function earlyRow(c,tk){
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
       '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span><br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
-      '<div style="text-align:right"><span class="badge b-early">early</span><br>'+
-      '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span></div></div>';
+      '<div style="text-align:right">'+playBadge(c)+'<br>'+
+      '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
+      (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>';
   }
   function liveRow(c,tk){
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
@@ -180,6 +189,13 @@ export const FEED_HTML = `<!doctype html>
       '<span class="stat"><b style="color:var(--red)">'+(t.stop||0)+'</b>stopped</span>'+
       '<span class="stat"><b style="color:var(--gold)">'+(t.graduated||0)+'</b>graduated</span>'+
       '<span class="stat"><b style="color:var(--dim)">'+(t.timestop||0)+'</b>timed out</span>';
+    var ep={}; (d.earlyPlay||[]).forEach(function(r){ ep[r.play_outcome]=r; });
+    var nT=ep.target?ep.target.n:0, nX=ep.exit2m?ep.exit2m.n:0;
+    var xm=ep.exit2m&&ep.exit2m.avg_mult!=null?(' avg '+ep.exit2m.avg_mult+'x'):'';
+    document.getElementById("epstats").innerHTML =
+      '§0 ledger: <span class="pct up">'+nT+' hit $8k</span> &middot; '+
+      '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' exited at 2:00'+xm+'</span>'+
+      (nT+nX>0?(' &middot; win rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
     var tk=d.ticks||{};
     var E=document.getElementById("early");
     E.innerHTML=(d.early&&d.early.length)? d.early.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';

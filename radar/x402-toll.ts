@@ -103,9 +103,18 @@ export function buildTolledApp(env: Env) {
     // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
-      `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit
+      `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
+              peak_mc, play_outcome, play_exit_mc
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`
+    ).all();
+    // §0 EARLY PLAY paper tally: entry=$4k crossing, target=$8k, exit at age
+    // 2:00. avg_mult = paper multiple on resolved plays (exit/entry).
+    const earlyPlay = await db.prepare(
+      `SELECT play_outcome, COUNT(*) AS n,
+              ROUND(AVG(play_exit_mc / first_hit_mc), 2) AS avg_mult
+         FROM earlies WHERE play_outcome IS NOT NULL
+        GROUP BY play_outcome`
     ).all();
     // The oscillation tape for everything currently on screen. 25min covers
     // the longest possible early->qualify->track life; closed coins age out.
@@ -121,6 +130,7 @@ export function buildTolledApp(env: Env) {
       live: live.results,
       recent: recent.results,
       early: early.results,
+      earlyPlay: earlyPlay.results,
       ticks,
       tally: tally.results,
       method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",
