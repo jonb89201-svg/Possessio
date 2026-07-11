@@ -31,6 +31,7 @@ export type WatcherEnv = Env & {
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
   PUMPPORTAL_WS_URL?: string;
+  PUMPPORTAL_API_KEY?: string; // secret; unlocks subscribeTokenTrade (key funded >=0.02 SOL)
   PUMPTAPE?: DurableObjectNamespace; // Layer 3 engine (pumptape.ts)
 };
 

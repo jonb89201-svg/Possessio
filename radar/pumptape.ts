@@ -93,7 +93,14 @@ export class PumpTape {
 
   async ensure(): Promise<void> {
     if (this.ws) return;
-    const url = (this.env as any).PUMPPORTAL_WS_URL || "wss://pumpportal.fun/api/data";
+    // SHAPE PINNED (live samples via /radar/ws-status, 2026-07-11):
+    // subscribeNewToken is FREE and answers anonymously; subscribeTokenTrade /
+    // subscribeAccountTrade require an API key funded with >=0.02 SOL (their
+    // own error message). Key rides the URL. Set it as a Worker secret:
+    //   npx wrangler secret put PUMPPORTAL_API_KEY
+    let url = (this.env as any).PUMPPORTAL_WS_URL || "wss://pumpportal.fun/api/data";
+    const key = (this.env as any).PUMPPORTAL_API_KEY;
+    if (key) url += (url.includes("?") ? "&" : "?") + "api-key=" + key;
     try {
       // Workers outbound WebSocket: fetch with Upgrade, then accept().
       const resp = await fetch(url.replace(/^wss:/, "https:"), {
@@ -165,12 +172,20 @@ export class PumpTape {
     if (txType === "create") {
       this.stats.births++;
       if (!this.coins.has(mint)) {
+        // PINNED SHAPE: the create event carries the DEV BUY — solAmount is
+        // the creator's initial buy in SOL (live sample: 4.938), trader is
+        // the creator. Seed the flow aggregates with it: the dev is buyer #1
+        // and their share is exactly the whale-concentration signal.
+        const devSol = num(j.solAmount) ?? 0;
+        const creator: string = j.traderPublicKey ?? j.creator ?? "";
+        const buyerSol = new Map<string, number>();
+        if (devSol > 0 && creator) buyerSol.set(creator, devSol);
         this.coins.set(mint, {
           createdMs: now,
           symbol: j.symbol ?? null,
           name: j.name ?? null,
-          buys: 0, sells: 0, solNet: 0,
-          buyerSol: new Map(),
+          buys: devSol > 0 ? 1 : 0, sells: 0, solNet: devSol,
+          buyerSol,
           mcSol: num(j.marketCapSol ?? j.market_cap_sol),
           hit4kMs: null, resolved: false,
         });
