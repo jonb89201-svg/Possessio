@@ -113,6 +113,18 @@ export const FEED_HTML = `<!doctype html>
     if(!a) return "";
     var p=((b-a)/a)*100;
     return '<span class="pct '+(p>=0?"up":"down")+'">'+(p>=0?"&#9650;":"&#9660;")+Math.abs(p).toFixed(1)+'%/tick</span>'; }
+  // NET BUY FLOW: delta of the curve's real SOL reserves (buys add, sells
+  // drain) over the last ~1min of samples. "steady" = 3+ of the last 4
+  // deltas positive — the Architect's steady-volume-increase read.
+  function flow(tk){ if(!tk) return "";
+    var s=tk.filter(function(x){ return x.sol!=null; });
+    if(s.length<2) return "";
+    var a=s[Math.max(0,s.length-5)], b=s[s.length-1];
+    var mins=(b.ms-a.ms)/60000; if(mins<=0) return "";
+    var r=(b.sol-a.sol)/mins, up=0, n=0;
+    for(var i=Math.max(1,s.length-4);i<s.length;i++){ n++; if(s[i].sol>s[i-1].sol) up++; }
+    return '<span class="pct '+(r>=0?"up":"down")+'">'+(r>=0?"+":"")+r.toFixed(1)+' SOL/min</span>'+
+      ((n>=3&&up>=3)?' <span class="osc">&#9889;steady</span>':''); }
   function pf(addr){ if(!addr) return "";
     return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
   // oscillators, computed client-side from the tape (1 sample per cron tick)
@@ -139,7 +151,7 @@ export const FEED_HTML = `<!doctype html>
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
       '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span><br>'+
-      spark(tk)+' '+roc(tk)+'</div>'+
+      spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right"><span class="badge b-early">early</span><br>'+
       '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span></div></div>';
   }
@@ -147,7 +159,7 @@ export const FEED_HTML = `<!doctype html>
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+' '+pf(c.token_address)+'<br>'+
       '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span><br>'+
-      spark(tk)+' '+roc(tk)+'</div>'+
+      spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right"><span class="badge b-live">live</span><br>'+
       '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
       '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>'+dexLine(c);

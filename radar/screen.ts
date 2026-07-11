@@ -42,8 +42,11 @@ function numOrNull(v: unknown): number | null {
 // pattern discoveryScan proved: R-2 batching, R-4 max-across-pairs MC, polite
 // stop on 429). On-screen sets are small (<=80), so this is 1-3 requests per
 // screen pass — x4 sub-ticks stays far under DexScreener's 300 req/min.
-async function fetchDexMc(env: WatcherEnv, addrs: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+async function fetchDexMc(
+  env: WatcherEnv, addrs: string[],
+): Promise<{ mc: Map<string, number>; volM5: Map<string, number> }> {
+  const mc = new Map<string, number>();
+  const volM5 = new Map<string, number>();
   for (let i = 0; i < addrs.length; i += 30) {
     const chunk = addrs.slice(i, i + 30);
     const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
@@ -56,10 +59,12 @@ async function fetchDexMc(env: WatcherEnv, addrs: string[]): Promise<Map<string,
       const base = p?.baseToken?.address;
       if (!base) continue;
       const m = numOrNull(p?.marketCap ?? p?.fdv);
-      if (m !== null && m > (out.get(base) ?? -1)) out.set(base, m);
+      if (m !== null && m > (mc.get(base) ?? -1)) mc.set(base, m);
+      const v = numOrNull(p?.volume?.m5);
+      if (v !== null && v > (volM5.get(base) ?? -1)) volM5.set(base, v);
     }
   }
-  return out;
+  return { mc, volM5 };
 }
 
 function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number, lastMc: number | null) {
@@ -113,10 +118,19 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const body: any = await res.json();
   const items: any[] = Array.isArray(body) ? body : body?.coins ?? body?.data ?? [];
   const mcNow = new Map<string, number>();
+  // VOLUME track (VERIFY-FIRST vs our own raw_birth_json, 2026-07-11):
+  // real_sol_reserves = actual SOL in the bonding curve, in lamports. Its
+  // tick-to-tick delta IS net buy flow — buys add, sells drain. This is the
+  // "steady volume increase" signal, and it lives in the newborn window
+  // (age 0-5min) where this feed demonstrably works.
+  const solNow = new Map<string, number>();
   for (const it of items) {
     const addr = it.mint ?? it.address ?? it.tokenAddress;
+    if (!addr) continue;
     const mc = numOrNull(it.usd_market_cap ?? it.marketCapUsd);
-    if (addr && mc !== null) mcNow.set(addr, mc);
+    if (mc !== null) mcNow.set(addr, mc);
+    const sol = numOrNull(it.real_sol_reserves);
+    if (sol !== null) solNow.set(addr, sol / 1e9); // lamports -> SOL
   }
 
   const stmts: any[] = [];
@@ -175,16 +189,19 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // fallback for coins DexScreener hasn't indexed yet. See EMPIRICAL LIMIT
   // note above — the pump.fun window alone froze every candidate.
   const trackAddrs = (tapeSet as any[]).map((r) => r.token_address as string);
-  const mcDex = trackAddrs.length ? await fetchDexMc(env, trackAddrs) : new Map<string, number>();
-  const mcOf = (a: string): number | null => mcDex.get(a) ?? mcNow.get(a) ?? null;
+  const dex = trackAddrs.length ? await fetchDexMc(env, trackAddrs)
+    : { mc: new Map<string, number>(), volM5: new Map<string, number>() };
+  const mcOf = (a: string): number | null => dex.mc.get(a) ?? mcNow.get(a) ?? null;
 
   for (const r of tapeSet as any[]) {
-    const mc = mcOf(r.token_address as string);
+    const addr = r.token_address as string;
+    const mc = mcOf(addr);
     if (mc === null) continue;
     stmts.push(env.RADAR_DB.prepare(
-      `INSERT INTO mc_ticks (token_address, ms, mc) VALUES (?1,?2,?3)
+      `INSERT INTO mc_ticks (token_address, ms, mc, sol_reserves, vol_m5)
+       VALUES (?1,?2,?3,?4,?5)
        ON CONFLICT(token_address, ms) DO NOTHING`
-    ).bind(r.token_address, now, mc));
+    ).bind(addr, now, mc, solNow.get(addr) ?? null, dex.volM5.get(addr) ?? null));
   }
   stmts.push(env.RADAR_DB.prepare(
     `DELETE FROM mc_ticks WHERE ms < ?1`

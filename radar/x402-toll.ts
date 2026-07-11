@@ -110,12 +110,12 @@ export function buildTolledApp(env: Env) {
     // The oscillation tape for everything currently on screen. 25min covers
     // the longest possible early->qualify->track life; closed coins age out.
     const ticksRaw = await db.prepare(
-      `SELECT token_address, ms, mc FROM mc_ticks
+      `SELECT token_address, ms, mc, sol_reserves, vol_m5 FROM mc_ticks
         WHERE ms >= ?1 ORDER BY ms ASC`
     ).bind(Date.now() - 25 * 60_000).all();
-    const ticks: Record<string, { ms: number; mc: number }[]> = {};
+    const ticks: Record<string, { ms: number; mc: number; sol: number | null; v5: number | null }[]> = {};
     for (const t of ticksRaw.results as any[]) {
-      (ticks[t.token_address] ??= []).push({ ms: t.ms, mc: t.mc });
+      (ticks[t.token_address] ??= []).push({ ms: t.ms, mc: t.mc, sol: t.sol_reserves, v5: t.vol_m5 });
     }
     return c.json({
       live: live.results,
