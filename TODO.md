@@ -26,8 +26,11 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## Superfoods (side project)
 
-- [x] Play Store: **Google Play Developer account** created (2026-07-11 — "Jon Solo," personal, possessio.io).
-- [ ] Play Store next: **PWABuilder** package the Superfoods PWA → Android TWA (.aab), then wire `assetlinks.json` (I generate it; it gets served at the app's domain to verify ownership) → upload .aab to Play Console → internal-testing track first, then production.
+- [x] Google Play Developer account created (2026-07-11 — "Jon Solo," personal, possessio.io).
+- [x] **Community sponsor board** built into the app (`generator/sponsors.json` + build_flyers.py) — flat logo-tile grid, no tiers ("everyone sponsors everyone"). Clark's Pest Control = founding sponsor (text tile until logo art arrives). Cache bumped v11, committed + pushed to SuperFoods-App main.
+- [ ] **Launch sequence (in order):** (1) `cd superfoods-app && npx wrangler deploy` — publish the sponsor-board version live [needs Jon's CF auth]; (2) PWABuilder → Android .aab + Play App Signing → get package ID + SHA-256 fingerprint; (3) Claude wires `app/.well-known/assetlinks.json` from those, redeploy; (4) upload .aab to Play Console (privacy.html covers the policy req) → internal testing → production.
+- [ ] Drop in **Clark's Pest Control logo** (→ `generator/sponsors/clarks_pest.png`) when Jon sends it; add sponsors as they sign.
+- Strategy (Jon): launch a real app with correct sales + get it ON the Play Store FIRST — that's the credibility that makes local sponsors "bite hard." Sponsors fill in live afterward.
 - [x] App live at superfoods-logan.jonb89201.workers.dev
 - [x] Weekly flyer — Tuesday-night reminder set (fires into this session).
 
