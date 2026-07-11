@@ -37,7 +37,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 ## Parked (deliberately not now)
 
 - ⏸ **Fundstrat / Tom Lee (MAVAN) email** — drafted, held. Send only after (a) ecosystem standing (a grant) and (b) the real MAVAN staking interface. The ask *is* that interface; L1Anchor's `IMAVANEntry` is a placeholder.
-- 💭 **Whisky RWA** (allocated tokenized casks via bonded warehouse) — vision stage, its own grant doors. Not started.
+- 🥃 **Whisky RWA — "The Bond"** (allocated tokenized bottles, bonded warehouse). STARTED. Spec `specs/SPEC_PossessioWhiskyMarket.md` (V1/V5 resolved, English live-event auction ratified). `src/PossessioWhiskyMarket.sol` v0.1 built — primary English auction module, **compiles vs real base/base-std B20 interfaces**. NON-PROVEN. **Requirement for the pool deploy** (§6: mine market CreateX salt → address → pool's immutable source set). Next: secondary order book, DoD suite via `base-foundryup` (§8), B20 issuance wrap + relay + app. Deploy gated on §7 legal (holding co, warehouse agreement, securities framing, jurisdiction).
 
 ---
 
