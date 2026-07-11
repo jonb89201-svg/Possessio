@@ -38,6 +38,8 @@ export const FEED_HTML = `<!doctype html>
     margin-right:6px;animation:p 1.6s infinite}
   @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
   .pct{font-weight:700;font-size:12px}.pct.up{color:var(--green)}.pct.down{color:var(--red)}
+  .osc{color:var(--blue);font-size:13px;letter-spacing:1px;line-height:1}
+  .b-early{color:#c792ea;border:1px solid #c792ea}
   .dex{color:var(--blue);font-size:11px;text-decoration:none;white-space:nowrap}
   .dex:hover{text-decoration:underline}
   .dexline{margin:-4px 2px 4px;padding:6px 8px;background:#0f1a13;border-left:2px solid var(--green);
@@ -56,6 +58,9 @@ export const FEED_HTML = `<!doctype html>
     <div class="stats" id="stats"><span class="stat">…</span></div>
     <div class="note" id="note">Most picks fail by design — the method runs a low win rate on purpose, and the ~2.5:1 asymmetry (up ~2x / down ~40–60%) is what carries it. You are not watching "hot buys." You are watching a discipline.</div>
   </div>
+
+  <h2>Early radar — crossed $4k before 4min</h2>
+  <div id="early"><div class="empty">scanning newborns…</div></div>
 
   <h2>Live — in the entry window now</h2>
   <div id="live"><div class="empty">waiting for the next qualifier…</div></div>
@@ -93,16 +98,56 @@ export const FEED_HTML = `<!doctype html>
     return '<span class="pct '+(v>=0?"up":"down")+'">'+(v>=0?"+":"")+v.toFixed(0)+'%</span>'; }
   function dex(addr){ if(!addr) return "";
     return '<a class="dex" href="https://dexscreener.com/solana/'+esc(addr)+'" target="_blank" rel="noopener">chart &#8599;</a>'; }
+  function pf(addr){ if(!addr) return "";
+    return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
+  // the oscillators — computed client-side from the 15s MC tape (d.ticks)
+  function spark(tk){ if(!tk||tk.length<2) return "";
+    var t=tk.slice(-16), lo=Infinity, hi=-Infinity;
+    t.forEach(function(x){ lo=Math.min(lo,x.mc); hi=Math.max(hi,x.mc); });
+    if(hi<=lo) return '<span class="osc">&#9644;&#9644;flat</span>';
+    var bars="\\u2581\\u2582\\u2583\\u2584\\u2585\\u2586\\u2587\\u2588";
+    return '<span class="osc">'+t.map(function(x){
+      return bars[Math.round((x.mc-lo)/(hi-lo)*7)]; }).join("")+'</span>'; }
+  function roc(tk){ if(!tk||tk.length<2) return "";
+    var a=tk[tk.length-2].mc, b=tk[tk.length-1].mc;
+    if(!a) return "";
+    var p=((b-a)/a)*100;
+    return '<span class="pct '+(p>=0?"up":"down")+'">'+(p>=0?"&#9650;":"&#9660;")+Math.abs(p).toFixed(1)+'%/tick</span>'; }
+  function pf(addr){ if(!addr) return "";
+    return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
+  // oscillators, computed client-side from the tape (1 sample per cron tick)
+  function spark(ticks){ if(!ticks||ticks.length<2) return "";
+    var bars="\\u2581\\u2582\\u2583\\u2584\\u2585\\u2586\\u2587\\u2588";
+    var t=ticks.slice(-14), lo=Infinity, hi=-Infinity;
+    t.forEach(function(x){ lo=Math.min(lo,x.mc); hi=Math.max(hi,x.mc); });
+    if(hi<=lo) return '<span class="osc">'+bars[3].repeat(t.length)+'</span>';
+    return '<span class="osc">'+t.map(function(x){
+      return bars[Math.round((x.mc-lo)/(hi-lo)*7)]; }).join("")+'</span>'; }
+  function roc(ticks){ if(!ticks||ticks.length<2) return "";
+    var a=ticks[ticks.length-2].mc, b=ticks[ticks.length-1].mc;
+    if(!a) return "";
+    var p=((b-a)/a)*100;
+    return '<span class="pct '+(p>=0?"up":"down")+'">'+(p>=0?"+":"")+p.toFixed(0)+'%/t</span>'; }
   // the post-graduation phase: DexScreener data, only if the coin crossed the DEX boundary
   function dexLine(c){ if(c.dex_last_ms==null) return "";
     return '<div class="dexline">&#128640; ON DEX &middot; MC '+fmt(c.dex_mc)+
       ' &middot; liq '+fmt(c.dex_liq_usd)+' &middot; vol1h '+fmt(c.dex_vol_h1)+
       ' &middot; 5m '+chg(c.dex_chg_m5)+' &middot; 1h '+chg(c.dex_chg_h1)+'</div>'; }
 
-  function liveRow(c){
+  function earlyRow(c,tk){
+    var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
-      '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+'<br>'+
-      '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span></div>'+
+      '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
+      '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span><br>'+
+      spark(tk)+' '+roc(tk)+'</div>'+
+      '<div style="text-align:right"><span class="badge b-early">early</span><br>'+
+      '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span></div></div>';
+  }
+  function liveRow(c,tk){
+    return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
+      '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+' '+pf(c.token_address)+'<br>'+
+      '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span><br>'+
+      spark(tk)+' '+roc(tk)+'</div>'+
       '<div style="text-align:right"><span class="badge b-live">live</span><br>'+
       '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
       '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>'+dexLine(c);
@@ -123,8 +168,11 @@ export const FEED_HTML = `<!doctype html>
       '<span class="stat"><b style="color:var(--red)">'+(t.stop||0)+'</b>stopped</span>'+
       '<span class="stat"><b style="color:var(--gold)">'+(t.graduated||0)+'</b>graduated</span>'+
       '<span class="stat"><b style="color:var(--dim)">'+(t.timestop||0)+'</b>timed out</span>';
+    var tk=d.ticks||{};
+    var E=document.getElementById("early");
+    E.innerHTML=(d.early&&d.early.length)? d.early.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';
     var L=document.getElementById("live");
-    L.innerHTML=(d.live&&d.live.length)? d.live.map(liveRow).join("") : '<div class="empty">waiting for the next qualifier…</div>';
+    L.innerHTML=(d.live&&d.live.length)? d.live.map(function(c){ return liveRow(c,tk[c.token_address]); }).join("") : '<div class="empty">waiting for the next qualifier…</div>';
     var R=document.getElementById("recent");
     R.innerHTML=(d.recent&&d.recent.length)? d.recent.map(recentRow).join("") : '<div class="empty">—</div>';
   }

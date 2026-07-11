@@ -26,6 +26,13 @@ const TARGET_MC   = 20_000;       // §1 exit #1 — take-profit (~2x)
 const STOP_MC     = 6_000;        // §1 exit #2 — stop-loss
 const TIMESTOP_MS = 10 * 60_000;  // §1 exit #4 — time-stop
 
+// Screen 0 — the EARLY radar (Architect, 2026-07-11, multi-screen method):
+// age 0-4min, coin crosses $4k MC -> early-watch list. Gives the human a look
+// BEFORE the §1 window opens, and starts the oscillation tape early.
+const EARLY_MC        = 4_000;
+const EARLY_MAX_AGE   = AGE_MIN_MS;      // screen 0 closes where screen 1 opens
+const TICKS_KEEP_MS   = 48 * 3600_000;   // tape retention (matches DEX_TRACK_WINDOW)
+
 function numOrNull(v: unknown): number | null {
   const n = typeof v === "string" ? parseFloat(v) : (v as number);
   return Number.isFinite(n) ? n : null;
@@ -39,6 +46,22 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
             peak_mc=MAX(COALESCE(peak_mc,0), COALESCE(?4,0))
       WHERE token_address=?1 AND outcome='live'`
   ).bind(addr, outcome, now, lastMc);
+}
+
+// LAYER 1 latency fix (Architect, 2026-07-11): cron's floor is 1 minute, which
+// left the feed up to 60s behind the curve. Each cron invocation now runs the
+// screen 4x spaced 15s (t=0,15,30,45; next cron lands at t=60), so staleness
+// drops to <=15s and the oscillation tape gets 15s resolution — no new infra.
+// Layers 2+3 (Durable Object alarm / PumpPortal WS real-time) are the upgrade
+// path, VERIFY-FIRST gated, with this loop as the permanent bedrock fallback.
+const SUB_TICKS = 4;
+const SUB_TICK_GAP_MS = 15_000;
+
+export async function screenLoop(env: WatcherEnv): Promise<void> {
+  for (let i = 0; i < SUB_TICKS; i++) {
+    if (i) await new Promise((r) => setTimeout(r, SUB_TICK_GAP_MS));
+    await screenScan(env).catch((e) => console.error("screenScan", e));
+  }
 }
 
 export async function screenScan(env: WatcherEnv): Promise<void> {
@@ -65,6 +88,66 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   }
 
   const stmts: any[] = [];
+
+  // (0) EARLY SCREEN: 'watching' tokens younger than 4 min whose curve MC has
+  //     crossed $4k. First crossing wins (INSERT ... DO NOTHING keeps the
+  //     original hit time/MC). This list is display + tape-start only — it
+  //     gates nothing; §1 qualification below is untouched.
+  const { results: newborns } = await env.RADAR_DB.prepare(
+    `SELECT token_address, symbol, name, pumpfun_first_seen_ms
+       FROM births
+      WHERE status='watching'
+        AND pumpfun_first_seen_ms > ?1
+        AND token_address NOT IN (SELECT token_address FROM earlies)`
+  ).bind(now - EARLY_MAX_AGE).all();
+
+  for (const r of newborns as any[]) {
+    const mc = mcNow.get(r.token_address as string);
+    if (mc === undefined || mc < EARLY_MC) continue;
+    const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
+    stmts.push(env.RADAR_DB.prepare(
+      `INSERT INTO earlies
+         (token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit, status)
+       VALUES (?1,?2,?3,?4,?5,?6,'watching')
+       ON CONFLICT(token_address) DO NOTHING`
+    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, now, mc, ageSec));
+  }
+
+  // Early status transitions: 'qualified' when §1 picked it up; 'missed' when
+  // it aged past the §1 window without qualifying. Terminal either way.
+  stmts.push(env.RADAR_DB.prepare(
+    `UPDATE earlies SET status='qualified', status_ms=?1
+      WHERE status='watching'
+        AND token_address IN (SELECT token_address FROM candidates)`
+  ).bind(now));
+  stmts.push(env.RADAR_DB.prepare(
+    `UPDATE earlies SET status='missed', status_ms=?1
+      WHERE status='watching'
+        AND token_address IN (SELECT token_address FROM births
+                               WHERE pumpfun_first_seen_ms < ?2)
+        AND token_address NOT IN (SELECT token_address FROM candidates)`
+  ).bind(now, now - AGE_MAX_MS));
+
+  // THE TAPE ("oscillating in-between the two screens and after the last
+  // screen"): one MC sample per tick for every coin currently on either
+  // screen — earlies still watching + candidates still live. Read-time
+  // oscillators (sparkline, ROC) are computed from this, never stored.
+  const { results: tapeSet } = await env.RADAR_DB.prepare(
+    `SELECT token_address FROM earlies WHERE status='watching'
+      UNION
+     SELECT token_address FROM candidates WHERE outcome='live'`
+  ).all();
+  for (const r of tapeSet as any[]) {
+    const mc = mcNow.get(r.token_address as string);
+    if (mc === undefined) continue;
+    stmts.push(env.RADAR_DB.prepare(
+      `INSERT INTO mc_ticks (token_address, ms, mc) VALUES (?1,?2,?3)
+       ON CONFLICT(token_address, ms) DO NOTHING`
+    ).bind(r.token_address, now, mc));
+  }
+  stmts.push(env.RADAR_DB.prepare(
+    `DELETE FROM mc_ticks WHERE ms < ?1`
+  ).bind(now - TICKS_KEEP_MS));
 
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.

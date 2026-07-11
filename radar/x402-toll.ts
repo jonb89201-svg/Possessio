@@ -100,9 +100,28 @@ export function buildTolledApp(env: Env) {
     const tally = await db.prepare(
       `SELECT outcome, COUNT(*) AS n FROM candidates GROUP BY outcome`
     ).all();
+    // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
+    // surface: which coins, never entry/exit prices or size.
+    const early = await db.prepare(
+      `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit
+         FROM earlies WHERE status='watching'
+        ORDER BY first_hit_ms DESC LIMIT 40`
+    ).all();
+    // The oscillation tape for everything currently on screen. 25min covers
+    // the longest possible early->qualify->track life; closed coins age out.
+    const ticksRaw = await db.prepare(
+      `SELECT token_address, ms, mc FROM mc_ticks
+        WHERE ms >= ?1 ORDER BY ms ASC`
+    ).bind(Date.now() - 25 * 60_000).all();
+    const ticks: Record<string, { ms: number; mc: number }[]> = {};
+    for (const t of ticksRaw.results as any[]) {
+      (ticks[t.token_address] ??= []).push({ ms: t.ms, mc: t.mc });
+    }
     return c.json({
       live: live.results,
       recent: recent.results,
+      early: early.results,
+      ticks,
       tally: tally.results,
       method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",
     });
