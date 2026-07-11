@@ -151,6 +151,12 @@ export class PumpTape {
       ws.addEventListener("message", (e: MessageEvent) => this.onMessage(e.data));
       ws.addEventListener("close", () => { this.ws = null; });
       ws.addEventListener("error", () => { this.ws = null; });
+      // subscribeNewToken is FREE and keyless (verified live). It carries the
+      // DEV BUY on every create event — buyer #1's size and share — which is
+      // real, actionable birth intelligence at zero cost. The trade stream
+      // stays gated behind a funded key; we deliberately DON'T pay for it, so
+      // the ladder is scored on the free 15s tape (screen.ts) instead. If a
+      // funded key ever appears, per-coin trade subs light up automatically.
       ws.send(JSON.stringify({ method: "subscribeNewToken" }));
       this.ws = ws;
       this.stats.connects++;

@@ -34,12 +34,17 @@ const EARLY_MC        = 3_500;
 const EARLY_MAX_AGE   = AGE_MIN_MS;      // screen 0 closes where screen 1 opens
 const TICKS_KEEP_MS   = 48 * 3600_000;   // tape retention (matches DEX_TRACK_WINDOW)
 
-// §0 LEGACY FALLBACK SCORER (poller, 15s resolution). The ratified method is
-// §0 v3 — the LADDER + CYCLE — which needs trade resolution and lives in
-// pumptape.ts (ws=1 rows). This scorer only touches ws=0 rows (coins the WS
-// engine never saw born, i.e. when the socket is down) with the simple
-// v1 rule, so the two ledgers never mix. Analysis filters on ws.
-const PLAY_TARGET_MC  = 8_000;
+// §0 v3 LADDER on the FREE 15s tape (ws=0 rows). Same ratified rungs as
+// pumptape.ts; single-level only (the CYCLE needs trade resolution — see the
+// scorer note below). soldValue/soldFrac are pure functions of rungs_filled,
+// so no accumulator columns are needed to resume across stateless ticks.
+const LADDER_RUNGS  = [6_000, 8_000, 10_000, 12_000];
+const LADDER_FRACS  = [0.5, 0.25, 0.125, 0.125];
+const LADDER_FULL_VALUE = LADDER_RUNGS.reduce((s, mc, i) => s + LADDER_FRACS[i] * mc, 0); // 7750
+const ladderSoldValue = (k: number) =>
+  LADDER_RUNGS.slice(0, k).reduce((s, mc, i) => s + LADDER_FRACS[i] * mc, 0);
+const ladderSoldFrac = (k: number) =>
+  LADDER_FRACS.slice(0, k).reduce((s, f) => s + f, 0);
 const PLAY_EXIT_AGE_MS = 2 * 60_000;
 
 function numOrNull(v: unknown): number | null {
@@ -235,50 +240,62 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     `DELETE FROM mc_ticks WHERE ms < ?1`
   ).bind(now - TICKS_KEEP_MS));
 
-  // (0.5) §0 EARLY PLAY scoring. First trigger wins: target ($8k) beats the
-  //       2:00 exit within a pass; peak tracked while unresolved.
+  // (0.5) §0 v3 LADDER scoring on the FREE 15s tape (ws=0 rows). The ratified
+  //       ladder — buy $3.5k, scale out 50/25/12.5/12.5 @ 6/8/10/12k, remainder
+  //       at coin-age 2:00 — scores honestly at 15s (these MC crossings are
+  //       slow enough to catch). The multi-level CYCLE (dip re-buy, octave up)
+  //       needs trade resolution and stays pumptape.ts-only; NOT faked here.
+  //       rungs_filled is the only persisted state — soldValue/soldFrac are
+  //       recomputed from it deterministically (fixed rung prices × fracs).
   const { results: plays } = await env.RADAR_DB.prepare(
-    `SELECT token_address, first_hit_ms, first_hit_mc, age_sec_at_hit
+    `SELECT token_address, first_hit_ms, first_hit_mc, age_sec_at_hit,
+            COALESCE(rungs_filled,0) AS rungs
        FROM earlies WHERE play_outcome IS NULL AND COALESCE(ws,0)=0`
   ).all();
   for (const e of plays as any[]) {
     const addr = e.token_address as string;
     const born = Number(e.first_hit_ms) - Number(e.age_sec_at_hit) * 1000;
     const mc = mcOf(addr);
-    if (Number(e.age_sec_at_hit) * 1000 > PLAY_EXIT_AGE_MS) {
-      stmts.push(env.RADAR_DB.prepare(
-        `UPDATE earlies SET play_outcome='late', play_outcome_ms=?2
-          WHERE token_address=?1 AND play_outcome IS NULL`
-      ).bind(addr, now));
-      continue;
-    }
-    // Detected already at/above target: the 4k->8k move happened before an
-    // entry existed. Scoring that a 'target' would fake the tally — 'gap'.
-    if (Number(e.first_hit_mc) >= PLAY_TARGET_MC) {
+
+    // Detected already at/past rung 1 ($6k): no position could open below the
+    // first exit — 'gap', same honest-tally rule as before.
+    if (Number(e.first_hit_mc) >= LADDER_RUNGS[0]) {
       stmts.push(env.RADAR_DB.prepare(
         `UPDATE earlies SET play_outcome='gap', play_exit_mc=?2, play_outcome_ms=?3
           WHERE token_address=?1 AND play_outcome IS NULL`
       ).bind(addr, e.first_hit_mc, now));
       continue;
     }
+
+    // Advance rungs monotonically to how far this tick's MC has climbed.
+    let rungs = Number(e.rungs);
     if (mc !== null) {
+      while (rungs < LADDER_RUNGS.length && mc >= LADDER_RUNGS[rungs]) rungs++;
       stmts.push(env.RADAR_DB.prepare(
         `UPDATE earlies
-            SET peak_ms=CASE WHEN ?2 > COALESCE(peak_mc,0) THEN ?3 ELSE peak_ms END,
-                peak_mc=MAX(COALESCE(peak_mc,0), ?2)
+            SET rungs_filled=MAX(COALESCE(rungs_filled,0), ?2),
+                peak_ms=CASE WHEN ?3 > COALESCE(peak_mc,0) THEN ?4 ELSE peak_ms END,
+                peak_mc=MAX(COALESCE(peak_mc,0), ?3)
           WHERE token_address=?1`
-      ).bind(addr, mc, now));
+      ).bind(addr, rungs, mc, now));
     }
-    if (mc !== null && mc >= PLAY_TARGET_MC) {
+
+    if (rungs >= LADDER_RUNGS.length) {
+      // FULL LADDER — all four rungs sold at their prices. Blended exit is the
+      // ladder constant ($7,750 on a $3.5k entry ≈ 2.21x).
       stmts.push(env.RADAR_DB.prepare(
-        `UPDATE earlies SET play_outcome='target', play_exit_mc=?2, play_outcome_ms=?3
+        `UPDATE earlies SET play_outcome='target', play_exit_mc=?2, play_outcome_ms=?3, rungs_filled=4
           WHERE token_address=?1 AND play_outcome IS NULL`
-      ).bind(addr, mc, now));
+      ).bind(addr, LADDER_FULL_VALUE, now));
     } else if (now - born >= PLAY_EXIT_AGE_MS) {
+      // THE BELL — sold rungs at their prices, remainder at market (mc, or
+      // entry as the conservative floor if MC is momentarily unknown).
+      const remainderMc = mc ?? Number(e.first_hit_mc);
+      const exitVal = ladderSoldValue(rungs) + (1 - ladderSoldFrac(rungs)) * remainderMc;
       stmts.push(env.RADAR_DB.prepare(
         `UPDATE earlies SET play_outcome='exit2m', play_exit_mc=?2, play_outcome_ms=?3
           WHERE token_address=?1 AND play_outcome IS NULL`
-      ).bind(addr, mc, now));
+      ).bind(addr, exitVal, now));
     }
   }
 
