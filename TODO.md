@@ -13,6 +13,10 @@ Updated as things get named or done. Last updated: 2026-07-10._
 - [ ] **x402Core — mainnet** → ratify real economics (testnet uses placeholders), then mainnet deploy.
 - [ ] **V3 — mainnet deploy** → fork-proven (CREATE3 3/3), ready; deploy pending.
 - [ ] **PITI** → rebuild on x402Core. **Do not start until x402 is confirmed fully deployed** (your gate). First contract; will use x402Core's pay-per-call engine, not the old fee-on-transfer draft.
+- [ ] **Deploy PossessioFactory at $1 (interim price).** DECISION: the factory ships at **1 USDC** until the pool/flywheel is proven — a prove-the-rail price. `DEPLOYMENT_FEE` is immutable per-factory, so this is versioned by deploying a NEW factory at the tier price (100 USDC) once the pool is proven; existing deploys keep their terms. `script/DeployPossessioFactory.s.sol` written + forge-compiled: fee=$1, payToken (Base USDC) + feeSink (live Payments) pinned; `SALT_POOL_ADDR` + `TEMPLATE_CODEHASH` env-gated. **Blockers before it can run:** (1) deploy PossessioSaltPool (no address yet); (2) pin the template codehash. Deploying this resolves the console's "no factory configured for chain 8453."
+- [ ] **Factory → Pool wiring upgrade** (the "we fix factory later" item). Today `PossessioFactory` forwards the deploy fee with a plain `payTokenERC20.safeTransfer(feeSink, DEPLOYMENT_FEE)` to the live Payments sink — correct for that destination. To route deploy fees into PossessioPool (the Heart), the factory must instead `approve` + call the pool's **accounted** `receiveInfraFunds()` (x402Core's method — a raw transfer would be stranded, uncredited, per Pool DoD #14), AND the factory address must be in the pool's immutable `isAuthorizedSource` set at construction. Downstream of the pool going live; not before.
+- [x] **L1AnchorFactory — deploy-ready except integration addresses.** `script/DeployL1AnchorFactory.s.sol` written + forge-compiled (clean). The 3 public endpoints (cbETH, USDC, Chainlink cbETH/ETH) are hardcoded + source-verified; the 2 institutional endpoints (MAVAN entry, Bitwise Morpho vault) read from env and the script **refuses to deploy until both are set** — so "everything's done except those addresses" is now mechanically true. Remaining contingency is the MAVAN *interface* (placeholder `IMAVANEntry`): if BitMine's real ABI differs in shape, L1Anchor.sol needs the real interface swapped + re-tested (Factory v2) — an address alone doesn't cover an ABI-shape change.
+- [ ] **L1AnchorFactory → Pool wiring (v2, fee-bearing).** v1.0.0 is deliberately **fee-free** (gas only). **The v2 deployment fee is labeled "TO BE DETERMINED BY FUNDSTRAT"** — the L1 rail's economics are a joint decision with the network operator (BitMine/MAVAN), not set unilaterally by POSSESSIO. Labeled in `src/L1AnchorFactory.sol` and the deploy script. When the fee-bearing version ships, two rules: (1) same accounting discipline — the fee must reach the pool via `receiveInfraFunds()` (accounted), never a plain transfer; (2) **cross-chain leg** — L1AnchorFactory is on **Ethereum L1**, PossessioPool is on **Base**, so it cannot call `receiveInfraFunds()` in-tx like the Base factory. The L1 fee must be **bridged to Base**, then credited through the accounted door on arrival. Real settlement path, not a one-liner. v2 concern, downstream of the pool.
 
 ## Base / grants
 
@@ -22,7 +26,11 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## Superfoods (side project)
 
-- [ ] Play Store: **Google Play Developer account** ($25) + PWABuilder → Claude wires the `assetlinks.json`.
+- [x] Google Play Developer account created (2026-07-11 — "Jon Solo," personal, possessio.io).
+- [x] **Community sponsor board** built into the app (`generator/sponsors.json` + build_flyers.py) — flat logo-tile grid, no tiers ("everyone sponsors everyone"). Clark's Pest Control = founding sponsor (text tile until logo art arrives). Cache bumped v11, committed + pushed to SuperFoods-App main.
+- [ ] **Launch sequence (in order):** (1) `cd superfoods-app && npx wrangler deploy` — publish the sponsor-board version live [needs Jon's CF auth]; (2) PWABuilder → Android .aab + Play App Signing → get package ID + SHA-256 fingerprint; (3) Claude wires `app/.well-known/assetlinks.json` from those, redeploy; (4) upload .aab to Play Console (privacy.html covers the policy req) → internal testing → production.
+- [ ] Drop in **Clark's Pest Control logo** (→ `generator/sponsors/clarks_pest.png`) when Jon sends it; add sponsors as they sign.
+- Strategy (Jon): launch a real app with correct sales + get it ON the Play Store FIRST — that's the credibility that makes local sponsors "bite hard." Sponsors fill in live afterward.
 - [x] App live at superfoods-logan.jonb89201.workers.dev
 - [x] Weekly flyer — Tuesday-night reminder set (fires into this session).
 
@@ -49,12 +57,15 @@ Updated as things get named or done. Last updated: 2026-07-10._
 - **PossessioSaltPool** (`src/PossessioSaltPool.sol`) — CREATE3 pre-mined salt pool the factory draws from. Built & tested (21 tests).
 - **PossessioTestnetLaunchPool** (`src/PossessioTestnetLaunchPool.sol`) — Base Sepolia ONLY fuel pool: aggregates faucet drips; operator-gated stipends cover console testnet launches (gas + factory fee). Chain-locked to 84532 (structurally cannot deploy on mainnet), role-separated, `PoolEmpty()` guard. Built & tested. **DEPLOY: address to be recovered from a prior session. FUNDING: still to fill (see to-do).**
 
-**Tier 4 — Built, pre-fork-run & pre-deploy**:
+**Tier 4 — Built + DoD-green offline, pre-fork & pre-deploy**:
+- **PossessioPool** (`src/PossessioPool.sol`) — "the Heart." Shared economic pool: every organ's fee inflow → one USDC balance; velocity floor keeps infrastructure funded; only surplus above the floor draws one-way to the immutable operator. Relocated from audited x402Core v0.6, generalized to the authorized-source set. **NOW COMMITTED** (was a loose file) with a green DoD suite (`test/PossessioPool.t.sol`, 22/22 incl. 2 fuzz). PENDING per its own header: (1) fork-prove on Base; (2) calibrate floor params to real throughput/cost data; (3) cold-seat re-audit before immutable freeze.
 - **x402Core** (`src/PossessioX402Core.sol`) — the reusable pay-per-call payment engine (EIP-3009); the foundation the data-product APIs (and PITI) are built on. Testnet deploy lane built (`script/DeployX402Testnet.s.sol`, ratified *placeholder* economics). Tests pass OFFLINE against mocks (`test/X402TestnetMocks.sol`) + decay suite (ffi). **PENDING, in order:** (1) fork run — `X402_FORK_RPC=<Base Sepolia RPC>` against real chain state; (2) testnet `--broadcast` deploy (no address exists yet); (3) ratify real economics (placeholders now); (4) mainnet deploy. **THIS IS THE GATE for PITI.**
 
 **Running (off-chain infra):** the console (possessio.io — operates the live contracts, real wallet-confirmed txns), the Solana radar (self-running), the Superfoods app (live).
 
-**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven.
+**Named provable accomplishment — in-app mobile debug console ("MIB DEBUG"):** a live on-device inspector built into the console — timestamped logs, bridge status, and full raw JSON-RPC transaction payloads with exact wallet error/revert codes (e.g. `eth_sendTransaction` calldata, `to`, gas, `code: 4001 ACTION_REJECTED`, ethers version). Desktop-F12-grade inspection **on a phone**, where mobile browsers provide none — the enabling tooling that makes phone-only contract development and debugging actually possible, not a boast. **Provable:** open possessio.io and tap DBG. (Evidence: console screenshot 2026-07-09, showing the raw `eth_sendTransaction` to PossessioPayments `0x1c0F…AB91` and the live "no factory configured for chain 8453" RAIL log.)
+
+**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven. The mobile-only claim is backed, not asserted: mainnet deploys go out from the phone, and the on-device MIB DEBUG console (above) provides the F12-grade inspection that makes debugging on a phone real.
 
 ---
 
@@ -68,6 +79,6 @@ Updated as things get named or done. Last updated: 2026-07-10._
 >
 > The whole point is access — and access starts with safety. You learn by doing the real thing, not reading about it: deploy and run an actual contract on testnet, free, with practice funds provided, until it feels like second nature — then go to mainnet when you decide you're ready. The mainnet deployment fee (testnet is free) routes to a protocol-owned pool, alongside usage fees from x402Core — the reusable pay-per-call engine the protocol's data APIs are built on (the first, an autonomous-trading intelligence layer, in development). A closed flywheel: every deployment and every API call compounds the protocol's own resources.
 >
-> All of it — every contract, test, and deploy — was architected and shipped from a phone, by one person directing a council of AI models under strict verification discipline.
+> All of it — every contract, test, and deploy — was architected and shipped from a phone, by one person directing a council of AI models under strict verification discipline. That's not a slogan: the console carries its own on-device debug inspector (raw JSON-RPC payloads, exact wallet error codes — desktop-F12-grade, on a phone), because mobile browsers give you no F12, and you can't build on-chain from a phone without one. Open it yourself.
 >
 > A normal person, not just a crypto native, holding and moving money on-chain from their pocket — and truly owning it. That's the on-ramp.
