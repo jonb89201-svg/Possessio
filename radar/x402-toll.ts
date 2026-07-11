@@ -85,14 +85,16 @@ export function buildTolledApp(env: Env) {
   app.get("/feed", (c) => c.html(FEED_HTML));
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
+    const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_liq_usd,
+              dex_vol_h1, dex_chg_m5, dex_chg_h1, dex_last_ms`;
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
-              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session
+              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${dexCols}
          FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
     ).all();
     const recent = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, peak_mc,
-              outcome, outcome_ms
+              outcome, outcome_ms, ${dexCols}
          FROM candidates WHERE outcome!='live' ORDER BY outcome_ms DESC LIMIT 40`
     ).all();
     const tally = await db.prepare(

@@ -124,3 +124,66 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
 
   if (stmts.length) await env.RADAR_DB.batch(stmts);
 }
+
+// dexTrackScan: the SECOND half of a candidate's life. Once a candidate has
+// graduated (births.status='discovered' -> it's on DexScreener), keep pulling
+// its live DEX metrics — price, MC, liquidity, 1h volume, 5m/1h change — so the
+// feed shows the continuous journey past the DEX boundary. This is display /
+// intelligence only; the §1 paper trade already closed at graduation.
+const DEX_TRACK_WINDOW_MS = 48 * 3600_000; // enrich for 48h after qualifying
+
+export async function dexTrackScan(env: WatcherEnv): Promise<void> {
+  const now = Date.now();
+  const { results } = await env.RADAR_DB.prepare(
+    `SELECT c.token_address
+       FROM candidates c JOIN births b ON b.token_address=c.token_address
+      WHERE b.status='discovered' AND c.qualified_ms >= ?1
+      ORDER BY COALESCE(c.dex_last_ms, 0) ASC
+      LIMIT 90`
+  ).bind(now - DEX_TRACK_WINDOW_MS).all();
+
+  const addrs = (results as any[]).map((r) => r.token_address as string);
+  if (!addrs.length) return;
+
+  const stmts: any[] = [];
+  for (let i = 0; i < addrs.length; i += 30) {
+    const chunk = addrs.slice(i, i + 30);
+    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+    });
+    if (res.status === 429) break;
+    if (!res.ok) continue;
+    const data: any = await res.json();
+
+    // pick the most-liquid NON-curve (real DEX) pair per token
+    const best = new Map<string, any>();
+    for (const p of (data?.pairs ?? []) as any[]) {
+      const base = p?.baseToken?.address;
+      if (!base || p?.dexId === "pumpfun") continue;
+      const liq = numOrNull(p?.liquidity?.usd) ?? 0;
+      const prev = best.get(base);
+      if (!prev || liq > (numOrNull(prev?.liquidity?.usd) ?? 0)) best.set(base, p);
+    }
+
+    for (const addr of chunk) {
+      const p = best.get(addr);
+      if (!p) continue;
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE candidates SET
+            graduated_ms = COALESCE(graduated_ms, ?2),
+            dex_price_usd = ?3, dex_mc = ?4, dex_liq_usd = ?5,
+            dex_vol_h1 = ?6, dex_chg_m5 = ?7, dex_chg_h1 = ?8, dex_last_ms = ?2
+          WHERE token_address = ?1`
+      ).bind(
+        addr, now,
+        numOrNull(p?.priceUsd),
+        numOrNull(p?.marketCap ?? p?.fdv),
+        numOrNull(p?.liquidity?.usd),
+        numOrNull(p?.volume?.h1),
+        numOrNull(p?.priceChange?.m5),
+        numOrNull(p?.priceChange?.h1),
+      ));
+    }
+  }
+  if (stmts.length) await env.RADAR_DB.batch(stmts);
+}
