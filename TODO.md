@@ -26,7 +26,8 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## Superfoods (side project)
 
-- [ ] Play Store: **Google Play Developer account** ($25) + PWABuilder → Claude wires the `assetlinks.json`.
+- [x] Play Store: **Google Play Developer account** created (2026-07-11 — "Jon Solo," personal, possessio.io).
+- [ ] Play Store next: **PWABuilder** package the Superfoods PWA → Android TWA (.aab), then wire `assetlinks.json` (I generate it; it gets served at the app's domain to verify ownership) → upload .aab to Play Console → internal-testing track first, then production.
 - [x] App live at superfoods-logan.jonb89201.workers.dev
 - [x] Weekly flyer — Tuesday-night reminder set (fires into this session).
 
