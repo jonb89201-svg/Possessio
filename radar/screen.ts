@@ -132,6 +132,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // "steady volume increase" signal, and it lives in the newborn window
   // (age 0-5min) where this feed demonstrably works.
   const solNow = new Map<string, number>();
+  let solUsd: number | null = null;
   for (const it of items) {
     const addr = it.mint ?? it.address ?? it.tokenAddress;
     if (!addr) continue;
@@ -139,6 +140,24 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     if (mc !== null) mcNow.set(addr, mc);
     const sol = numOrNull(it.real_sol_reserves);
     if (sol !== null) solNow.set(addr, sol / 1e9); // lamports -> SOL
+    // SOL/USD from the item's own pair of fields (market_cap is SOL-
+    // denominated on this feed, usd_market_cap is USD — the ratio is the
+    // price; verified against raw_birth_json 2026-07-11). Feeds the Layer 3
+    // engine so it can price its SOL-only trade stream.
+    if (solUsd === null) {
+      const mcSol = numOrNull(it.market_cap);
+      if (mc !== null && mcSol !== null && mcSol > 0) {
+        const p = mc / mcSol;
+        if (p > 1 && p < 100_000) solUsd = p;
+      }
+    }
+  }
+  if (solUsd !== null && env.PUMPTAPE) {
+    const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
+    stub.fetch("https://pumptape/solusd", {
+      method: "POST",
+      body: JSON.stringify({ solUsd }),
+    }).catch((e) => console.error("pumptape solusd", e));
   }
 
   const stmts: any[] = [];

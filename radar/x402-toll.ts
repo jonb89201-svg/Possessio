@@ -83,6 +83,15 @@ export function buildTolledApp(env: Env) {
   // never entry/exit prices or size. Always free, even when the toll is armed
   // (it's marketing for the paid execution product, not a paid data route). ----
   app.get("/feed", (c) => c.html(FEED_HTML));
+  // Layer 3 VERIFY-FIRST surface: WS engine state, parse rate, raw samples.
+  // Aggregates + public mint data only — nothing here leaks method params.
+  app.get("/radar/ws-status", async (c) => {
+    const ns = (c.env as any).PUMPTAPE as DurableObjectNamespace | undefined;
+    if (!ns) return c.json({ error: "PUMPTAPE_NOT_BOUND" }, 503);
+    const stub = ns.get(ns.idFromName("main"));
+    const r = await stub.fetch("https://pumptape/status");
+    return new Response(r.body, { headers: { "content-type": "application/json" } });
+  });
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
     const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_liq_usd,
@@ -104,7 +113,8 @@ export function buildTolledApp(env: Env) {
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
       `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
-              peak_mc, play_outcome, play_exit_mc
+              peak_mc, play_outcome, play_exit_mc,
+              ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`
     ).all();

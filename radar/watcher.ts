@@ -30,6 +30,8 @@ export type WatcherEnv = Env & {
   YOUNG_WINDOW_MIN: string;
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
+  PUMPPORTAL_WS_URL?: string;
+  PUMPTAPE?: DurableObjectNamespace; // Layer 3 engine (pumptape.ts)
 };
 
 export async function birthScan(env: WatcherEnv): Promise<void> {

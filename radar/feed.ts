@@ -154,11 +154,19 @@ export const FEED_HTML = `<!doctype html>
     if(c.play_outcome==="late")   return '<span class="badge b-timestop">late</span>';
     return '<span class="badge b-early">early</span>';
   }
+  // WS-detected earlies carry the flow-quality read from trade-level data:
+  // distinct buyers vs whale concentration is the runner-vs-trap hypothesis.
+  function flowQ(c){ if(!c.ws||c.uniq_buyers_hit==null) return "";
+    var top=c.top_buyer_share!=null? Math.round(c.top_buyer_share*100)+'% top wallet' : '';
+    return '<br><span class="age">&#9889;'+(c.t4k_ms!=null?(c.t4k_ms/1000).toFixed(1)+'s to $4k &middot; ':'')+
+      c.uniq_buyers_hit+' buyers &middot; '+(c.buys_hit||0)+'B/'+(c.sells_hit||0)+'S &middot; '+
+      (c.sol_net_hit!=null?('+'+c.sol_net_hit+' SOL &middot; '):'')+top+'</span>'; }
   function earlyRow(c,tk){
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
-      '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span><br>'+
+      '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
+      flowQ(c)+'<br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right">'+playBadge(c)+'<br>'+
       '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+

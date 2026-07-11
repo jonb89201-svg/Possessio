@@ -6,6 +6,7 @@
 import { buildTolledApp } from "./x402-toll";
 import { birthScan, discoveryScan, btcScan, type WatcherEnv } from "./watcher";
 import { screenLoop, dexTrackScan } from "./screen";
+export { PumpTape } from "./pumptape";
 
 let app: ReturnType<typeof buildTolledApp> | null = null;
 let armedFor: string | null = null;
@@ -19,6 +20,13 @@ export default {
     ctx.waitUntil(screenLoop(env).catch((e) => console.error("screenLoop", e)));
     ctx.waitUntil(dexTrackScan(env).catch((e) => console.error("dexTrackScan", e)));
     ctx.waitUntil(btcScan(env).catch((e) => console.error("btcScan", e)));
+    // Layer 3 keepalive: poke the DO every minute so the WS engine (re)connects
+    // even after eviction. The DO's own alarm is the fast watchdog in between.
+    ctx.waitUntil((async () => {
+      if (!env.PUMPTAPE) return;
+      const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
+      await stub.fetch("https://pumptape/ensure");
+    })().catch((e) => console.error("pumptape ensure", e)));
   },
 
   async fetch(request: Request, env: WatcherEnv, ctx: ExecutionContext): Promise<Response> {
