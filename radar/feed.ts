@@ -37,6 +37,9 @@ export const FEED_HTML = `<!doctype html>
   .pulse{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;
     margin-right:6px;animation:p 1.6s infinite}
   @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+  .pct{font-weight:700;font-size:12px}.pct.up{color:var(--green)}.pct.down{color:var(--red)}
+  .dex{color:var(--blue);font-size:11px;text-decoration:none;white-space:nowrap}
+  .dex:hover{text-decoration:underline}
   .empty{color:var(--dim);padding:14px 2px;font-size:13px}
   .promo{margin-top:22px;border:1px solid var(--green);border-radius:10px;padding:14px;background:#0f1a13}
   .promo b{color:var(--green)}
@@ -81,17 +84,24 @@ export const FEED_HTML = `<!doctype html>
   var esc=function(s){ return (s==null?"":String(s)).replace(/[&<>\"]/g,function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]; }); };
 
+  function pct(from,to){ if(from==null||to==null||!from) return "";
+    var p=((Number(to)-Number(from))/Number(from))*100;
+    return '<span class="pct '+(p>=0?"up":"down")+'">'+(p>=0?"+":"")+p.toFixed(0)+'%</span>'; }
+  function dex(addr){ if(!addr) return "";
+    return '<a class="dex" href="https://dexscreener.com/solana/'+esc(addr)+'" target="_blank" rel="noopener">chart &#8599;</a>'; }
+
   function liveRow(c){
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
-      '<span class="name">'+esc((c.name||"").slice(0,28))+'</span><br>'+
-      '<span class="age">qualified '+ago(c.qualified_ms)+' ago · entry '+fmt(c.entry_mc)+'</span></div>'+
+      '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+'<br>'+
+      '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span></div>'+
       '<div style="text-align:right"><span class="badge b-live">live</span><br>'+
-      '<span class="mc"><span class="now">'+fmt(c.last_mc)+'</span> <span class="arw">peak '+fmt(c.peak_mc)+'</span></span></div></div>';
+      '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
+      '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>';
   }
   function recentRow(c){
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
-      '<span class="name">'+esc((c.name||"").slice(0,24))+'</span><br>'+
-      '<span class="age">'+fmt(c.entry_mc)+' <span class="mc arw">&#8594;</span> peak '+fmt(c.peak_mc)+'</span></div>'+
+      '<span class="name">'+esc((c.name||"").slice(0,20))+'</span> '+dex(c.token_address)+'<br>'+
+      '<span class="age">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div>'+
       '<div><span class="badge b-'+esc(c.outcome)+'">'+esc(c.outcome)+'</span></div></div>';
   }
 
