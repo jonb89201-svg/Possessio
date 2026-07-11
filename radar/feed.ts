@@ -59,7 +59,7 @@ export const FEED_HTML = `<!doctype html>
     <div class="note" id="note">Most picks fail by design — the method runs a low win rate on purpose, and the ~2.5:1 asymmetry (up ~2x / down ~40–60%) is what carries it. You are not watching "hot buys." You are watching a discipline.</div>
   </div>
 
-  <h2>Early radar — crossed $4k before 4min &middot; §0 paper play: $4k &#8594; $8k by 2:00</h2>
+  <h2>Early radar &middot; §0 ladder (paper): in $3.5k &middot; out 50%@6k 25%@8k 12.5%@10k 12.5%@12k &middot; dip re-buy &#8594; next ladder up</h2>
   <div id="epstats" class="sub"></div>
   <div id="early"><div class="empty">scanning newborns…</div></div>
 
@@ -148,8 +148,11 @@ export const FEED_HTML = `<!doctype html>
       ' &middot; 5m '+chg(c.dex_chg_m5)+' &middot; 1h '+chg(c.dex_chg_h1)+'</div>'; }
 
   function playBadge(c){
-    if(c.play_outcome==="target") return '<span class="badge b-target">8k &#10003;</span>';
-    if(c.play_outcome==="exit2m") return '<span class="badge b-timestop">2:00 exit '+pct(c.first_hit_mc,c.play_exit_mc)+'</span>';
+    var cm=(c.compound_mult!=null&&c.levels>1)?(' L'+c.levels+' &times;'+c.compound_mult):'';
+    if(c.play_outcome==="target") return '<span class="badge b-target">ladder &#10003;'+cm+'</span>';
+    if(c.play_outcome==="exit2m"){
+      var up=c.play_exit_mc!=null&&c.first_hit_mc&&c.play_exit_mc>=c.first_hit_mc;
+      return '<span class="badge '+(up?'b-target':'b-stop')+'">sell '+pct(c.first_hit_mc,c.play_exit_mc)+'</span>'; }
     if(c.play_outcome==="gap")    return '<span class="badge b-graduated">gap</span>';
     if(c.play_outcome==="late")   return '<span class="badge b-timestop">late</span>';
     return '<span class="badge b-early">early</span>';
@@ -158,14 +161,14 @@ export const FEED_HTML = `<!doctype html>
   // distinct buyers vs whale concentration is the runner-vs-trap hypothesis.
   function flowQ(c){ if(!c.ws||c.uniq_buyers_hit==null) return "";
     var top=c.top_buyer_share!=null? Math.round(c.top_buyer_share*100)+'% top wallet' : '';
-    return '<br><span class="age">&#9889;'+(c.t4k_ms!=null?(c.t4k_ms/1000).toFixed(1)+'s to $4k &middot; ':'')+
+    return '<br><span class="age">&#9889;'+(c.t4k_ms!=null?(c.t4k_ms/1000).toFixed(1)+'s to $3.5k &middot; ':'')+
       c.uniq_buyers_hit+' buyers &middot; '+(c.buys_hit||0)+'B/'+(c.sells_hit||0)+'S &middot; '+
       (c.sol_net_hit!=null?('+'+c.sol_net_hit+' SOL &middot; '):'')+top+'</span>'; }
   function earlyRow(c,tk){
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
-      '<span class="age">hit $4k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
+      '<span class="age">hit $3.5k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
       flowQ(c)+'<br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right">'+playBadge(c)+'<br>'+
@@ -181,11 +184,21 @@ export const FEED_HTML = `<!doctype html>
       '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
       '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>'+dexLine(c);
   }
+  // Closed §1 trades read as SELLS, colored by P/L vs our entry: green if the
+  // exit was above the buy, red if below. 'graduated' keeps its own badge (the
+  // coin left for the DEX — the dexline below tells that story).
+  function sellBadge(c){
+    if(c.outcome==="graduated") return '<span class="badge b-graduated">graduated</span>';
+    var ex=(c.last_mc!=null)?c.last_mc:null;
+    if(ex==null||!c.entry_mc) return '<span class="badge b-timestop">'+esc(c.outcome)+'</span>';
+    var up=ex>=c.entry_mc;
+    return '<span class="badge '+(up?'b-target':'b-stop')+'">sell '+pct(c.entry_mc,ex)+'</span>';
+  }
   function recentRow(c){
     return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,20))+'</span> '+dex(c.token_address)+'<br>'+
       '<span class="age">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div>'+
-      '<div><span class="badge b-'+esc(c.outcome)+'">'+esc(c.outcome)+'</span></div></div>'+dexLine(c);
+      '<div>'+sellBadge(c)+'</div></div>'+dexLine(c);
   }
 
   function render(d){
@@ -201,9 +214,9 @@ export const FEED_HTML = `<!doctype html>
     var nT=ep.target?ep.target.n:0, nX=ep.exit2m?ep.exit2m.n:0;
     var xm=ep.exit2m&&ep.exit2m.avg_mult!=null?(' avg '+ep.exit2m.avg_mult+'x'):'';
     document.getElementById("epstats").innerHTML =
-      '§0 ledger: <span class="pct up">'+nT+' hit $8k</span> &middot; '+
-      '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' exited at 2:00'+xm+'</span>'+
-      (nT+nX>0?(' &middot; win rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
+      '§0 ledger: <span class="pct up">'+nT+' full ladders</span> &middot; '+
+      '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' bell exits'+xm+'</span>'+
+      (nT+nX>0?(' &middot; ladder rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
     var tk=d.ticks||{};
     var E=document.getElementById("early");
     E.innerHTML=(d.early&&d.early.length)? d.early.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';

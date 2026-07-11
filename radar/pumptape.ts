@@ -25,8 +25,34 @@
 import type { WatcherEnv } from "./watcher";
 
 const TRACK_MAX_AGE_MS = 8 * 60_000;   // stop caring after the §1 window closes
-const PLAY_TARGET_USD  = 8_000;        // §0 v2 — same ratified rule, real resolution
-const PLAY_HIT_USD     = 4_000;
+
+// §0 v3 — THE LADDER (Architect-ratified 2026-07-11): buy the $3,500
+// crossing; scale out 50% @ $6k, 25% @ $8k, 12.5% @ $10k, 12.5% @ $12k
+// (fractions sum to 1.0, verified); whatever remains unsold exits at the
+// age-2:00 bell at market. Rungs fill AT the rung price (a market-sell
+// triggered at >=rung fills at-or-above it, so rung price is the
+// conservative-honest paper fill). Full ladder = 2.21x on a $3.5k entry;
+// rung 1 alone floors the trade near 0.86x — the first sell pays for the
+// ticket. Detected already at/past rung 1 -> 'gap' (no honest entry).
+const PLAY_HIT_USD     = 3_500;
+const RUNG_FRACS = [0.5, 0.25, 0.125, 0.125];
+const L1_RUNGS = [6_000, 8_000, 10_000, 12_000];
+
+// THE CYCLE (Architect, same ratification): if a ladder completes fully
+// before its bell, wait for A DIP, re-buy, and run the next ladder one
+// octave up — L2 sells toward $20k (14/16/18/20k), L3 toward $28k
+// (22/24/26/28k), "continue that trend all the way up." Proceeds fully
+// reinvest at each re-entry, so the play compounds. DESIGN CALLS (flagged,
+// ledger-tunable §7): a dip = 15% retrace from the post-ladder peak; each
+// level gets its own 2:00 bell from its entry; the whole cycle caps at the
+// 8min tracking window (graduation takes the tape to the DEX anyway).
+const DIP_FRAC         = 0.85;
+function rungsFor(level: number): number[] {
+  if (level <= 1) return L1_RUNGS;
+  const base = 12_000 + 8_000 * (level - 2); // top of the previous ladder
+  return [base + 2_000, base + 4_000, base + 6_000, base + 8_000];
+}
+
 const PLAY_EXIT_AGE_MS = 2 * 60_000;
 const ALARM_EVERY_MS   = 30_000;
 const STALE_SOCKET_MS  = 90_000;
@@ -40,7 +66,17 @@ type Coin = {
   solNet: number;                       // net SOL flow since create (buys - sells)
   buyerSol: Map<string, number>;        // trader -> cumulative SOL bought (cap 500)
   mcSol: number | null;                 // last seen marketCap in SOL
-  hit4kMs: number | null;
+  hit4kMs: number | null;               // the $3.5k crossing (column name t4k_ms is historical)
+  // ---- cycle state ----
+  level: number;                        // 1-based ladder level
+  levelEntryMc: number;                 // this level's entry (crossing or dip re-buy)
+  levelEntryMs: number;                 // this level's bell starts here
+  mode: "holding" | "awaiting_dip";
+  dipPeak: number;                      // post-ladder peak while awaiting the dip
+  compoundMult: number;                 // Π level multiples (full reinvestment)
+  rungIdx: number;                      // next unfilled rung in this level
+  soldFrac: number;                     // fraction scaled out this level
+  soldValue: number;                    // Σ frac × rung MC this level (blended exit)
   resolved: boolean;
 };
 
@@ -140,10 +176,26 @@ export class PumpTape {
 
     const pruned: string[] = [];
     for (const [mint, c] of this.coins) {
-      if (c.hit4kMs && !c.resolved && now - c.createdMs >= PLAY_EXIT_AGE_MS) {
-        this.resolvePlay(mint, c, "exit2m", now);
+      const usd = c.mcSol !== null && this.solUsd > 0 ? c.mcSol * this.solUsd : null;
+      // quiet coin past its bell while holding — sweep the remainder at last MC
+      if (c.hit4kMs && !c.resolved && c.mode === "holding" &&
+          now - c.levelEntryMs >= PLAY_EXIT_AGE_MS && usd !== null) {
+        this.advancePlay(mint, c, usd, now);
       }
       if (now - c.createdMs > TRACK_MAX_AGE_MS) {
+        // window over: holding remainder marks to last MC; awaiting_dip is
+        // already all-cash. Book the final state either way.
+        if (c.hit4kMs && !c.resolved) {
+          if (c.mode === "holding" && usd !== null) {
+            const exitVal = c.soldValue + (1 - c.soldFrac) * usd;
+            c.compoundMult *= exitVal / c.levelEntryMc;
+            this.stats.exits++;
+            this.writeCycle(mint, c.level, "window", c.levelEntryMc, exitVal, c.rungIdx, now);
+            if (c.level === 1) this.writeLevel1(mint, c, "exit2m", exitVal, now);
+          }
+          c.resolved = true;
+          this.updateHeadline(mint, c);
+        }
         pruned.push(mint);
         this.coins.delete(mint);
       }
@@ -187,7 +239,10 @@ export class PumpTape {
           buys: devSol > 0 ? 1 : 0, sells: 0, solNet: devSol,
           buyerSol,
           mcSol: num(j.marketCapSol ?? j.market_cap_sol),
-          hit4kMs: null, resolved: false,
+          hit4kMs: null,
+          level: 1, levelEntryMc: 0, levelEntryMs: 0,
+          mode: "holding", dipPeak: 0, compoundMult: 1,
+          rungIdx: 0, soldFrac: 0, soldValue: 0, resolved: false,
         });
         if (this.ws) {
           try { this.ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: [mint] })); } catch {}
@@ -220,7 +275,7 @@ export class PumpTape {
       c.solNet -= sol;
     }
 
-    // ---- §0 v2, at trade resolution ----
+    // ---- §0 v3 (the ladder + the cycle), at trade resolution ----
     if (this.solUsd <= 0) { this.stats.noPrice++; return; }
     if (c.mcSol === null) return;
     const usd = c.mcSol * this.solUsd;
@@ -230,11 +285,56 @@ export class PumpTape {
       c.hit4kMs = now;
       this.stats.hits++;
       this.recordHit(mint, c, usd, now);
+      if (!c.resolved) { c.levelEntryMc = usd; c.levelEntryMs = now; }
       return; // crossing trade scored on the NEXT trade — entry can't also be exit
     }
-    if (c.hit4kMs !== null && !c.resolved) {
-      if (usd >= PLAY_TARGET_USD) this.resolvePlay(mint, c, "target", now, usd);
-      else if (age >= PLAY_EXIT_AGE_MS) this.resolvePlay(mint, c, "exit2m", now, usd);
+    if (c.hit4kMs !== null && !c.resolved) this.advancePlay(mint, c, usd, now);
+  }
+
+  // One step of the cycle: fill rungs, ring bells, hunt dips, re-enter.
+  advancePlay(mint: string, c: Coin, usd: number, now: number): void {
+    if (c.mode === "awaiting_dip") {
+      if (usd > c.dipPeak) { c.dipPeak = usd; return; }
+      if (usd <= c.dipPeak * DIP_FRAC) {
+        // THE DIP — re-buy with full proceeds, next ladder up, fresh bell.
+        c.level++;
+        c.levelEntryMc = usd; c.levelEntryMs = now;
+        c.rungIdx = 0; c.soldFrac = 0; c.soldValue = 0;
+        c.mode = "holding";
+        this.writeCycle(mint, c.level, "entry", usd, null, 0, now);
+      }
+      return;
+    }
+    // holding: fill any rungs this trade's MC clears (fills AT rung price —
+    // a sell triggered at >=rung executes at-or-above it, so this is the
+    // conservative-honest paper fill)
+    const rungs = rungsFor(c.level);
+    while (c.rungIdx < rungs.length && usd >= rungs[c.rungIdx]) {
+      c.soldValue += RUNG_FRACS[c.rungIdx] * rungs[c.rungIdx];
+      c.soldFrac += RUNG_FRACS[c.rungIdx];
+      c.rungIdx++;
+    }
+    if (c.rungIdx === rungs.length) {
+      // FULL LADDER — all sold. Book the level, arm the dip hunt.
+      const mult = c.soldValue / c.levelEntryMc;
+      c.compoundMult *= mult;
+      this.stats.targets++;
+      this.writeCycle(mint, c.level, "ladder", c.levelEntryMc, c.soldValue, c.rungIdx, now);
+      if (c.level === 1) this.writeLevel1(mint, c, "target", c.soldValue, now);
+      c.mode = "awaiting_dip";
+      c.dipPeak = usd;
+      this.updateHeadline(mint, c);
+      return;
+    }
+    if (now - c.levelEntryMs >= PLAY_EXIT_AGE_MS) {
+      // THE BELL — remainder sells at market; the cycle ends here.
+      const exitVal = c.soldValue + (1 - c.soldFrac) * usd;
+      c.compoundMult *= exitVal / c.levelEntryMc;
+      c.resolved = true;
+      this.stats.exits++;
+      this.writeCycle(mint, c.level, "bell", c.levelEntryMc, exitVal, c.rungIdx, now);
+      if (c.level === 1) this.writeLevel1(mint, c, "exit2m", exitVal, now);
+      this.updateHeadline(mint, c);
     }
   }
 
@@ -245,8 +345,9 @@ export class PumpTape {
     let buySol = 0, topSol = 0;
     for (const v of c.buyerSol.values()) { buySol += v; if (v > topSol) topSol = v; }
     const topShare = buySol > 0 ? topSol / buySol : null;
-    // Detected already at/above target -> 'gap', same honest-tally rule as v1.
-    const gap = usd >= PLAY_TARGET_USD;
+    // Detected already at/past the first sell rung -> 'gap': you can't open
+    // a position that's already at its first exit. Same honest-tally rule.
+    const gap = usd >= rungsFor(1)[0];
     if (gap) { c.resolved = true; this.stats.gaps++; }
     // fire-and-forget with its own catch — the DO stays alive on the socket,
     // and depending on state.waitUntil (deprecated) would risk a runtime TypeError
@@ -269,16 +370,39 @@ export class PumpTape {
     );
   }
 
-  resolvePlay(mint: string, c: Coin, outcome: "target" | "exit2m", now: number, usd?: number): void {
-    c.resolved = true;
-    if (outcome === "target") this.stats.targets++; else this.stats.exits++;
-    const exitMc = usd ?? (c.mcSol !== null && this.solUsd > 0 ? c.mcSol * this.solUsd : null);
+  // Level-1 outcome into the earlies ledger (play_exit_mc = BLENDED exit:
+  // sold rungs at rung price + remainder at final MC — so exit/entry stays
+  // the true multiple in every existing query).
+  writeLevel1(mint: string, c: Coin, outcome: "target" | "exit2m", exitVal: number, now: number): void {
     void (
       this.env.RADAR_DB.prepare(
-        `UPDATE earlies SET play_outcome=?2, play_exit_mc=?3, play_outcome_ms=?4
+        `UPDATE earlies SET play_outcome=?2, play_exit_mc=?3, play_outcome_ms=?4, rungs_filled=?5
           WHERE token_address=?1 AND play_outcome IS NULL`
-      ).bind(mint, outcome, exitMc, now)
-        .run().catch((e) => { this.stats.d1Errors++; console.error("pumptape resolve", e); })
+      ).bind(mint, outcome, exitVal, now, c.rungIdx)
+        .run().catch((e) => { this.stats.d1Errors++; console.error("pumptape level1", e); })
+    );
+  }
+
+  // Every level event (entry / ladder / bell / window) lands in early_cycles —
+  // the research ledger for the fractal exit design.
+  writeCycle(mint: string, level: number, outcome: string, entryMc: number,
+             exitValue: number | null, rungsFilled: number, now: number): void {
+    void (
+      this.env.RADAR_DB.prepare(
+        `INSERT INTO early_cycles (token_address, level, outcome, entry_mc, exit_value, rungs_filled, ms)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)`
+      ).bind(mint, level, outcome, entryMc, exitValue, rungsFilled, now)
+        .run().catch((e) => { this.stats.d1Errors++; console.error("pumptape cycle", e); })
+    );
+  }
+
+  // The headline on the earlies row: how deep the cycle went, compounded.
+  updateHeadline(mint: string, c: Coin): void {
+    void (
+      this.env.RADAR_DB.prepare(
+        `UPDATE earlies SET levels=?2, compound_mult=?3 WHERE token_address=?1`
+      ).bind(mint, c.level, Math.round(c.compoundMult * 1000) / 1000)
+        .run().catch((e) => { this.stats.d1Errors++; console.error("pumptape headline", e); })
     );
   }
 }

@@ -27,17 +27,18 @@ const STOP_MC     = 6_000;        // §1 exit #2 — stop-loss
 const TIMESTOP_MS = 10 * 60_000;  // §1 exit #4 — time-stop
 
 // Screen 0 — the EARLY radar (Architect, 2026-07-11, multi-screen method):
-// age 0-4min, coin crosses $4k MC -> early-watch list. Gives the human a look
-// BEFORE the §1 window opens, and starts the oscillation tape early.
-const EARLY_MC        = 4_000;
+// coin crosses the entry MC before 4min -> early-watch list. Gives the human
+// a look BEFORE the §1 window opens, and starts the oscillation tape early.
+// 4000 -> 3500 with the §0 v3 ladder ratification (entry = $3.5k crossing).
+const EARLY_MC        = 3_500;
 const EARLY_MAX_AGE   = AGE_MIN_MS;      // screen 0 closes where screen 1 opens
 const TICKS_KEEP_MS   = 48 * 3600_000;   // tape retention (matches DEX_TRACK_WINDOW)
 
-// §0 EARLY PLAY (Architect-ratified 2026-07-11: "4k is right. a target of 8k
-// by 2min... this makes it tradable by an agent"). Paper rule: entry = the
-// $4k crossing, target $8k, exit at coin AGE 2:00 either way. Crossings after
-// 2min can't play ('late'). The ledger proves or kills this band BEFORE any
-// agent trades it — same gate §1 lives behind.
+// §0 LEGACY FALLBACK SCORER (poller, 15s resolution). The ratified method is
+// §0 v3 — the LADDER + CYCLE — which needs trade resolution and lives in
+// pumptape.ts (ws=1 rows). This scorer only touches ws=0 rows (coins the WS
+// engine never saw born, i.e. when the socket is down) with the simple
+// v1 rule, so the two ledgers never mix. Analysis filters on ws.
 const PLAY_TARGET_MC  = 8_000;
 const PLAY_EXIT_AGE_MS = 2 * 60_000;
 
@@ -238,7 +239,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   //       2:00 exit within a pass; peak tracked while unresolved.
   const { results: plays } = await env.RADAR_DB.prepare(
     `SELECT token_address, first_hit_ms, first_hit_mc, age_sec_at_hit
-       FROM earlies WHERE play_outcome IS NULL`
+       FROM earlies WHERE play_outcome IS NULL AND COALESCE(ws,0)=0`
   ).all();
   for (const e of plays as any[]) {
     const addr = e.token_address as string;

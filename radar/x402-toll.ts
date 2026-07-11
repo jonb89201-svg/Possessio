@@ -103,7 +103,7 @@ export function buildTolledApp(env: Env) {
     ).all();
     const recent = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, peak_mc,
-              outcome, outcome_ms, ${dexCols}
+              last_mc, outcome, outcome_ms, ${dexCols}
          FROM candidates WHERE outcome!='live' ORDER BY outcome_ms DESC LIMIT 40`
     ).all();
     const tally = await db.prepare(
@@ -113,7 +113,7 @@ export function buildTolledApp(env: Env) {
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
       `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
-              peak_mc, play_outcome, play_exit_mc,
+              peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
               ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`
