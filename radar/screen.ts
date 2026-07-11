@@ -1,0 +1,126 @@
+// possessio-radar — screen.ts: the §1 screened-candidate feed.
+//
+// §4 COMPLIANCE (rulebook, binding): holds NO keys, signs NOTHING, trades
+// NOTHING. This is paper-only observation — it screens the live 'watching' set
+// against RULEBOOK §1 and records what happens next, so the ledger kills or
+// confirms the method (§7). No order is ever placed. "There is no state in
+// which a key exists and the rulebook does not."
+//
+// RATIFIED SURFACE (Architect, 2026-07-11, Amendment IV Clause 5): the screened
+// SELECTION is public — it promotes the x402Core autonomous trader and feeds
+// the pool. It shows WHICH coins clear the screen, never entry/exit prices or
+// size. Supersedes the older "no watching rows" boundary for the candidate
+// feed only.
+//
+// §1 numbers are the ratified method. The entry band matches the 8-13k the
+// codebase already uses. Band + session/rug cutoffs are ledger-tunable (§7),
+// never changed at trade time.
+
+import type { WatcherEnv } from "./watcher";
+
+const AGE_MIN_MS  = 4 * 60_000;   // §1: past the instant-rug window
+const AGE_MAX_MS  = 7 * 60_000;   // §1: before stale
+const ENTRY_LOW   = 8_000;        // §1 "~$10k" entry band (8-13k, ledger-tunable §7)
+const ENTRY_HIGH  = 13_000;
+const TARGET_MC   = 20_000;       // §1 exit #1 — take-profit (~2x)
+const STOP_MC     = 6_000;        // §1 exit #2 — stop-loss
+const TIMESTOP_MS = 10 * 60_000;  // §1 exit #4 — time-stop
+
+function numOrNull(v: unknown): number | null {
+  const n = typeof v === "string" ? parseFloat(v) : (v as number);
+  return Number.isFinite(n) ? n : null;
+}
+
+function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number, lastMc: number | null) {
+  return env.RADAR_DB.prepare(
+    `UPDATE candidates
+        SET outcome=?2, outcome_ms=?3,
+            last_mc=COALESCE(?4, last_mc), last_tracked_ms=?3,
+            peak_mc=MAX(COALESCE(peak_mc,0), COALESCE(?4,0))
+      WHERE token_address=?1 AND outcome='live'`
+  ).bind(addr, outcome, now, lastMc);
+}
+
+export async function screenScan(env: WatcherEnv): Promise<void> {
+  if (!env.PUMPFUN_FEED_URL) {
+    console.warn("PUMPFUN_FEED_URL unset — screenScan idle");
+    return;
+  }
+  const now = Date.now();
+
+  // Live curve MC per mint, from the same pump.fun feed birthScan reads.
+  // This is the ONLY pre-DEX MC source (DexScreener doesn't index the token
+  // until later, and §1's whole edge is being pre-DexScreener).
+  const res = await fetch(env.PUMPFUN_FEED_URL, {
+    headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+  });
+  if (!res.ok) { console.warn("screen feed", res.status); return; }
+  const body: any = await res.json();
+  const items: any[] = Array.isArray(body) ? body : body?.coins ?? body?.data ?? [];
+  const mcNow = new Map<string, number>();
+  for (const it of items) {
+    const addr = it.mint ?? it.address ?? it.tokenAddress;
+    const mc = numOrNull(it.usd_market_cap ?? it.marketCapUsd);
+    if (addr && mc !== null) mcNow.set(addr, mc);
+  }
+
+  const stmts: any[] = [];
+
+  // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
+  //     already tracked. Pre-DEX is implied by status='watching'.
+  const { results: young } = await env.RADAR_DB.prepare(
+    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms
+       FROM births
+      WHERE status='watching'
+        AND pumpfun_first_seen_ms <= ?1
+        AND pumpfun_first_seen_ms >= ?2
+        AND token_address NOT IN (SELECT token_address FROM candidates)`
+  ).bind(now - AGE_MIN_MS, now - AGE_MAX_MS).all();
+
+  for (const r of young as any[]) {
+    const mc = mcNow.get(r.token_address as string);
+    if (mc === undefined || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
+    const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
+    stmts.push(env.RADAR_DB.prepare(
+      `INSERT INTO candidates
+         (token_address, symbol, name, creator, qualified_ms, entry_age_sec,
+          entry_mc, gate_age, gate_mc, gate_predex, gate_rug, gate_session,
+          peak_mc, peak_ms, last_mc, last_tracked_ms, outcome)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,NULL,NULL,?7,?5,?7,?5,'live')
+       ON CONFLICT(token_address) DO NOTHING`
+    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc));
+  }
+
+  // (2) TRACK live candidates against the §1 exit ladder. First trigger wins.
+  const { results: liveC } = await env.RADAR_DB.prepare(
+    `SELECT c.token_address, c.peak_mc, b.status AS bstatus, b.pumpfun_first_seen_ms AS born
+       FROM candidates c JOIN births b ON b.token_address=c.token_address
+      WHERE c.outcome='live'`
+  ).all();
+
+  for (const c of liveC as any[]) {
+    const addr = c.token_address as string;
+    const mc = mcNow.get(addr) ?? null;
+    const age = now - Number(c.born);
+
+    if (c.bstatus === "discovered") {               // §1 #3 edge-loss: graduated
+      stmts.push(setOutcome(env, addr, "graduated", now, mc));
+    } else if (mc !== null && mc >= TARGET_MC) {    // §1 #1 take-profit
+      stmts.push(setOutcome(env, addr, "target", now, mc));
+    } else if (mc !== null && mc <= STOP_MC) {      // §1 #2 stop-loss
+      stmts.push(setOutcome(env, addr, "stop", now, mc));
+    } else if (age >= TIMESTOP_MS) {                // §1 #4 time-stop
+      stmts.push(setOutcome(env, addr, "timestop", now, mc));
+    } else if (mc !== null) {                       // still live — update trackers
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE candidates
+            SET last_mc=?2, last_tracked_ms=?3,
+                peak_ms=CASE WHEN ?2 > COALESCE(peak_mc,0) THEN ?3 ELSE peak_ms END,
+                peak_mc=MAX(COALESCE(peak_mc,0), ?2)
+          WHERE token_address=?1`
+      ).bind(addr, mc, now));
+    }
+  }
+
+  if (stmts.length) await env.RADAR_DB.batch(stmts);
+}

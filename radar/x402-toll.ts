@@ -25,6 +25,7 @@ import { Hono } from "hono";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { FEED_HTML } from "./feed";
 
 export type Env = {
   RADAR_DB: D1Database;
@@ -74,8 +75,41 @@ export function buildTolledApp(env: Env) {
     });
   }
 
-  // ---- routes: the measurements. ----
-  // PRODUCT BOUNDARY (unchanged, HIGH if relaxed): no route returns status='watching'.
+  // ---- the public LIVE-SELECTION feed (RATIFIED 2026-07-11, Architect,
+  // Amendment IV Clause 5). This is the deliberate exception to the boundary
+  // below: the screened candidate SELECTION is public — it promotes the
+  // x402Core autonomous trader and feeds the pool, and shared visibility on a
+  // $10k micro-cap is a tailwind, not a leak. It exposes WHICH coins clear §1,
+  // never entry/exit prices or size. Always free, even when the toll is armed
+  // (it's marketing for the paid execution product, not a paid data route). ----
+  app.get("/feed", (c) => c.html(FEED_HTML));
+  app.get("/radar/candidates", async (c) => {
+    const db = c.env.RADAR_DB;
+    const live = await db.prepare(
+      `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
+              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session
+         FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
+    ).all();
+    const recent = await db.prepare(
+      `SELECT token_address, symbol, name, qualified_ms, entry_mc, peak_mc,
+              outcome, outcome_ms
+         FROM candidates WHERE outcome!='live' ORDER BY outcome_ms DESC LIMIT 40`
+    ).all();
+    const tally = await db.prepare(
+      `SELECT outcome, COUNT(*) AS n FROM candidates GROUP BY outcome`
+    ).all();
+    return c.json({
+      live: live.results,
+      recent: recent.results,
+      tally: tally.results,
+      method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",
+    });
+  });
+
+  // ---- routes: the measurements (the PAID API). ----
+  // PRODUCT BOUNDARY (paid routes only, HIGH if relaxed): no route below
+  // returns status='watching'. The live-selection feed above is the ratified
+  // exception; these aggregate/discovered-only routes are unchanged.
 
   // R-1/R-2 REFRAME (2026-07-07): 'discovered' = GRADUATED (first non-pumpfun
   // pair, the $69K surface). gap_ms = birth -> graduation, a winners-only
