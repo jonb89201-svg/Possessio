@@ -52,6 +52,22 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// MC computed from first principles off the constant-product bonding-curve
+// reserves in the feed item, priced with a market-wide SOL/USD. Deterministic;
+// verified to 5 decimals vs pump.fun's own market_cap field (2026-07-11).
+// Returns null if reserves are absent or solUsd is unknown (caller falls back).
+function curveMcUsd(it: any, solUsd: number | null): number | null {
+  if (solUsd === null) return null;
+  const vsol = numOrNull(it.virtual_sol_reserves);
+  const vtok = numOrNull(it.virtual_token_reserves);
+  const supply = numOrNull(it.total_supply);
+  if (vsol === null || vtok === null || supply === null || vtok <= 0) return null;
+  // order matters: vsol*supply (~3e25) would blow past JS's 2^53 safe-integer
+  // range, so divide first — (vsol/vtok)≈2.8e-5, ×supply≈2.8e10, all safe.
+  const mcSol = (vsol / vtok) * supply / 1e9; // → SOL
+  return mcSol * solUsd;
+}
+
 // Current MC per token from DexScreener, batched 30 addresses/request (the
 // pattern discoveryScan proved: R-2 batching, R-4 max-across-pairs MC, polite
 // stop on 429). On-screen sets are small (<=80), so this is 1-3 requests per
@@ -138,31 +154,40 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // "steady volume increase" signal, and it lives in the newborn window
   // (age 0-5min) where this feed demonstrably works.
   const solNow = new Map<string, number>();
+  // SOL/USD is a market-wide constant, so derive it ONCE from any coin's
+  // usd_market_cap / market_cap ratio. The ratio cancels the (possibly stale)
+  // curve term and leaves pure SOL price — verified ~$77.08, identical across
+  // coins (2026-07-11). We then re-price our OWN curve read with it.
   let solUsd: number | null = null;
+  for (const it of items) {
+    const mcUsd = numOrNull(it.usd_market_cap ?? it.marketCapUsd);
+    const mcSol = numOrNull(it.market_cap);
+    if (mcUsd !== null && mcSol !== null && mcSol > 0) {
+      const p = mcUsd / mcSol;
+      if (p > 1 && p < 100_000) { solUsd = p; break; }
+    }
+  }
   for (const it of items) {
     const addr = it.mint ?? it.address ?? it.tokenAddress;
     if (!addr) continue;
-    const mc = numOrNull(it.usd_market_cap ?? it.marketCapUsd);
+    // FIRST-PRINCIPLES MC (verified against 3 payloads to 5 decimals,
+    // 2026-07-11): market cap IS a deterministic function of the constant-
+    // product bonding-curve reserves —
+    //   MC_sol = virtual_sol_reserves / virtual_token_reserves × total_supply / 1e9
+    // We compute it ourselves from the raw reserves in the SAME payload and
+    // price it with solUsd, rather than trusting their pre-computed (and
+    // possibly cached/rounded) usd_market_cap field. Same snapshot freshness,
+    // purest read. Falls back to their field only if reserves are missing.
+    const mc = curveMcUsd(it, solUsd) ?? numOrNull(it.usd_market_cap ?? it.marketCapUsd);
     if (mc !== null) mcNow.set(addr, mc);
     const sol = numOrNull(it.real_sol_reserves);
     if (sol !== null) solNow.set(addr, sol / 1e9); // lamports -> SOL
-    // SOL/USD from the item's own pair of fields (market_cap is SOL-
-    // denominated on this feed, usd_market_cap is USD — the ratio is the
-    // price; verified against raw_birth_json 2026-07-11). Feeds the Layer 3
-    // engine so it can price its SOL-only trade stream.
-    if (solUsd === null) {
-      const mcSol = numOrNull(it.market_cap);
-      if (mc !== null && mcSol !== null && mcSol > 0) {
-        const p = mc / mcSol;
-        if (p > 1 && p < 100_000) solUsd = p;
-      }
-    }
   }
   if (solUsd !== null && env.PUMPTAPE) {
+    // keep the (dormant) Layer 3 engine priced too
     const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
     stub.fetch("https://pumptape/solusd", {
-      method: "POST",
-      body: JSON.stringify({ solUsd }),
+      method: "POST", body: JSON.stringify({ solUsd }),
     }).catch((e) => console.error("pumptape solusd", e));
   }
 
