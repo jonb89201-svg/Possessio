@@ -38,6 +38,30 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Current MC per token from DexScreener, batched 30 addresses/request (the
+// pattern discoveryScan proved: R-2 batching, R-4 max-across-pairs MC, polite
+// stop on 429). On-screen sets are small (<=80), so this is 1-3 requests per
+// screen pass — x4 sub-ticks stays far under DexScreener's 300 req/min.
+async function fetchDexMc(env: WatcherEnv, addrs: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < addrs.length; i += 30) {
+    const chunk = addrs.slice(i, i + 30);
+    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+    });
+    if (res.status === 429) break;
+    if (!res.ok) continue;
+    const data: any = await res.json();
+    for (const p of (data?.pairs ?? []) as any[]) {
+      const base = p?.baseToken?.address;
+      if (!base) continue;
+      const m = numOrNull(p?.marketCap ?? p?.fdv);
+      if (m !== null && m > (out.get(base) ?? -1)) out.set(base, m);
+    }
+  }
+  return out;
+}
+
 function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number, lastMc: number | null) {
   return env.RADAR_DB.prepare(
     `UPDATE candidates
@@ -72,8 +96,16 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
 
   // Live curve MC per mint, from the same pump.fun feed birthScan reads.
-  // This is the ONLY pre-DEX MC source (DexScreener doesn't index the token
-  // until later, and §1's whole edge is being pre-DexScreener).
+  //
+  // EMPIRICAL LIMIT (2026-07-11, live tape): this newest-first window does NOT
+  // reliably contain a coin past age ~5min REGARDLESS of the limit param —
+  // limit=1000 was deployed and candidates still froze (entry==peak==last)
+  // while DexScreener's curve pair showed real movement (Cumshot hit $26.9k —
+  // a target hit — while this feed read absent and the ledger timestopped it).
+  // The server evidently clamps the window. Therefore: this feed DETECTS
+  // (newborns sit at its top — Screen 0 + §1 qualify, proven firing), and the
+  // DexScreener curve pair TRACKS (mcOf below — same source discoveryScan's
+  // R-4 peak already trusts).
   const res = await fetch(env.PUMPFUN_FEED_URL, {
     headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
   });
@@ -137,9 +169,18 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
       UNION
      SELECT token_address FROM candidates WHERE outcome='live'`
   ).all();
+
+  // TRACKING SOURCE OF RECORD: DexScreener curve pair for everything on
+  // screen (small set, one batched request per ~30), pump.fun window as
+  // fallback for coins DexScreener hasn't indexed yet. See EMPIRICAL LIMIT
+  // note above — the pump.fun window alone froze every candidate.
+  const trackAddrs = (tapeSet as any[]).map((r) => r.token_address as string);
+  const mcDex = trackAddrs.length ? await fetchDexMc(env, trackAddrs) : new Map<string, number>();
+  const mcOf = (a: string): number | null => mcDex.get(a) ?? mcNow.get(a) ?? null;
+
   for (const r of tapeSet as any[]) {
-    const mc = mcNow.get(r.token_address as string);
-    if (mc === undefined) continue;
+    const mc = mcOf(r.token_address as string);
+    if (mc === null) continue;
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO mc_ticks (token_address, ms, mc) VALUES (?1,?2,?3)
        ON CONFLICT(token_address, ms) DO NOTHING`
@@ -183,7 +224,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
 
   for (const c of liveC as any[]) {
     const addr = c.token_address as string;
-    const mc = mcNow.get(addr) ?? null;
+    const mc = mcOf(addr);
     const age = now - Number(c.born);
 
     if (c.bstatus === "discovered") {               // §1 #3 edge-loss: graduated
