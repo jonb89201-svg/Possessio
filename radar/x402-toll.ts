@@ -96,9 +96,13 @@ export function buildTolledApp(env: Env) {
     const db = c.env.RADAR_DB;
     const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_liq_usd,
               dex_vol_h1, dex_chg_m5, dex_chg_h1, dex_last_ms`;
+    // img: the coin's launch image (pump.fun image_uri), pulled free from the
+    // stored birth JSON — makes cards recognizable at a glance.
+    const imgCol = (t: string) =>
+      `(SELECT json_extract(b.raw_birth_json,'$.image_uri') FROM births b WHERE b.token_address=${t}.token_address) AS img`;
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
-              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${dexCols}
+              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${imgCol("candidates")}, ${dexCols}
          FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
     ).all();
     const recent = await db.prepare(
@@ -114,7 +118,8 @@ export function buildTolledApp(env: Env) {
     const early = await db.prepare(
       `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
               peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
-              ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share
+              ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share,
+              ${imgCol("earlies")}
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`
     ).all();

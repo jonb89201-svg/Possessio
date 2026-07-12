@@ -26,6 +26,10 @@ export const FEED_HTML = `<!doctype html>
   .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
     padding:9px 2px;border-bottom:1px dashed var(--line)}
   .sym{font-weight:700}.name{color:var(--dim);font-size:12px}
+  .coinimg{width:34px;height:34px;border-radius:7px;object-fit:cover;vertical-align:middle;
+    margin-right:7px;background:#1a2420;border:1px solid var(--line)}
+  .row.dying{animation:die .8s ease forwards}
+  @keyframes die{from{opacity:.34}to{opacity:0;transform:translateX(-12px)}}
   .mc{white-space:nowrap}.mc .now{color:var(--ink)}.mc .arw{color:var(--dim)}
   .age{color:var(--dim);font-size:11px}
   .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em}
@@ -118,6 +122,9 @@ export const FEED_HTML = `<!doctype html>
     return '<a class="dex" href="https://dexscreener.com/solana/'+esc(addr)+'" target="_blank" rel="noopener">chart &#8599;</a>'; }
   function pf(addr){ if(!addr) return "";
     return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
+  // the coin's launch image (pump.fun image_uri). Hidden if missing/broken.
+  function img(u){ if(!u) return "";
+    return '<img class="coinimg" loading="lazy" src="'+esc(u)+'" onerror="this.style.display=&quot;none&quot;">'; }
   // the oscillators — computed client-side from the 15s MC tape (d.ticks)
   function spark(tk){ if(!tk||tk.length<2) return "";
     var t=tk.slice(-16), lo=Infinity, hi=-Infinity;
@@ -200,7 +207,7 @@ export const FEED_HTML = `<!doctype html>
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     // gate only live (unresolved) earlies — that's what you'd actually enter
     var live=(c.play_outcome==null), g=live?gate(tk):{cls:"",tag:""};
-    return '<div class="row '+g.cls+'"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
+    return '<div class="row '+g.cls+'"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
       '<span class="age">hit $3.5k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
       flowQ(c)+'<br>'+
@@ -210,7 +217,7 @@ export const FEED_HTML = `<!doctype html>
       (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>';
   }
   function liveRow(c,tk){
-    return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
+    return '<div class="row"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+' '+pf(c.token_address)+'<br>'+
       '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span><br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
@@ -256,7 +263,13 @@ export const FEED_HTML = `<!doctype html>
     var hideSkip=document.getElementById("hideSkip").checked;
     var gc={in:0,weak:0,skip:0,wait:0};
     var shown=(d.early||[]).filter(function(c){
-      if(c.play_outcome!=null) return true;            // resolved rows always show
+      if(c.play_outcome!=null){
+        // DROP THE DEAD: a resolved coin that never turned a profit is done and
+        // won't come back — it falls off the map, freeing the space. You still
+        // watched it die live (dimmed) while it was unresolved above. Winners
+        // (exit above entry) stay visible.
+        return c.play_exit_mc>c.first_hit_mc;
+      }
       var r=flowRate(tk[c.token_address]);
       if(r==null){gc.wait++; return true;}
       if(r>2){gc.in++; return true;}
