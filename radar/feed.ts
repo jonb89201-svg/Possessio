@@ -5,65 +5,90 @@
 
 export const FEED_HTML = `<!doctype html>
 <html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
 <title>POSSESSIO Radar — AI Live Selection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
-  :root{--bg:#0b0f0c;--panel:#12181400;--ink:#d6e5da;--dim:#7d9488;--line:#1e2a23;
-    --green:#3ddc84;--red:#ff5d5d;--gold:#e3a23e;--blue:#5aa9ff}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:760px;margin:0 auto;padding:18px 14px 60px}
-  h1{font-size:16px;letter-spacing:.04em;margin:0 0 2px;color:var(--green)}
-  .sub{color:var(--dim);font-size:12px;margin:0 0 14px}
-  .frame{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:#0f1512}
-  .frame .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
-  .stats{display:flex;flex-wrap:wrap;gap:16px}
-  .stat b{font-size:20px;display:block}
-  .note{color:var(--gold);font-size:12px;margin-top:8px;line-height:1.45}
-  h2{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);
-    margin:18px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
-  .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
-    padding:9px 2px;border-bottom:1px dashed var(--line)}
-  .sym{font-weight:700}.name{color:var(--dim);font-size:12px}
-  .coinimg{width:34px;height:34px;border-radius:7px;object-fit:cover;vertical-align:middle;
-    margin-right:7px;background:#1a2420;border:1px solid var(--line)}
+  /* Matched to the POSSESSIO console design system (public/index.html): white
+     surfaces, soft-slate lines, oxide-blue accent, Inter + IBM Plex Mono. */
+  :root{
+    --bg:#ffffff;--surface:#ffffff;--surface-2:#f8fafc;--surface-3:#f1f5f9;
+    --line:#e2e8f0;--line-2:#cbd5e1;
+    --ink:#0f172a;--dim:#475569;--faint:#94a3b8;
+    --oxide:#1d4ed8;--oxide-dim:#1e40af;--oxide-faint:#dbeafe;
+    --danger:#dc2626;--danger-dim:#b91c1c;--danger-faint:#fef2f2;
+    --council:#16a34a;--council-dim:#15803d;--council-faint:#dcfce7;
+    --treasury:#0891b2;--treasury-dim:#0e7490;--treasury-faint:#cffafe;
+    --open:#7c3aed;--open-dim:#6d28d9;--open-faint:#ede9fe;
+    /* aliases the render JS references inline */
+    --green:var(--council);--red:var(--danger);--blue:var(--oxide);--gold:var(--treasury-dim);
+    --radius:12px;--radius-pill:9999px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);letter-spacing:-0.005em;-webkit-font-smoothing:antialiased;
+    font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  .wrap{max-width:760px;margin:0 auto;padding:16px 14px 60px}
+  h1{font-family:'Space Grotesk',system-ui,sans-serif;font-size:19px;font-weight:700;letter-spacing:-.01em;
+    margin:0 0 3px;color:var(--ink);display:flex;align-items:center}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 14px}
+  .frame{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;background:var(--surface-2)}
+  .frame .k{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+  .stats{display:flex;flex-wrap:wrap;gap:18px;margin-top:10px}
+  .stat{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.03em}
+  .stat b{font-size:22px;display:block;font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:-.02em}
+  .note{color:var(--oxide-dim);font-size:12px;margin-top:10px;line-height:1.5;
+    background:var(--oxide-faint);border-left:3px solid var(--oxide);border-radius:0 8px 8px 0;padding:9px 11px}
+  h2{font-family:'Space Grotesk',sans-serif;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);
+    font-weight:600;margin:20px 0 8px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
+    padding:11px 4px;border-bottom:1px solid var(--line)}
+  .sym{font-weight:700;color:var(--ink)}.name{color:var(--faint);font-size:12px}
+  .coinimg{width:36px;height:36px;border-radius:8px;object-fit:cover;vertical-align:middle;
+    margin-right:8px;background:var(--surface-3);border:1px solid var(--line)}
   .row.dying{animation:die .8s ease forwards}
-  @keyframes die{from{opacity:.34}to{opacity:0;transform:translateX(-12px)}}
-  .mc{white-space:nowrap}.mc .now{color:var(--ink)}.mc .arw{color:var(--dim)}
-  .age{color:var(--dim);font-size:11px}
-  .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em}
-  .b-live{color:var(--blue);border:1px solid var(--blue)}
-  .b-target{color:var(--green);border:1px solid var(--green)}
-  .b-stop{color:var(--red);border:1px solid var(--red)}
-  .b-graduated{color:var(--gold);border:1px solid var(--gold)}
-  .b-timestop{color:var(--dim);border:1px solid var(--dim)}
-  .pulse{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;
-    margin-right:6px;animation:p 1.6s infinite}
-  @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
-  .pct{font-weight:700;font-size:12px}.pct.up{color:var(--green)}.pct.down{color:var(--red)}
-  .osc{color:var(--blue);font-size:13px;letter-spacing:1px;line-height:1}
-  .b-early{color:#c792ea;border:1px solid #c792ea}
-  .dex{color:var(--blue);font-size:11px;text-decoration:none;white-space:nowrap}
+  @keyframes die{from{opacity:.4}to{opacity:0;transform:translateX(-12px)}}
+  .mc{white-space:nowrap;font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:500}
+  .mc .now{color:var(--ink);font-weight:600}.mc .arw{color:var(--faint)}
+  .age{color:var(--faint);font-size:11px;font-family:'IBM Plex Mono',monospace}
+  .badge{font-size:10px;font-weight:600;padding:3px 9px;border-radius:var(--radius-pill);
+    text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;display:inline-block}
+  .b-live{background:var(--oxide-faint);color:var(--oxide-dim)}
+  .b-target{background:var(--council-faint);color:var(--council-dim)}
+  .b-stop{background:var(--danger-faint);color:var(--danger-dim)}
+  .b-graduated{background:var(--treasury-faint);color:var(--treasury-dim)}
+  .b-timestop{background:var(--surface-3);color:var(--dim)}
+  .b-early{background:var(--open-faint);color:var(--open-dim)}
+  .pulse{width:8px;height:8px;border-radius:50%;background:var(--council);display:inline-block;
+    margin-right:8px;animation:p 1.6s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.3}}
+  .pct{font-weight:600;font-size:12px;font-family:'IBM Plex Mono',monospace}
+  .pct.up{color:var(--council)}.pct.down{color:var(--danger)}
+  .osc{color:var(--oxide);font-size:13px;letter-spacing:1px;line-height:1;font-family:'IBM Plex Mono',monospace}
+  .dex{color:var(--oxide);font-size:11px;text-decoration:none;white-space:nowrap;font-weight:500}
   .dex:hover{text-decoration:underline}
-  .dexline{margin:-4px 2px 4px;padding:6px 8px;background:#0f1a13;border-left:2px solid var(--green);
-    border-radius:0 6px 6px 0;color:var(--dim);font-size:11px;line-height:1.5}
-  .empty{color:var(--dim);padding:14px 2px;font-size:13px}
-  /* FLOW GATE (proven entry screen: net-flow-positive = the 1.37x/84%-green
-     movers; net-flow<=0 = the 0.74x duds). Duds recede, movers get flagged. */
-  .row.gate-dud{opacity:.34}
-  .row.gate-hot{border-left:3px solid var(--green);padding-left:9px;background:#0e1712}
-  .row.gate-ok{border-left:3px solid var(--gold);padding-left:9px}
-  .gatetag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;letter-spacing:.04em;white-space:nowrap}
-  .g-in{color:var(--green);border:1px solid var(--green)}
-  .g-weak{color:var(--gold);border:1px solid var(--gold)}
-  .g-skip{color:var(--red);border:1px solid var(--red)}
-  .g-wait{color:var(--dim);border:1px solid var(--dim)}
-  .gatebar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 6px;font-size:11px;color:var(--dim)}
-  .gatebar label{cursor:pointer;user-select:none}
-  .promo{margin-top:22px;border:1px solid var(--green);border-radius:10px;padding:14px;background:#0f1a13}
-  .promo b{color:var(--green)}
-  .foot{color:var(--dim);font-size:11px;margin-top:18px;line-height:1.5}
+  .dexline{margin:4px 2px 4px;padding:7px 10px;background:var(--treasury-faint);border-left:3px solid var(--treasury);
+    border-radius:0 8px 8px 0;color:var(--treasury-dim);font-size:11px;line-height:1.5;font-family:'IBM Plex Mono',monospace}
+  .dexline b{color:var(--council-dim)}
+  .empty{color:var(--faint);padding:14px 4px;font-size:13px}
+  /* FLOW GATE (proven entry screen: net-flow-positive = 1.37x/84%-green movers;
+     net-flow<=0 = 0.74x duds). Duds recede, movers get flagged. */
+  .row.gate-dud{opacity:.4}
+  .row.gate-hot{border-left:3px solid var(--council);padding-left:9px;background:var(--council-faint)}
+  .row.gate-ok{border-left:3px solid var(--treasury);padding-left:9px}
+  .gatetag{font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--radius-pill);letter-spacing:.03em;white-space:nowrap;display:inline-block}
+  .g-in{background:var(--council-faint);color:var(--council-dim)}
+  .g-weak{background:var(--treasury-faint);color:var(--treasury-dim)}
+  .g-skip{background:var(--danger-faint);color:var(--danger-dim)}
+  .g-wait{background:var(--surface-3);color:var(--faint)}
+  .gatebar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 8px;font-size:11px;color:var(--dim);
+    background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+  .gatebar label{cursor:pointer;user-select:none}.gatebar b{color:var(--ink)}
+  .promo{margin-top:22px;border:1px solid var(--council);border-radius:var(--radius);padding:16px;background:var(--council-faint)}
+  .promo b{color:var(--council-dim)}
+  .foot{color:var(--faint);font-size:11px;margin-top:18px;line-height:1.5}
 </style></head><body>
 <div class="wrap">
   <h1><span class="pulse"></span>POSSESSIO RADAR — AI LIVE SELECTION</h1>
