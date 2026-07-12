@@ -94,7 +94,7 @@ export function buildTolledApp(env: Env) {
   });
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
-    const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_liq_usd,
+    const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_peak_mc, dex_liq_usd,
               dex_vol_h1, dex_chg_m5, dex_chg_h1, dex_last_ms`;
     // img: the coin's launch image (pump.fun image_uri), pulled free from the
     // stored birth JSON — makes cards recognizable at a glance.
@@ -119,6 +119,7 @@ export function buildTolledApp(env: Env) {
       `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
               peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
               ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share,
+              graduated_ms, dex_mc, dex_peak_mc, dex_liq_usd, dex_vol_h1, dex_last_ms,
               ${imgCol("earlies")}
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`

@@ -385,28 +385,35 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   if (stmts.length) await env.RADAR_DB.batch(stmts);
 }
 
-// dexTrackScan: the SECOND half of a candidate's life. Once a candidate has
-// graduated (births.status='discovered' -> it's on DexScreener), keep pulling
-// its live DEX metrics — price, MC, liquidity, 1h volume, 5m/1h change — so the
-// feed shows the continuous journey past the DEX boundary. This is display /
-// intelligence only; the §1 paper trade already closed at graduation.
-const DEX_TRACK_WINDOW_MS = 48 * 3600_000; // enrich for 48h after qualifying
+// dexTrackScan: POST-GRADUATION TRACKING (RATIFIED 2026-07-12). Once a coin
+// graduates (births.status='discovered' -> it's on DexScreener), keep pulling
+// its live DEX metrics and record a RUNNING dex_peak_mc — for BOTH the §1
+// candidate AND the §0 early, so a coin that laddered/exited early
+// (DAYNA $10.6k) is followed through its whole DEX run ($26k) instead of the
+// tape going blind at the bell. Display/intelligence only; the paper trade
+// already closed. dex_peak_mc is the number that quantifies the post-exit run.
+const DEX_TRACK_WINDOW_MS = 48 * 3600_000; // enrich for 48h after flagging
 
 export async function dexTrackScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
-  const { results } = await env.RADAR_DB.prepare(
-    `SELECT c.token_address
-       FROM candidates c JOIN births b ON b.token_address=c.token_address
-      WHERE b.status='discovered' AND c.qualified_ms >= ?1
-      ORDER BY COALESCE(c.dex_last_ms, 0) ASC
-      LIMIT 90`
-  ).bind(now - DEX_TRACK_WINDOW_MS).all();
-
-  const addrs = (results as any[]).map((r) => r.token_address as string);
+  const since = now - DEX_TRACK_WINDOW_MS;
+  // graduated coins we flagged, from BOTH tables (an early that later qualified
+  // §1 is in both — track it in both).
+  const { results: eRows } = await env.RADAR_DB.prepare(
+    `SELECT c.token_address FROM earlies c JOIN births b ON b.token_address=c.token_address
+      WHERE b.status='discovered' AND c.first_hit_ms >= ?1`
+  ).bind(since).all();
+  const { results: cRows } = await env.RADAR_DB.prepare(
+    `SELECT c.token_address FROM candidates c JOIN births b ON b.token_address=c.token_address
+      WHERE b.status='discovered' AND c.qualified_ms >= ?1`
+  ).bind(since).all();
+  const inEarly = new Set((eRows as any[]).map((r) => r.token_address as string));
+  const inCand = new Set((cRows as any[]).map((r) => r.token_address as string));
+  const addrs = [...new Set([...inEarly, ...inCand])];
   if (!addrs.length) return;
 
   const stmts: any[] = [];
-  for (let i = 0; i < addrs.length; i += 30) {
+  for (let i = 0; i < addrs.length && i < 120; i += 30) {
     const chunk = addrs.slice(i, i + 30);
     const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
       headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
@@ -415,7 +422,7 @@ export async function dexTrackScan(env: WatcherEnv): Promise<void> {
     if (!res.ok) continue;
     const data: any = await res.json();
 
-    // pick the most-liquid NON-curve (real DEX) pair per token
+    // most-liquid NON-curve (real DEX) pair per token
     const best = new Map<string, any>();
     for (const p of (data?.pairs ?? []) as any[]) {
       const base = p?.baseToken?.address;
@@ -428,21 +435,30 @@ export async function dexTrackScan(env: WatcherEnv): Promise<void> {
     for (const addr of chunk) {
       const p = best.get(addr);
       if (!p) continue;
-      stmts.push(env.RADAR_DB.prepare(
-        `UPDATE candidates SET
-            graduated_ms = COALESCE(graduated_ms, ?2),
-            dex_price_usd = ?3, dex_mc = ?4, dex_liq_usd = ?5,
-            dex_vol_h1 = ?6, dex_chg_m5 = ?7, dex_chg_h1 = ?8, dex_last_ms = ?2
-          WHERE token_address = ?1`
-      ).bind(
-        addr, now,
-        numOrNull(p?.priceUsd),
-        numOrNull(p?.marketCap ?? p?.fdv),
-        numOrNull(p?.liquidity?.usd),
-        numOrNull(p?.volume?.h1),
-        numOrNull(p?.priceChange?.m5),
-        numOrNull(p?.priceChange?.h1),
-      ));
+      const mc = numOrNull(p?.marketCap ?? p?.fdv);
+      const liq = numOrNull(p?.liquidity?.usd);
+      const vol = numOrNull(p?.volume?.h1);
+      if (inCand.has(addr)) {
+        stmts.push(env.RADAR_DB.prepare(
+          `UPDATE candidates SET
+              graduated_ms = COALESCE(graduated_ms, ?2),
+              dex_price_usd = ?3, dex_mc = ?4,
+              dex_peak_mc = MAX(COALESCE(dex_peak_mc,0), COALESCE(?4,0)),
+              dex_liq_usd = ?5, dex_vol_h1 = ?6, dex_chg_m5 = ?7, dex_chg_h1 = ?8,
+              dex_last_ms = ?2
+            WHERE token_address = ?1`
+        ).bind(addr, now, numOrNull(p?.priceUsd), mc, liq, vol,
+          numOrNull(p?.priceChange?.m5), numOrNull(p?.priceChange?.h1)));
+      }
+      if (inEarly.has(addr)) {
+        stmts.push(env.RADAR_DB.prepare(
+          `UPDATE earlies SET
+              graduated_ms = COALESCE(graduated_ms, ?2),
+              dex_mc = ?3, dex_peak_mc = MAX(COALESCE(dex_peak_mc,0), COALESCE(?3,0)),
+              dex_liq_usd = ?4, dex_vol_h1 = ?5, dex_last_ms = ?2
+            WHERE token_address = ?1`
+        ).bind(addr, now, mc, liq, vol));
+      }
     }
   }
   if (stmts.length) await env.RADAR_DB.batch(stmts);

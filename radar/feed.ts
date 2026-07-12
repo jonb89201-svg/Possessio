@@ -185,6 +185,13 @@ export const FEED_HTML = `<!doctype html>
     return '<div class="dexline">&#128640; ON DEX &middot; MC '+fmt(c.dex_mc)+
       ' &middot; liq '+fmt(c.dex_liq_usd)+' &middot; vol1h '+fmt(c.dex_vol_h1)+
       ' &middot; 5m '+chg(c.dex_chg_m5)+' &middot; 1h '+chg(c.dex_chg_h1)+'</div>'; }
+  // POST-GRADUATION line for earlies — the run AFTER we exited. Shows the DEX
+  // peak and how far past our exit it went (the DAYNA "$10.6k -> $26k" story).
+  function postGrad(c, exitMc){ if(c.dex_last_ms==null && c.graduated_ms==null) return "";
+    var peak=(c.dex_peak_mc!=null)?c.dex_peak_mc:c.dex_mc, run="";
+    if(peak!=null && exitMc) run=' &middot; <b>'+(peak/exitMc).toFixed(1)+'x past exit</b>';
+    return '<div class="dexline">&#128640; RAN ON DEX &middot; peak '+fmt(peak)+
+      ' &middot; now '+fmt(c.dex_mc)+run+'</div>'; }
 
   function playBadge(c){
     var cm=(c.compound_mult!=null&&c.levels>1)?(' L'+c.levels+' &times;'+c.compound_mult):'';
@@ -214,7 +221,8 @@ export const FEED_HTML = `<!doctype html>
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right">'+(live?g.tag+'<br>':playBadge(c)+'<br>')+
       '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
-      (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>';
+      (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>'+
+      postGrad(c, c.play_exit_mc||c.first_hit_mc);
   }
   function liveRow(c,tk){
     return '<div class="row"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
@@ -264,11 +272,11 @@ export const FEED_HTML = `<!doctype html>
     var gc={in:0,weak:0,skip:0,wait:0};
     var shown=(d.early||[]).filter(function(c){
       if(c.play_outcome!=null){
-        // DROP THE DEAD: a resolved coin that never turned a profit is done and
-        // won't come back — it falls off the map, freeing the space. You still
-        // watched it die live (dimmed) while it was unresolved above. Winners
-        // (exit above entry) stay visible.
-        return c.play_exit_mc>c.first_hit_mc;
+        // DROP THE DEAD: a resolved coin that never profited AND never graduated
+        // is done — it falls off the map, freeing space (you watched it die live
+        // above). KEEP: winners (exit above entry) AND any coin that graduated —
+        // post-grad tracking wants those visible to show the run past our exit.
+        return c.play_exit_mc>c.first_hit_mc || c.graduated_ms!=null || c.dex_last_ms!=null;
       }
       var r=flowRate(tk[c.token_address]);
       if(r==null){gc.wait++; return true;}
