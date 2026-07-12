@@ -45,6 +45,18 @@ export const FEED_HTML = `<!doctype html>
   .dexline{margin:-4px 2px 4px;padding:6px 8px;background:#0f1a13;border-left:2px solid var(--green);
     border-radius:0 6px 6px 0;color:var(--dim);font-size:11px;line-height:1.5}
   .empty{color:var(--dim);padding:14px 2px;font-size:13px}
+  /* FLOW GATE (proven entry screen: net-flow-positive = the 1.37x/84%-green
+     movers; net-flow<=0 = the 0.74x duds). Duds recede, movers get flagged. */
+  .row.gate-dud{opacity:.34}
+  .row.gate-hot{border-left:3px solid var(--green);padding-left:9px;background:#0e1712}
+  .row.gate-ok{border-left:3px solid var(--gold);padding-left:9px}
+  .gatetag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;letter-spacing:.04em;white-space:nowrap}
+  .g-in{color:var(--green);border:1px solid var(--green)}
+  .g-weak{color:var(--gold);border:1px solid var(--gold)}
+  .g-skip{color:var(--red);border:1px solid var(--red)}
+  .g-wait{color:var(--dim);border:1px solid var(--dim)}
+  .gatebar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 6px;font-size:11px;color:var(--dim)}
+  .gatebar label{cursor:pointer;user-select:none}
   .promo{margin-top:22px;border:1px solid var(--green);border-radius:10px;padding:14px;background:#0f1a13}
   .promo b{color:var(--green)}
   .foot{color:var(--dim);font-size:11px;margin-top:18px;line-height:1.5}
@@ -61,6 +73,11 @@ export const FEED_HTML = `<!doctype html>
 
   <h2>Early radar &middot; §0 ladder (paper): in $3.5k &middot; out 50%@6k 25%@8k 12.5%@10k 12.5%@12k &middot; dip re-buy &#8594; next ladder up</h2>
   <div id="epstats" class="sub"></div>
+  <div class="gatebar">
+    <span><b>FLOW GATE</b> — net-buy screen (proven: <span class="pct up">FLOW IN &rarr; 1.37x, 84% green</span> vs <span class="pct down">SKIP &rarr; 0.74x</span>)</span>
+    <label><input type="checkbox" id="hideSkip"> hide SKIPs</label>
+    <span id="gatecount"></span>
+  </div>
   <div id="early"><div class="empty">scanning newborns…</div></div>
 
   <h2>Live — in the entry window now</h2>
@@ -126,6 +143,21 @@ export const FEED_HTML = `<!doctype html>
     for(var i=Math.max(1,s.length-4);i<s.length;i++){ n++; if(s[i].sol>s[i-1].sol) up++; }
     return '<span class="pct '+(r>=0?"up":"down")+'">'+(r>=0?"+":"")+r.toFixed(1)+' SOL/min</span>'+
       ((n>=3&&up>=3)?' <span class="osc">&#9889;steady</span>':''); }
+  // THE FLOW GATE — the proven entry screen. Net SOL/min over the last ~1min
+  // of tape: >2 = strong buy flow (the 1.37x / 84%-green movers), >0 = weak
+  // positive, <=0 = net selling/flat (the 0.74x duds). null until ~2 ticks
+  // exist (the ~45s the 15s tape needs to read direction).
+  function flowRate(tk){ if(!tk) return null;
+    var s=tk.filter(function(x){ return x.sol!=null; });
+    if(s.length<2) return null;
+    var a=s[Math.max(0,s.length-5)], b=s[s.length-1];
+    var mins=(b.ms-a.ms)/60000; if(mins<=0) return null;
+    return (b.sol-a.sol)/mins; }
+  function gate(tk){ var r=flowRate(tk);
+    if(r==null) return {cls:"",tag:'<span class="gatetag g-wait">reading…</span>'};
+    if(r>2)  return {cls:"gate-hot",tag:'<span class="gatetag g-in">&#9679; FLOW IN</span>'};
+    if(r>0)  return {cls:"gate-ok", tag:'<span class="gatetag g-weak">weak +</span>'};
+    return {cls:"gate-dud",tag:'<span class="gatetag g-skip">&#9679; SKIP</span>'}; }
   function pf(addr){ if(!addr) return "";
     return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
   // oscillators, computed client-side from the tape (1 sample per cron tick)
@@ -166,12 +198,14 @@ export const FEED_HTML = `<!doctype html>
       (c.sol_net_hit!=null?('+'+c.sol_net_hit+' SOL &middot; '):'')+top+'</span>'; }
   function earlyRow(c,tk){
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
-    return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
+    // gate only live (unresolved) earlies — that's what you'd actually enter
+    var live=(c.play_outcome==null), g=live?gate(tk):{cls:"",tag:""};
+    return '<div class="row '+g.cls+'"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
       '<span class="age">hit $3.5k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
       flowQ(c)+'<br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
-      '<div style="text-align:right">'+playBadge(c)+'<br>'+
+      '<div style="text-align:right">'+(live?g.tag+'<br>':playBadge(c)+'<br>')+
       '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
       (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>';
   }
@@ -218,17 +252,33 @@ export const FEED_HTML = `<!doctype html>
       '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' bell exits'+xm+'</span>'+
       (nT+nX>0?(' &middot; ladder rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
     var tk=d.ticks||{};
+    // FLOW GATE: classify live earlies, count them, and (optionally) hide SKIPs.
+    var hideSkip=document.getElementById("hideSkip").checked;
+    var gc={in:0,weak:0,skip:0,wait:0};
+    var shown=(d.early||[]).filter(function(c){
+      if(c.play_outcome!=null) return true;            // resolved rows always show
+      var r=flowRate(tk[c.token_address]);
+      if(r==null){gc.wait++; return true;}
+      if(r>2){gc.in++; return true;}
+      if(r>0){gc.weak++; return true;}
+      gc.skip++; return !hideSkip;                     // SKIP: hidden if toggled
+    });
+    document.getElementById("gatecount").innerHTML=
+      '<span class="pct up">'+gc.in+' IN</span> &middot; <span class="pct" style="color:var(--gold)">'+gc.weak+' weak</span> &middot; '+
+      '<span class="pct down">'+gc.skip+' skip</span> &middot; <span style="color:var(--dim)">'+gc.wait+' reading</span>';
     var E=document.getElementById("early");
-    E.innerHTML=(d.early&&d.early.length)? d.early.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';
+    E.innerHTML=shown.length? shown.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';
     var L=document.getElementById("live");
     L.innerHTML=(d.live&&d.live.length)? d.live.map(function(c){ return liveRow(c,tk[c.token_address]); }).join("") : '<div class="empty">waiting for the next qualifier…</div>';
     var R=document.getElementById("recent");
     R.innerHTML=(d.recent&&d.recent.length)? d.recent.map(recentRow).join("") : '<div class="empty">—</div>';
   }
+  var lastData=null;
   function poll(){
     fetch("/radar/candidates",{cache:"no-store"}).then(function(r){return r.json();})
-      .then(render).catch(function(){});
+      .then(function(d){ lastData=d; render(d); }).catch(function(){});
   }
+  document.getElementById("hideSkip").addEventListener("change",function(){ if(lastData) render(lastData); });
   poll(); setInterval(poll,5000);
 })();
 </script>
