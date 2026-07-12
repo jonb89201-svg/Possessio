@@ -107,16 +107,22 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
   ).bind(addr, outcome, now, lastMc);
 }
 
-// REVERTED to single-pass (2026-07-12). The 4x sub-tick loop below held the
-// scheduled invocation open ~45s with setTimeout sleeps inside waitUntil — a
-// fragile pattern that STALLED screenScan after ~4h live (birthScan, which has
-// no such loop, kept running the whole time; the tape/earlies/ladder froze and
-// the feed went blind, missing live winners). One screenScan per cron is the
-// config that ran rock-solid for days. Resolution drops 15s->60s; a live 60s
-// feed beats a dead 15s one. True sub-minute is the DO-alarm path (Layer 3),
-// NOT a setTimeout loop in a scheduled handler.
+// 15s FEED (Architect call, 2026-07-12): 4 passes per cron spaced 15s gives the
+// tape 15s resolution — the resolution needed to catch fast movers live and
+// trade them by hand. KNOWN LIMITATION: the 45s setTimeout-in-waitUntil hold
+// can stall the scan after ~4h of unattended runtime (it went blind overnight
+// once). Operationally that's a non-issue: a redeploy at the start of a trading
+// session gives a fresh ~4h window, which covers a session — refresh on sign-on.
+// The permanent non-stalling sub-minute path is the DO-alarm (Layer 3), built
+// when there's time/money to verify it. For now: 15s live, refresh per session.
+const SUB_TICKS = 4;
+const SUB_TICK_GAP_MS = 15_000;
+
 export async function screenLoop(env: WatcherEnv): Promise<void> {
-  await screenScan(env);
+  for (let i = 0; i < SUB_TICKS; i++) {
+    if (i) await new Promise((r) => setTimeout(r, SUB_TICK_GAP_MS));
+    await screenScan(env).catch((e) => console.error("screenScan", e));
+  }
 }
 
 export async function screenScan(env: WatcherEnv): Promise<void> {
