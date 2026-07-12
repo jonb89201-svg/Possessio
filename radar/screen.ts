@@ -107,20 +107,16 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
   ).bind(addr, outcome, now, lastMc);
 }
 
-// LAYER 1 latency fix (Architect, 2026-07-11): cron's floor is 1 minute, which
-// left the feed up to 60s behind the curve. Each cron invocation now runs the
-// screen 4x spaced 15s (t=0,15,30,45; next cron lands at t=60), so staleness
-// drops to <=15s and the oscillation tape gets 15s resolution — no new infra.
-// Layers 2+3 (Durable Object alarm / PumpPortal WS real-time) are the upgrade
-// path, VERIFY-FIRST gated, with this loop as the permanent bedrock fallback.
-const SUB_TICKS = 4;
-const SUB_TICK_GAP_MS = 15_000;
-
+// REVERTED to single-pass (2026-07-12). The 4x sub-tick loop below held the
+// scheduled invocation open ~45s with setTimeout sleeps inside waitUntil — a
+// fragile pattern that STALLED screenScan after ~4h live (birthScan, which has
+// no such loop, kept running the whole time; the tape/earlies/ladder froze and
+// the feed went blind, missing live winners). One screenScan per cron is the
+// config that ran rock-solid for days. Resolution drops 15s->60s; a live 60s
+// feed beats a dead 15s one. True sub-minute is the DO-alarm path (Layer 3),
+// NOT a setTimeout loop in a scheduled handler.
 export async function screenLoop(env: WatcherEnv): Promise<void> {
-  for (let i = 0; i < SUB_TICKS; i++) {
-    if (i) await new Promise((r) => setTimeout(r, SUB_TICK_GAP_MS));
-    await screenScan(env).catch((e) => console.error("screenScan", e));
-  }
+  await screenScan(env);
 }
 
 export async function screenScan(env: WatcherEnv): Promise<void> {
