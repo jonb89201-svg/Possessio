@@ -83,6 +83,22 @@ export const FEED_HTML = `<!doctype html>
   .g-weak{background:var(--treasury-faint);color:var(--treasury-dim)}
   .g-skip{background:var(--danger-faint);color:var(--danger-dim)}
   .g-wait{background:var(--surface-3);color:var(--faint)}
+  /* CONVICTION TAG — a TRACKED HYPOTHESIS (not a proven edge), scored live at
+     the ~$8k crossing. "bucket C" = reserves >=22 SOL + fill-velocity 10-16
+     (reserves / ticks-since-first-seen). In 5.7d of tape it hit 20k 18.5% of
+     the time vs ~6.5% base (Wilson 95% CI [10.4%, 30.8%]) and held ~4x the
+     field's rate in BOTH chronological halves. Small n (54); the forward ledger
+     is the real judge — same "kill or confirm it" law as §1. NOTE: there is NO
+     leading exit signal. The "reserves roll over before price" divergence is
+     mechanically impossible on a constant-product curve (price is a monotonic
+     function of reserves) — the apparent lead was a DexScreener-MC vs curve-
+     reserve feed-latency artifact. Exit is the §1 rules + the flow gate. */
+  .pb{font-size:10px;font-weight:700;padding:2px 8px;border-radius:var(--radius-pill);letter-spacing:.03em;white-space:nowrap;display:inline-block}
+  .pb-go{background:var(--council);color:#fff}
+  .pb-slow{background:var(--surface-3);color:var(--dim)}
+  .pb-bot{background:var(--oxide-faint);color:var(--oxide-dim)}
+  .pb-thin{background:var(--danger-faint);color:var(--danger-dim)}
+  .row.pb-c-go{border-left:3px solid var(--council);padding-left:9px;background:var(--council-faint)}
   .gatebar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:2px 0 8px;font-size:11px;color:var(--dim);
     background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
   .gatebar label{cursor:pointer;user-select:none}.gatebar b{color:var(--ink)}
@@ -110,6 +126,9 @@ export const FEED_HTML = `<!doctype html>
   <div id="early"><div class="empty">scanning newborns…</div></div>
 
   <h2>Live — in the entry window now</h2>
+  <p class="sub" style="margin:-2px 0 8px">
+    <span class="pb pb-go">&#9670; GO</span> = a <b>tracked entry hypothesis</b> — deep curve reserves (&ge;22 SOL) plus a deliberate ~2-tick climb into the band. Beat the field ~4&times; in-sample and in the unseen later half, but small sample — <b>the forward ledger judges it, not this label.</b> No magic exit exists: target / stop / time-stop only.
+  </p>
   <div id="live"><div class="empty">waiting for the next qualifier…</div></div>
 
   <h2>Recently closed</h2>
@@ -190,6 +209,26 @@ export const FEED_HTML = `<!doctype html>
     if(r>2)  return {cls:"gate-hot",tag:'<span class="gatetag g-in">&#9679; FLOW IN</span>'};
     if(r>0)  return {cls:"gate-ok", tag:'<span class="gatetag g-weak">weak +</span>'};
     return {cls:"gate-dud",tag:'<span class="gatetag g-skip">&#9679; SKIP</span>'}; }
+  // CONVICTION — the tracked-hypothesis entry read at the ~$8k crossing.
+  // depth = curve SOL reserves at the first tick to reach the band; velocity =
+  // depth / ticks-since-first-seen (how deliberately it climbed). Both come from
+  // the SAME curve source (sol_reserves), so no cross-feed artifact. Returns null
+  // until the coin reaches the band. GO = the backtested bucket C; the rest are
+  // the buckets that under-performed it (floor/thin, slow grind, bot-spike).
+  function conviction(tk){
+    if(!tk||!tk.length) return null;
+    var i8=-1;
+    for(var i=0;i<tk.length;i++){ if(tk[i].mc>=7500){ i8=i; break; } }
+    if(i8<0) return null;                       // hasn't reached the band yet
+    var depth=null;
+    for(var j=i8;j<tk.length;j++){ if(tk[j].sol!=null){ depth=tk[j].sol; break; } }
+    if(depth==null) return null;                // no reserve read at the crossing
+    var vel=depth/(i8+1);
+    if(depth<22) return {t:"thin",cls:"",       h:'<span class="pb pb-thin">THIN &middot; skip</span>'};
+    if(vel>=16)  return {t:"bot", cls:"",       h:'<span class="pb pb-bot">too fast</span>'};
+    if(vel>=10)  return {t:"go",  cls:"pb-c-go",h:'<span class="pb pb-go">&#9670; GO</span>'};
+    return         {t:"slow",cls:"",            h:'<span class="pb pb-slow">slow grind</span>'};
+  }
   function pf(addr){ if(!addr) return "";
     return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
   // oscillators, computed client-side from the tape (1 sample per cron tick)
@@ -239,22 +278,24 @@ export const FEED_HTML = `<!doctype html>
     var lastMc=(tk&&tk.length)? tk[tk.length-1].mc : c.first_hit_mc;
     // gate only live (unresolved) earlies — that's what you'd actually enter
     var live=(c.play_outcome==null), g=live?gate(tk):{cls:"",tag:""};
+    var cv=live?conviction(tk):null;            // only once it has reached the ~$8k band
     return '<div class="row '+g.cls+'"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+pf(c.token_address)+'<br>'+
       '<span class="age">hit $3.5k at '+Math.round(c.age_sec_at_hit)+'s old &middot; '+ago(c.first_hit_ms)+' ago</span>'+
       flowQ(c)+'<br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
-      '<div style="text-align:right">'+(live?g.tag+'<br>':playBadge(c)+'<br>')+
+      '<div style="text-align:right">'+(live?(g.tag+(cv?' '+cv.h:'')+'<br>'):playBadge(c)+'<br>')+
       '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
       (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>'+
       postGrad(c, c.play_exit_mc||c.first_hit_mc);
   }
   function liveRow(c,tk){
-    return '<div class="row"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
+    var cv=conviction(tk);
+    return '<div class="row '+(cv?cv.cls:'')+'"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+' '+pf(c.token_address)+'<br>'+
       '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span><br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
-      '<div style="text-align:right"><span class="badge b-live">live</span><br>'+
+      '<div style="text-align:right">'+(cv?cv.h+' ':'')+'<span class="badge b-live">live</span><br>'+
       '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
       '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>'+dexLine(c);
   }
