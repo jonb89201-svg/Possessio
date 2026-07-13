@@ -8,6 +8,7 @@ export const FEED_HTML = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <title>POSSESSIO Radar — AI Live Selection</title>
+<!--FC_EMBED--><!-- Farcaster Mini App embed meta injected per-request by the /feed handler -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
@@ -476,5 +477,12 @@ export const FEED_HTML = `<!doctype html>
   document.getElementById("hideSkip").addEventListener("change",function(){ if(lastData) render(lastData); });
   connectBTC(); poll(); setInterval(poll,5000); pollNews(); setInterval(pollNews,90000);
 })();
+</script>
+<!-- Farcaster Mini App: signal ready to dismiss the splash once loaded. No-op
+     outside a Farcaster client (guarded). Keeps the page a normal web page too. -->
+<script type="module">
+  try{ var m = await import("https://esm.sh/@farcaster/miniapp-sdk");
+    if(m && m.sdk && m.sdk.actions && m.sdk.actions.ready) await m.sdk.actions.ready();
+  }catch(e){ /* not in a Mini App host — normal browser, ignore */ }
 </script>
 </body></html>`;

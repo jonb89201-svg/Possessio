@@ -64,3 +64,6 @@ __pycache__/
 # =========================
 .mcp.json
 .mcp.local.json
+
+# Wrangler local secrets (NEYNAR_API_KEY etc) — NEVER commit
+.dev.vars

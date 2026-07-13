@@ -35,6 +35,10 @@ export type Env = {
   PRICE_GAP_STATS: string;   // OPEN — Architect prices after the tape has data
   PRICE_SESSION_GATE: string;
   PRICE_TAPE: string;
+  // Farcaster Mini App (the radar, launchable inside Warpcast/Base App).
+  CONSOLE_URL?: string;             // where icon/splash/og assets live (default possessio.io)
+  FC_ACCOUNT_ASSOCIATION?: string;  // signed JFS (JSON) proving the domain -> your FID; set via `wrangler secret put`
+  NEYNAR_API_KEY?: string;          // Neynar-powered features (notifications/posting); base mini app needs none
 };
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -140,7 +144,50 @@ export function buildTolledApp(env: Env) {
   // $10k micro-cap is a tailwind, not a leak. It exposes WHICH coins clear §1,
   // never entry/exit prices or size. Always free, even when the toll is armed
   // (it's marketing for the paid execution product, not a paid data route). ----
-  app.get("/feed", (c) => c.html(FEED_HTML));
+  // The feed doubles as a Farcaster Mini App. We inject the fc:miniapp embed
+  // meta per-request (built from the actual origin, so it works on workers.dev
+  // or a custom domain with no hardcoding). Assets come from the console domain.
+  const consoleUrl = (env as any).CONSOLE_URL || "https://possessio.io";
+  app.get("/feed", (c) => {
+    const origin = new URL(c.req.url).origin;
+    const embed = JSON.stringify({
+      version: "1",
+      imageUrl: consoleUrl + "/og.png",
+      button: {
+        title: "Open Radar",
+        action: {
+          type: "launch_miniapp", name: "POSSESSIO Radar", url: origin + "/feed",
+          splashImageUrl: consoleUrl + "/splash-200.png", splashBackgroundColor: "#ffffff",
+        },
+      },
+    }).replace(/"/g, "&quot;");
+    const meta = '<meta name="fc:miniapp" content="' + embed + '">';
+    return c.html(FEED_HTML.replace("<!--FC_EMBED-->", meta));
+  });
+  // FARCASTER MINI APP MANIFEST. Served at the domain root; miniapp metadata is
+  // built from the request origin so it's domain-agnostic. accountAssociation
+  // (the JFS proving this domain belongs to your FID) is injected from an env
+  // secret — until it's set the app still launches, it just isn't "verified"
+  // for publishing. Generate it with Warpcast's manifest tool or Neynar.
+  app.get("/.well-known/farcaster.json", (c) => {
+    const origin = new URL(c.req.url).origin;
+    const miniapp: any = {
+      version: "1",
+      name: "POSSESSIO Radar",
+      iconUrl: consoleUrl + "/icon-1024.png",
+      homeUrl: origin + "/feed",
+      splashImageUrl: consoleUrl + "/splash-200.png",
+      splashBackgroundColor: "#ffffff",
+      subtitle: "AI live memecoin selection",
+      description: "What an autonomous trader screens from, live. Solana / pump.fun, pre-DEX — with the bucket-C conviction tag graded forward against real outcomes.",
+      primaryCategory: "finance",
+      tags: ["solana", "trading", "memecoins", "ai", "radar"],
+    };
+    const body: any = { miniapp, frame: miniapp }; // frame alias for older clients
+    const assoc = (env as any).FC_ACCOUNT_ASSOCIATION;
+    if (assoc) { try { body.accountAssociation = JSON.parse(assoc); } catch { /* leave unverified */ } }
+    return c.json(body);
+  });
   // Bitcoin news strip — cached RSS aggregate (display only, public, free).
   app.get("/radar/news", async (c) => c.json({ items: await getNews() }));
   // Layer 3 VERIFY-FIRST surface: WS engine state, parse rate, raw samples.
