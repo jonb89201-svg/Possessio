@@ -28,8 +28,15 @@
   .legend{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
   .prof{border:1px solid var(--line);border-radius:10px;padding:8px 11px;background:var(--surface-2);font-size:11px;color:var(--dim);flex:1;min-width:150px}
   .prof b{font-family:'Space Grotesk',sans-serif;color:var(--ink);display:block;font-size:13px}
-  .card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;background:var(--surface)}
+  .phase{font-family:'Space Grotesk',sans-serif;font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--dim);font-weight:600;margin:20px 0 10px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;background:var(--surface);
+    display:flex;gap:13px}
   .card.over{border-color:var(--danger);background:var(--danger-faint)}
+  .step{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--ink);color:#fff;
+    font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
+  .step.eth{background:var(--open)}
+  .body{flex:1;min-width:0}
   .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
   .nm{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px}
   .role{color:var(--faint);font-size:12px;font-weight:400}
@@ -57,8 +64,8 @@
   code{font-family:'IBM Plex Mono',monospace;font-size:12px}
 </style></head><body>
 <div class="wrap">
-  <h1>Optimizer Pool</h1>
-  <p class="sub">Per-(contract, chain) optimizer settings, sizes, and the codehashes to pin. Source of truth: <code>public/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
+  <h1>Launch Plan · Optimizer Pool</h1>
+  <p class="sub">The deploy sequence in order — rails → reservoir → contracts → Ethereum anchor. Each step shows its chain, optimizer profile, size vs the 24KB wall, and the codehash to pin. Deploy strictly in order, one proven before the next. Source: <code>public/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
   <div class="legend" id="legend"></div>
   <div id="list"><div class="empty">loading optimizer_pool.json…</div></div>
   <p class="foot" id="foot"></p>
@@ -91,12 +98,14 @@
     if(c.welded_to)     rel='<div class="rel">welded to <b>'+esc(c.welded_to)+'</b> — cannot take a different optimizer than its factory.</div>';
     var hash = c.init_codehash ?
       '<div class="hash"><span class="k">init_codehash — pin this in a codehash factory</span>'+esc(c.init_codehash)+'</div>' : "";
-    return '<div class="card'+(over?' over':'')+'"><div class="top">'+
+    var stepCls = c.chain==="ethereum" ? "step eth" : "step";
+    return '<div class="card'+(over?' over':'')+'">'+
+      '<div class="'+stepCls+'">'+(c.step!=null?c.step:'·')+'</div><div class="body"><div class="top">'+
       '<div><span class="nm">'+esc(c.name)+'</span> <span class="role">'+esc(c.role||"")+'</span></div>'+
       '<div class="pills">'+chainPill(c.chain)+profPill(c.profile)+'<span class="pill p-default">'+runs+' runs</span></div></div>'+
       '<div class="reason">'+esc(c.reason||"")+'</div>'+ bar +
       (over?'<div class="warn">✗ Over the 24KB limit at '+runs+' runs — will not deploy. Drop to a lower-runs profile.</div>':'')+
-      hash + rel + '</div>';
+      hash + rel + '</div></div>';
   }
 
   fetch("./optimizer_pool.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
@@ -104,10 +113,13 @@
     document.getElementById("legend").innerHTML = Object.keys(profs).map(function(k){
       var p=profs[k]; return '<div class="prof"><b>'+esc(k)+' · '+p.runs+' runs</b>'+esc(p.for)+'</div>';
     }).join("");
-    var list=(d.contracts||[]);
-    document.getElementById("list").innerHTML = list.length
-      ? list.map(function(c){ return card(c, profs); }).join("")
-      : '<div class="empty">no contracts in the pool</div>';
+    var list=(d.contracts||[]).slice().sort(function(a,b){ return (a.step||99)-(b.step||99); });
+    var html="", lastPhase=null;
+    list.forEach(function(c){
+      if(c.phase!==lastPhase){ html+='<div class="phase">'+esc(c.phase||"")+'</div>'; lastPhase=c.phase; }
+      html+=card(c, profs);
+    });
+    document.getElementById("list").innerHTML = list.length ? html : '<div class="empty">no contracts in the pool</div>';
     var synced=list.filter(function(c){return c.runtime_bytes!=null;}).length;
     document.getElementById("foot").innerHTML =
       synced+' of '+list.length+' synced. A codehash-pattern factory (PossessioFactory) pins a template’s init_codehash <b>immutably</b> at deploy — so freeze a template’s profile before its factory goes live. Re-run the sync after any profile change and re-pin.';

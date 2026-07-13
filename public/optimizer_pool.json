@@ -1,5 +1,6 @@
 {
-  "_doc": "OPTIMIZER POOL — single source of truth for per-(contract,chain) optimizer settings, artifacts, and codehashes. Run deploy/sync_optimizer_pool.sh to compile each contract under its profile and fill init_codehash / deployed_codehash / runtime_bytes. RULE: a codehash-pattern factory (PossessioFactory) pins a template's init_codehash IMMUTABLY at deploy — so a template's optimizer setting is FROZEN once its factory is live. Change a setting -> re-sync -> the codehash changes -> you must re-pin it (which means a new factory). Never desync by hand; this file is the truth.",
+  "_doc": "OPTIMIZER POOL + DEPLOY ORDER — single source of truth for per-(contract,chain) optimizer settings, codehashes, AND the launch sequence. Run deploy/sync_optimizer_pool.sh to fill init_codehash / deployed_codehash / runtime_bytes. RULE: a codehash-pattern factory (PossessioFactory) pins a template's init_codehash IMMUTABLY at deploy — so a template's optimizer is FROZEN once its factory is live. Deploy STRICTLY in `step` order; each proven live before the next (Codebyte: one at a time).",
+  "_deploy_order": "Pools first (rails -> reservoir), then contracts, then the Ethereum anchor last (separate chain, gated on the Base Builder grant / Fundstrat). Steps flagged CONFIRM need the Architect's ruling before they are locked.",
   "eip170_limit_bytes": 24576,
   "profiles": {
     "default": { "runs": 1,     "via_ir": true, "out": "out",     "for": "size-first / rarely-called — deployability over runtime" },
@@ -8,66 +9,66 @@
   },
   "contracts": [
     {
-      "name": "PossessioSaltPool", "file": "src/PossessioSaltPool.sol",
-      "chain": "base", "profile": "default", "role": "salt rail (deploy #1)",
-      "reason": "deployed once, rarely called — deploy size over runtime",
+      "step": 1, "phase": "pools (base)", "name": "PossessioSaltPool", "file": "src/PossessioSaltPool.sol",
+      "chain": "base", "profile": "default", "role": "salt / CREATE3 rail",
+      "reason": "deployed once, rarely called — deploy size over runtime. FIRST: it provides the deterministic-address rail the rest deploy onto.",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioHook", "file": "src/POSSESSIO_v2-6-3.sol",
-      "chain": "base", "profile": "default", "role": "protocol pool / reservoir (v2.6.3)",
-      "reason": "near the 24KB EIP-170 wall — runs=1 is REQUIRED to fit, not a cost choice. Eats slightly pricier swaps forever as the cost of being feature-complete.",
-      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
-    },
-    {
-      "name": "STEEL", "file": "src/POSSESSIO_v2-6-3.sol",
+      "step": 2, "phase": "pools (base)", "name": "STEEL", "file": "src/POSSESSIO_v2-6-3.sol",
       "chain": "base", "profile": "default", "role": "protocol token",
-      "reason": "lives in the same file as the hook — one compilation unit, so it shares runs=1. Could be split to a hot profile if transfer-gas ever matters more than a shared build.",
+      "reason": "must exist before the hook that references it as STEEL_TOKEN. Shares the v2.6.3 compilation with the hook (one file), so it inherits runs=1.",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioPool", "file": "src/PossessioPool.sol",
-      "chain": "base", "profile": "default", "role": "pool template — CONFIRM: is this the template PossessioFactory deploys?",
-      "reason": "if it is the factory's template, its init_codehash is what gets pinned into PossessioFactory.templateCodehash — freeze this setting BEFORE deploying the factory",
+      "step": 3, "phase": "pools (base)", "name": "PossessioHook", "file": "src/POSSESSIO_v2-6-3.sol",
+      "chain": "base", "profile": "default", "role": "protocol pool / reservoir (v2.6.3)",
+      "reason": "the reservoir. Needs STEEL (step 2) + a MINED hook address (V4 permission bits). Pool init (PoolManager.initialize) follows immediately. runs=1 is REQUIRED to fit under 24KB — not a cost choice.",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 4, "phase": "contracts (base)", "name": "PossessioPool", "file": "src/PossessioPool.sol",
+      "chain": "base", "profile": "default", "role": "pool template — CONFIRM: is this PossessioFactory's template, or a standalone pool? Its position vs the factory depends on the answer.",
+      "reason": "IF it is the factory template, its init_codehash is pinned into PossessioFactory at step 5 — so it must be compiled/finalized before the factory. CONFIRM role + order.",
       "pinned_by": "PossessioFactory",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioFactory", "file": "src/PossessioFactory.sol",
+      "step": 5, "phase": "contracts (base)", "name": "PossessioFactory", "file": "src/PossessioFactory.sol",
       "chain": "base", "profile": "default", "role": "base factory (codehash pattern)",
-      "reason": "rarely called; its OWN optimizer is independent of the templates it deploys. It validates a template's init_codehash — that hash is immutable once this factory is constructed.",
+      "reason": "pins the template's init_codehash IMMUTABLY at construction — so the template (step 4) must be finalized first. Its own optimizer is independent of the templates it deploys.",
       "pins_template": "PossessioPool",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioPayments", "file": "src/PossessioPayments.sol",
+      "step": 6, "phase": "contracts (base)", "name": "PossessioPayments", "file": "src/PossessioPayments.sol",
       "chain": "base", "profile": "hot", "role": "payments rail",
-      "reason": "hit on every payment — optimize runtime; small enough to fit at high runs",
+      "reason": "hit on every payment — optimize runtime (runs=10000); small enough to fit hot.",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioX402Core", "file": "src/PossessioX402Core.sol",
+      "step": 7, "phase": "contracts (base)", "name": "PossessioX402Core", "file": "src/PossessioX402Core.sol",
       "chain": "base", "profile": "hot", "role": "autonomous trader (x402Core)",
-      "reason": "called per-trade — cheaper execution compounds over volume",
+      "reason": "called per-trade — cheaper execution compounds over volume.",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "PossessioWhiskyMarket", "file": "src/PossessioWhiskyMarket.sol",
+      "step": 8, "phase": "contracts (base)", "name": "PossessioWhiskyMarket", "file": "src/PossessioWhiskyMarket.sol",
       "chain": "base", "profile": "default", "role": "RWA whisky market (new)",
-      "reason": "auction/settlement, moderate call frequency — start at default, revisit to hot once live if bid gas matters",
+      "reason": "auction/settlement, moderate call frequency — start at default; revisit to hot once live if bid gas matters. CONFIRM: this launch, or a later phase?",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "L1AnchorFactory", "file": "src/L1AnchorFactory.sol",
-      "chain": "ethereum", "profile": "l1", "role": "ethereum factory (embedded new)",
-      "reason": "uses `new L1Anchor(...)` — L1Anchor's bytecode is compiled INTO this contract, so both share this setting. Expensive L1 favors a moderate balance.",
+      "step": 9, "phase": "anchor (ethereum)", "name": "L1AnchorFactory", "file": "src/L1AnchorFactory.sol",
+      "chain": "ethereum", "profile": "l1", "role": "ethereum factory (embeds L1Anchor via new)",
+      "reason": "SEPARATE CHAIN, LAST — gated on the Base Builder grant / Fundstrat email. Deploying it deploys L1Anchor with it (embedded). Expensive L1 favors a moderate balance (runs=800).",
       "embeds": "L1Anchor",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
-      "name": "L1Anchor", "file": "src/L1Anchor.sol",
-      "chain": "ethereum", "profile": "l1", "role": "merchant anchor",
-      "reason": "WELDED to L1AnchorFactory (embedded new) — cannot take a different optimizer than its factory. Setting shown for reference; it is not independently deployable at another runs.",
+      "step": 9, "phase": "anchor (ethereum)", "name": "L1Anchor", "file": "src/L1Anchor.sol",
+      "chain": "ethereum", "profile": "l1", "role": "merchant anchor (deployed BY the factory)",
+      "reason": "WELDED to L1AnchorFactory (embedded new) — not independently deployed; shares the factory's setting. Listed for the codehash record only.",
       "welded_to": "L1AnchorFactory",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     }
