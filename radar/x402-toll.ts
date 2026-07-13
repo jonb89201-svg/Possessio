@@ -40,6 +40,64 @@ export type Env = {
 const ZERO = "0x0000000000000000000000000000000000000000";
 const CAIP2: Record<string, string> = { base: "eip155:8453", "base-sepolia": "eip155:84532" };
 
+// ── BITCOIN NEWS (bitbo.io has no API — its news page is itself an aggregator
+// of standard RSS, so we pull the same primary sources directly, server-side
+// since RSS sends no CORS). Cached per-isolate, 5-min TTL; the /radar/news
+// route serves it and the feed renders a compact strip. Display only. ──
+const NEWS_FEEDS: [string, string][] = [
+  ["CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"],
+  ["Cointelegraph", "https://cointelegraph.com/rss"],
+  ["Bitcoin Magazine", "https://bitcoinmagazine.com/feed"],
+];
+const NEWS_TTL_MS = 5 * 60_000;
+let newsCache: { ts: number; items: any[] } = { ts: 0, items: [] };
+
+// RSS titles arrive HTML-entity-encoded (and occasionally with stray tags).
+// Decode to clean text here; the feed re-escapes with esc() before display, so
+// the result is both correct (no double-escaped &amp;) and XSS-safe.
+function decodeEntities(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&"); // amp last
+}
+
+function parseRss(xml: string, src: string, limit = 8): any[] {
+  const out: any[] = [];
+  const grab = (b: string, tag: string) => {
+    const m = b.match(new RegExp("<" + tag + "[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</" + tag + ">", "i"));
+    return m ? m[1].trim() : "";
+  };
+  for (const b of xml.split(/<item[\s>]/i).slice(1, limit + 1)) {
+    const title = decodeEntities(grab(b, "title"));
+    if (!title) continue;
+    const pd = grab(b, "pubDate");
+    const ts = pd ? Date.parse(pd) : NaN;
+    out.push({ title, link: grab(b, "link"), src, ts: Number.isFinite(ts) ? ts : null });
+  }
+  return out;
+}
+
+async function getNews(): Promise<any[]> {
+  if (Date.now() - newsCache.ts < NEWS_TTL_MS && newsCache.items.length) return newsCache.items;
+  const all: any[] = [];
+  for (const [src, url] of NEWS_FEEDS) {
+    try {
+      const r = await fetch(url, {
+        headers: { "user-agent": "possessio-radar/0.4", accept: "application/rss+xml,application/xml,text/xml" },
+      });
+      if (!r.ok) continue;
+      all.push(...parseRss(await r.text(), src));
+    } catch { /* one source down doesn't sink the strip */ }
+  }
+  all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (all.length) newsCache = { ts: Date.now(), items: all.slice(0, 12) };
+  return newsCache.items;
+}
+
 export function buildTolledApp(env: Env) {
   const app = new Hono();
   const armed = env.TOLL_SINK && env.TOLL_SINK.toLowerCase() !== ZERO;
@@ -83,6 +141,8 @@ export function buildTolledApp(env: Env) {
   // never entry/exit prices or size. Always free, even when the toll is armed
   // (it's marketing for the paid execution product, not a paid data route). ----
   app.get("/feed", (c) => c.html(FEED_HTML));
+  // Bitcoin news strip — cached RSS aggregate (display only, public, free).
+  app.get("/radar/news", async (c) => c.json({ items: await getNews() }));
   // Layer 3 VERIFY-FIRST surface: WS engine state, parse rate, raw samples.
   // Aggregates + public mint data only — nothing here leaks method params.
   app.get("/radar/ws-status", async (c) => {

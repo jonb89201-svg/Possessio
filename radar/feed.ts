@@ -121,6 +121,11 @@ export const FEED_HTML = `<!doctype html>
   .btcbar .btcconn{margin-left:auto;font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
   .btcbar .btcconn.on{color:#4ade80}
   .livemc{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .newsitem{display:flex;gap:9px;padding:8px 4px;border-bottom:1px solid var(--line);align-items:baseline}
+  .newsitem a{color:var(--ink);text-decoration:none;font-size:13px;font-weight:500;line-height:1.4}
+  .newsitem a:hover{color:var(--oxide)}
+  .newssrc{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;flex:0 0 auto;font-weight:600}
+  .newsage{font-size:10px;color:var(--faint);white-space:nowrap;margin-left:auto;flex:0 0 auto;font-family:'IBM Plex Mono',monospace}
 </style></head><body>
 <div class="wrap">
   <h1><span class="pulse"></span>POSSESSIO RADAR — AI LIVE SELECTION</h1>
@@ -165,6 +170,9 @@ export const FEED_HTML = `<!doctype html>
     autonomous trader runs this exact discipline for you — pay-per-call, on-chain,
     no keys handed over. Every call feeds the protocol pool.
   </div>
+
+  <h2>&#8383; Bitcoin news</h2>
+  <div id="news"><div class="empty">loading news…</div></div>
 
   <p class="foot" id="foot">
     Pre-DEX only — the edge is buying before DexScreener lists it. Rug &amp; session
@@ -447,13 +455,26 @@ export const FEED_HTML = `<!doctype html>
       setTimeout(connectBTC, Math.min(30000,2000*Math.pow(2,btcRetry++))); };
     btcWS.onerror=function(){ try{ btcWS.close(); }catch(e){} };
   }
+  // BITCOIN NEWS — cached RSS aggregate from /radar/news (CoinDesk, Cointelegraph,
+  // Bitcoin Magazine — the primary sources bitbo's news page itself aggregates).
+  function renderNews(items){
+    var N=document.getElementById("news");
+    if(!items||!items.length){ N.innerHTML='<div class="empty">news unavailable</div>'; return; }
+    N.innerHTML=items.map(function(it){
+      return '<div class="newsitem"><span class="newssrc">'+esc(it.src)+'</span>'+
+        '<a href="'+esc(it.link)+'" target="_blank" rel="noopener">'+esc(it.title)+'</a>'+
+        (it.ts?('<span class="newsage">'+ago(it.ts)+'</span>'):'')+'</div>';
+    }).join("");
+  }
+  function pollNews(){ fetch("/radar/news",{cache:"no-store"}).then(function(r){return r.json();})
+    .then(function(d){ renderNews(d.items); }).catch(function(){}); }
   var lastData=null;
   function poll(){
     fetch("/radar/candidates",{cache:"no-store"}).then(function(r){return r.json();})
       .then(function(d){ lastData=d; render(d); }).catch(function(){});
   }
   document.getElementById("hideSkip").addEventListener("change",function(){ if(lastData) render(lastData); });
-  connectBTC(); poll(); setInterval(poll,5000);
+  connectBTC(); poll(); setInterval(poll,5000); pollNews(); setInterval(pollNews,90000);
 })();
 </script>
 </body></html>`;
