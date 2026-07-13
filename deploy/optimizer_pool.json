@@ -1,7 +1,7 @@
 {
   "_INTERNAL": "PRIVATE build/deploy tool — NEVER served on the console, never public. Users never see pools, optimizer settings, or the foundation. This file lives in deploy/, not public/.",
   "_doc": "OPTIMIZER POOL + DEPLOY MODEL — source of truth for per-contract optimizer settings and codehashes for OUR OWN foundation deploys. Run deploy/sync_optimizer_pool.sh to fill init_codehash / deployed_codehash / runtime_bytes.",
-  "_business_model": "POSSESSIO owns ONE pool (its reservoir). The console is a PAID auto-deploy gate: a user connects a wallet, pays our fee, and the factory auto-deploys THEIR operational contracts (payments, v2.6.3, x402). We never deploy a pool for anyone — the fees feed OUR pool. Optimizer settings are baked into the template bytecode the factory deploys; the user never sees or sets them.",
+  "_business_model": "POSSESSIO owns ONE pool: PossessioPool — 'THE HEART', our reservoir. payments and x402 are organs that route their fee inflow INTO PossessioPool. The console is a PAID auto-deploy gate: a user connects a wallet, pays our fee, and the factory auto-deploys their contracts. v2.6.3 (STEEL + hook) is the ONLY contract we launch that is NOT connected to PossessioPool — it is the CUSTOMER'S OWN product: someone who wants to profit from their own pool. They pay us to launch their token; THEY then pair THEIR OWN liquidity to THEIR OWN token, which creates THEIR OWN pool. We take the deploy fee (which feeds OUR PossessioPool); we never pair their liquidity and we have NO access to the deployed contract once it is live. That no-post-deploy-access reality is exactly why onboarding/education must happen at a physical (Apple-store-style) location. Optimizer settings are baked into the template bytecode the factory deploys; the user never sees or sets them.",
   "_model": "THREE TIERS. (1) FOUNDATION — salt pool, protocol pool, factory: OUR private one-time manual deploys, in order, each proven before the next. Deploy once, work forever. NOT on the console. (2) AUTO-DEPLOY — payments, v2.6.3, x402Core: the paid product. Deployed FROM the foundation (factory + salt rail, deterministic) when a paying user triggers it. These three are what the console lists. (3) PREREQUISITE / LATER — the rest (whisky, Ethereum anchor): separate phases, prerequisites (grant, liquidity, Fundstrat) first. RULE: the factory pins a template's init_codehash IMMUTABLY at deploy — freeze the auto-deploy templates' optimizer runs BEFORE the factory goes live.",
   "_optimizer": "HARDCODED PER CONTRACT. The optimizer_runs below are enforced by foundry.toml [[profile.default.compilation_restrictions]] — ONE `forge build` produces every contract at its fixed setting. Customers never choose it; we preset it as part of the service. Global default = runs=1 (size-safe, required for the v2.6.3 hook to fit under EIP-170). Only contracts that differ from 1 carry a compilation_restrictions entry; the runs shown here mirror that file exactly.",
   "eip170_limit_bytes": 24576,
@@ -16,8 +16,8 @@
     {
       "step": 2, "deploy": "once", "phase": "foundation · one-time (manual, in order)",
       "name": "PossessioPool", "file": "src/PossessioPool.sol",
-      "chain": "base", "optimizer_runs": 1, "role": "protocol pool — CONFIRM this is the 'protocol pool'",
-      "reason": "one-time. Deployed after the salt rail, before the factory. CONFIRM: PossessioPool.sol is the 'protocol pool' you deploy here (vs the v2.6.3 hook, which auto-deploys in tier 2). runs=1 (default).",
+      "chain": "base", "optimizer_runs": 1, "role": "protocol pool — OUR reservoir ('THE HEART')",
+      "reason": "one-time. Deployed after the salt rail, before the factory. THIS is the one pool POSSESSIO owns — payments and x402 route their fees into it. The v2.6.3 hook is NOT connected to this pool (that's the customer's own product). runs=1 (default).",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
@@ -38,15 +38,15 @@
     {
       "step": 5, "deploy": "auto", "phase": "auto-deploy · from the foundation",
       "name": "STEEL", "file": "src/POSSESSIO_v2-6-3.sol",
-      "chain": "base", "optimizer_runs": 1, "role": "protocol token (v2.6.3)",
-      "reason": "auto-deployed with v2.6.3; must precede its hook. Shares the v2.6.3 compilation (runs=1, default).",
+      "chain": "base", "optimizer_runs": 1, "role": "the customer's own token (v2.6.3)",
+      "reason": "the paid product — auto-deployed for a paying customer, NOT connected to PossessioPool. Deployed with v2.6.3; must precede its hook. Shares the v2.6.3 compilation (runs=1, default).",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
       "step": 6, "deploy": "auto", "phase": "auto-deploy · from the foundation",
       "name": "PossessioHook", "file": "src/POSSESSIO_v2-6-3.sol",
-      "chain": "base", "optimizer_runs": 1, "role": "v2.6.3 hook / reservoir",
-      "reason": "auto-deployed from the foundation. Needs a MINED hook address (V4 permission bits). runs=1 REQUIRED to fit under 24KB — this is why the default is 1.",
+      "chain": "base", "optimizer_runs": 1, "role": "the customer's own hook / pool (v2.6.3)",
+      "reason": "the paid product, NOT our reservoir and NOT connected to PossessioPool. Runs on the customer's OWN pool — they pair their own liquidity to their own token to create it; we have no access once deployed. Needs a MINED hook address (V4 permission bits). runs=1 REQUIRED to fit under 24KB — this is why the default is 1.",
       "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
     },
     {
