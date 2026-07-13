@@ -70,6 +70,16 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// SELF-HEAL: bounded fetch. An un-timed await on a hung upstream (pump.fun or
+// DexScreener stops responding) froze the whole scan for 21min once — every
+// cron tick piled a new hung fetch, none wrote a tape row, the eye went blind
+// with no error. A timeout converts "hang forever" into "throw -> caller
+// retries next pass", so the worst case is a missed pass, never a freeze.
+const FETCH_TIMEOUT_MS = 10_000;
+function tfetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
+
 // MC computed from first principles off the constant-product bonding-curve
 // reserves in the feed item, priced with a market-wide SOL/USD. Deterministic;
 // verified to 5 decimals vs pump.fun's own market_cap field (2026-07-11).
@@ -97,9 +107,12 @@ async function fetchDexMc(
   const volM5 = new Map<string, number>();
   for (let i = 0; i < addrs.length; i += 30) {
     const chunk = addrs.slice(i, i + 30);
-    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
-      headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
-    });
+    let res: Response;
+    try {
+      res = await tfetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
+        headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+      });
+    } catch { continue; } // hung batch skips, doesn't freeze the tracking
     if (res.status === 429) break;
     if (!res.ok) continue;
     const data: any = await res.json();
@@ -161,9 +174,12 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // (newborns sit at its top — Screen 0 + §1 qualify, proven firing), and the
   // DexScreener curve pair TRACKS (mcOf below — same source discoveryScan's
   // R-4 peak already trusts).
-  const res = await fetch(env.PUMPFUN_FEED_URL, {
-    headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
-  });
+  let res: Response;
+  try {
+    res = await tfetch(env.PUMPFUN_FEED_URL, {
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+    });
+  } catch (e) { console.warn("screen feed timeout/err", String(e)); return; } // next cron pass retries
   if (!res.ok) { console.warn("screen feed", res.status); return; }
   const body: any = await res.json();
   const items: any[] = Array.isArray(body) ? body : body?.coins ?? body?.data ?? [];
@@ -467,9 +483,12 @@ export async function dexTrackScan(env: WatcherEnv): Promise<void> {
   const stmts: any[] = [];
   for (let i = 0; i < addrs.length && i < 120; i += 30) {
     const chunk = addrs.slice(i, i + 30);
-    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
-      headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
-    });
+    let res: Response;
+    try {
+      res = await tfetch(env.DEXSCREENER_TOKEN_URL + chunk.join(","), {
+        headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+      });
+    } catch { continue; }
     if (res.status === 429) break;
     if (!res.ok) continue;
     const data: any = await res.json();
