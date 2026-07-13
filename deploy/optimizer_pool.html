@@ -35,8 +35,13 @@
   .card.over{border-color:var(--danger);background:var(--danger-faint)}
   .step{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--ink);color:#fff;
     font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}
-  .step.eth{background:var(--open)}
+  .step.once{background:var(--ink)}          /* one-time manual foundation */
+  .step.auto{background:var(--council)}       /* auto-deployed from the foundation */
+  .step.prereq{background:var(--faint)}       /* prerequisite / later phase */
   .body{flex:1;min-width:0}
+  .dtag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#fff;
+    padding:1px 5px;border-radius:var(--pill);margin-left:6px}
+  .dtag.once{background:var(--ink)}.dtag.auto{background:var(--council)}.dtag.prereq{background:var(--faint)}
   .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
   .nm{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px}
   .role{color:var(--faint);font-size:12px;font-weight:400}
@@ -64,8 +69,8 @@
   code{font-family:'IBM Plex Mono',monospace;font-size:12px}
 </style></head><body>
 <div class="wrap">
-  <h1>Launch Plan · Optimizer Pool</h1>
-  <p class="sub">The deploy sequence in order — rails → reservoir → contracts → Ethereum anchor. Each step shows its chain, optimizer profile, size vs the 24KB wall, and the codehash to pin. Deploy strictly in order, one proven before the next. Source: <code>public/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
+  <h1>Optimizer Pool · <span style="color:var(--danger)">INTERNAL</span></h1>
+  <p class="sub">Private build/deploy tool — <b>never served on the console, never public.</b> Our own foundation deploys: chain, optimizer profile, size vs the 24KB wall, and the codehash to pin. Foundation (salt pool · protocol pool · factory) = one-time manual, ours. Auto-deploy set = the paid product the factory deploys for users. Source: <code>deploy/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
   <div class="legend" id="legend"></div>
   <div id="list"><div class="empty">loading optimizer_pool.json…</div></div>
   <p class="foot" id="foot"></p>

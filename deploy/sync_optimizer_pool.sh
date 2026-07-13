@@ -16,7 +16,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-MANIFEST="public/optimizer_pool.json"
+MANIFEST="deploy/optimizer_pool.json"   # INTERNAL — never served publicly
 LIMIT=$(jq -r '.eip170_limit_bytes' "$MANIFEST")
 
 command -v forge >/dev/null || { echo "forge not found — install Foundry (foundryup)"; exit 1; }
