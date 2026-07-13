@@ -1,15 +1,22 @@
-# ── OPTIMIZER POOL ──────────────────────────────────────────────────────────
-# Per-(contract, chain) optimizer settings. Each profile writes to its OWN out
-# dir so artifacts at different runs never overwrite each other — the "pool"
-# holds every contract's bytecode at its chosen setting. deploy/sync_optimizer_
-# pool.sh compiles each and records codehashes into public/optimizer_pool.json.
+# ── OPTIMIZER: HARDCODED PER CONTRACT (part of the POSSESSIO service) ─────────
+# We preset the optimizer for every contract. Customers never choose it and
+# don't need to know why — the runs are baked in here via per-contract
+# compilation_restrictions, so ONE `forge build` produces every contract at
+# its correct, fixed setting automatically. This is a service we perform for
+# them, not a decision we expose.
 #
-#   default : runs=1     — size-first / rarely-called (deployability). The
-#                          v2.6.3 hook REQUIRES this to fit under the 24KB wall.
-#   hot     : runs=10000 — small + called constantly (payments, x402Core) —
-#                          cheap runtime forever, pay a little more to deploy.
-#   l1      : runs=800    — Ethereum, where deploy AND runtime are both
-#                          expensive — a balance, not an extreme.
+# Global default = runs=1 (size-safe; the v2.6.3 hook REQUIRES it to fit
+# under the 24,576-byte EIP-170 wall). Restrictions below pin the contracts
+# that differ, and only those:
+#   payments, x402Core → 10000  (small + called constantly → cheap runtime)
+#   L1 anchor set      → 800     (Ethereum — balance expensive deploy vs run)
+#
+# Needs a recent Foundry (foundryup). If your version rejects `optimizer_runs`
+# inside a restriction, replace it with:
+#     min_optimizer_runs = <n>
+#     max_optimizer_runs = <n>
+# deploy/optimizer_pool.json is the human-readable record of these presets +
+# the codehash sync target.
 # ────────────────────────────────────────────────────────────────────────────
 
 [profile.default]
@@ -26,24 +33,20 @@ remappings = [
     "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/"
 ]
 
-[profile.hot]
-src = "src"
-out = "out-hot"
-libs = ["lib"]
-optimizer = true
+# Hardcoded per-contract optimizer presets (only contracts that differ from
+# the runs=1 default are listed; everything else is size-safe at 1).
+[[profile.default.compilation_restrictions]]
+paths = "src/PossessioPayments.sol"
 optimizer_runs = 10000
-via_ir = true
-remappings = [
-    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/"
-]
 
-[profile.l1]
-src = "src"
-out = "out-l1"
-libs = ["lib"]
-optimizer = true
+[[profile.default.compilation_restrictions]]
+paths = "src/PossessioX402Core.sol"
+optimizer_runs = 10000
+
+[[profile.default.compilation_restrictions]]
+paths = "src/L1AnchorFactory.sol"
 optimizer_runs = 800
-via_ir = true
-remappings = [
-    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/"
-]
+
+[[profile.default.compilation_restrictions]]
+paths = "src/L1Anchor.sol"
+optimizer_runs = 800

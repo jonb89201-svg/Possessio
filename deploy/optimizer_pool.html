@@ -70,7 +70,7 @@
 </style></head><body>
 <div class="wrap">
   <h1>Optimizer Pool · <span style="color:var(--danger)">INTERNAL</span></h1>
-  <p class="sub">Private build/deploy tool — <b>never served on the console, never public.</b> Our own foundation deploys: chain, optimizer profile, size vs the 24KB wall, and the codehash to pin. Foundation (salt pool · protocol pool · factory) = one-time manual, ours. Auto-deploy set = the paid product the factory deploys for users. Source: <code>deploy/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
+  <p class="sub">Private build/deploy tool — <b>never served on the console, never public.</b> Our own foundation deploys: chain, hardcoded optimizer runs, size vs the 24KB wall, and the codehash to pin. Optimizer is <b>preset per contract</b> in <code>foundry.toml</code> (compilation_restrictions) — one build, every contract at its fixed setting; customers never choose it. Foundation (salt pool · protocol pool · factory) = one-time manual, ours. Auto-deploy set = the paid product the factory deploys for users. Source: <code>deploy/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
   <div class="legend" id="legend"></div>
   <div id="list"><div class="empty">loading optimizer_pool.json…</div></div>
   <p class="foot" id="foot"></p>
@@ -83,10 +83,13 @@
   function chainPill(c){ return c==="ethereum"
       ? '<span class="pill p-eth">ethereum</span>'
       : '<span class="pill p-base">base</span>'; }
-  function profPill(p){ return '<span class="pill p-'+esc(p)+'">'+esc(p)+'</span>'; }
+  function runsPill(n){
+    var cls = n>=10000 ? "p-hot" : (n>1 ? "p-l1" : "p-default");
+    return '<span class="pill '+cls+'">'+esc(n)+' runs</span>';
+  }
 
-  function card(c, profiles){
-    var runs=(profiles[c.profile]||{}).runs;
+  function card(c){
+    var runs=c.optimizer_runs;
     var bytes=c.runtime_bytes, over=(bytes!=null&&bytes>LIMIT);
     var pctRaw = bytes!=null ? bytes/LIMIT : 0;
     var pct = Math.min(100, Math.round(pctRaw*100));
@@ -97,8 +100,8 @@
       : '<div class="bar-wrap"><div class="bar-lbl"><span>—</span><span>not synced — run sync_optimizer_pool.sh</span></div>'+
         '<div class="bar"><i class="fill-ok" style="width:0"></i></div></div>';
     var rel="";
-    if(c.pins_template) rel='<div class="rel">pins <b>'+esc(c.pins_template)+'</b>’s init_codehash — immutable once this factory deploys. Freeze that template’s profile first.</div>';
-    if(c.pinned_by)     rel='<div class="rel">its init_codehash is pinned into <b>'+esc(c.pinned_by)+'</b> — changing this profile means a new factory.</div>';
+    if(c.pins_template) rel='<div class="rel">pins <b>'+esc(c.pins_template)+'</b>’s init_codehash — immutable once this factory deploys. Freeze that template’s runs first.</div>';
+    if(c.pinned_by)     rel='<div class="rel">its init_codehash is pinned into <b>'+esc(c.pinned_by)+'</b> — changing this contract’s runs means a new factory.</div>';
     if(c.embeds)        rel='<div class="rel">embeds <b>'+esc(c.embeds)+'</b> via <code>new</code> — that child shares this exact setting.</div>';
     if(c.welded_to)     rel='<div class="rel">welded to <b>'+esc(c.welded_to)+'</b> — cannot take a different optimizer than its factory.</div>';
     var hash = c.init_codehash ?
@@ -107,27 +110,27 @@
     return '<div class="card'+(over?' over':'')+'">'+
       '<div class="'+stepCls+'">'+(c.step!=null?c.step:'·')+'</div><div class="body"><div class="top">'+
       '<div><span class="nm">'+esc(c.name)+'</span> <span class="role">'+esc(c.role||"")+'</span></div>'+
-      '<div class="pills">'+chainPill(c.chain)+profPill(c.profile)+'<span class="pill p-default">'+runs+' runs</span></div></div>'+
+      '<div class="pills">'+chainPill(c.chain)+runsPill(runs)+'</div></div>'+
       '<div class="reason">'+esc(c.reason||"")+'</div>'+ bar +
-      (over?'<div class="warn">✗ Over the 24KB limit at '+runs+' runs — will not deploy. Drop to a lower-runs profile.</div>':'')+
+      (over?'<div class="warn">✗ Over the 24KB limit at '+runs+' runs — will not deploy. Lower this contract\'s runs in foundry.toml.</div>':'')+
       hash + rel + '</div></div>';
   }
 
   fetch("./optimizer_pool.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
-    var profs=d.profiles||{};
-    document.getElementById("legend").innerHTML = Object.keys(profs).map(function(k){
-      var p=profs[k]; return '<div class="prof"><b>'+esc(k)+' · '+p.runs+' runs</b>'+esc(p.for)+'</div>';
-    }).join("");
+    document.getElementById("legend").innerHTML =
+      '<div class="prof"><b>1 run · default</b>size-first / rarely-called — deployability over runtime (v2.6.3 hook REQUIRES it to fit under 24KB)</div>'+
+      '<div class="prof"><b>10000 runs · hot path</b>small + called constantly (payments, x402) — cheap runtime forever</div>'+
+      '<div class="prof"><b>800 runs · Ethereum L1</b>balance expensive deploy vs expensive runtime (anchor set)</div>';
     var list=(d.contracts||[]).slice().sort(function(a,b){ return (a.step||99)-(b.step||99); });
     var html="", lastPhase=null;
     list.forEach(function(c){
       if(c.phase!==lastPhase){ html+='<div class="phase">'+esc(c.phase||"")+'</div>'; lastPhase=c.phase; }
-      html+=card(c, profs);
+      html+=card(c);
     });
     document.getElementById("list").innerHTML = list.length ? html : '<div class="empty">no contracts in the pool</div>';
     var synced=list.filter(function(c){return c.runtime_bytes!=null;}).length;
     document.getElementById("foot").innerHTML =
-      synced+' of '+list.length+' synced. A codehash-pattern factory (PossessioFactory) pins a template’s init_codehash <b>immutably</b> at deploy — so freeze a template’s profile before its factory goes live. Re-run the sync after any profile change and re-pin.';
+      synced+' of '+list.length+' synced. A codehash-pattern factory (PossessioFactory) pins a template’s init_codehash <b>immutably</b> at deploy — so freeze a template’s runs before its factory goes live. Re-run the sync after any change to foundry.toml and re-pin.';
   }).catch(function(e){
     document.getElementById("list").innerHTML='<div class="empty">could not load optimizer_pool.json — '+esc(e.message)+'</div>';
   });
