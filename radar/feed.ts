@@ -224,6 +224,7 @@ export const FEED_HTML = `<!doctype html>
     var depth=null;
     for(var j=i8;j<tk.length;j++){ if(tk[j].sol!=null){ depth=tk[j].sol; break; } }
     if(depth==null) return null;                // no reserve read at the crossing
+    if(depth<10) return null;                   // decoupled/graduated (curve drained) — not a curve entry
     var vel=depth/(i8+1);
     if(depth<22) return {t:"thin",cls:"",       h:'<span class="pb pb-thin">THIN &middot; skip</span>'};
     if(vel>=16)  return {t:"bot", cls:"",       h:'<span class="pb pb-bot">too fast</span>'};

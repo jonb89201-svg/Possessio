@@ -57,6 +57,12 @@ const CONV_BAND      = 7_500;   // the "~$8k crossing"
 const CONV_DEPTH_MIN = 22;      // floor: ZERO winners below this in the backtest
 const CONV_VEL_LO    = 10;      // bucket-C velocity band (deliberate ~2-tick climb)
 const CONV_VEL_HI    = 16;      // above = bot-spike; below CONV_VEL_LO = slow grind
+// On-curve floor. A coin at the ~$8k band with <10 SOL of curve reserves has
+// DECOUPLED — it graduated (reserves drained to the LP) and its MC is now a
+// DexScreener price against ~0 curve reserves. The backtest excluded this pool
+// (a different regime, not thin liquidity); the live stamper must too, or it
+// mislabels graduated coins "thin" and pollutes the field. Skip, don't stamp.
+const CONV_CURVE_MIN = 10;
 const CONV_STAMP_WINDOW_MS = 30 * 60_000; // only consider recently-born earlies
 
 function numOrNull(v: unknown): number | null {
@@ -297,8 +303,10 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     const addr = e.token_address as string;
     const mc = mcOf(addr);
     const depth = solNow.get(addr);
-    // wait until it's in-band AND we have a curve reserve read for the crossing
-    if (mc === null || mc < CONV_BAND || depth === undefined) continue;
+    // wait until it's in-band AND we have a genuine on-curve reserve read.
+    // depth < CONV_CURVE_MIN = decoupled/graduated (curve drained) — skip, it's
+    // not a real entry and the backtest excluded it.
+    if (mc === null || mc < CONV_BAND || depth === undefined || depth < CONV_CURVE_MIN) continue;
     const ticks = Number(e.nticks) + 1; // +1: this tick's tape row is in the pending batch
     const vel = depth / ticks;
     const tag = depth < CONV_DEPTH_MIN ? "thin"
