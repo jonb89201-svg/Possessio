@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>POSSESSIO — Optimizer Pool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+<style>
+  :root{
+    --bg:#ffffff;--surface:#ffffff;--surface-2:#f8fafc;--surface-3:#f1f5f9;
+    --line:#e2e8f0;--line-2:#cbd5e1;--ink:#0f172a;--dim:#475569;--faint:#94a3b8;
+    --oxide:#1d4ed8;--oxide-dim:#1e40af;--oxide-faint:#dbeafe;
+    --danger:#dc2626;--danger-dim:#b91c1c;--danger-faint:#fef2f2;
+    --council:#16a34a;--council-dim:#15803d;--council-faint:#dcfce7;
+    --treasury:#0891b2;--treasury-dim:#0e7490;--treasury-faint:#cffafe;
+    --open:#7c3aed;--open-dim:#6d28d9;--open-faint:#ede9fe;
+    --gold:#b45309;--gold-faint:#fef3c7;
+    --radius:12px;--pill:9999px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);letter-spacing:-.005em;-webkit-font-smoothing:antialiased;
+    font-family:'Inter',system-ui,sans-serif;font-size:14px;line-height:1.55}
+  .wrap{max-width:820px;margin:0 auto;padding:18px 14px 60px}
+  h1{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;letter-spacing:-.01em;margin:0 0 3px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 16px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+  .prof{border:1px solid var(--line);border-radius:10px;padding:8px 11px;background:var(--surface-2);font-size:11px;color:var(--dim);flex:1;min-width:150px}
+  .prof b{font-family:'Space Grotesk',sans-serif;color:var(--ink);display:block;font-size:13px}
+  .card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;background:var(--surface)}
+  .card.over{border-color:var(--danger);background:var(--danger-faint)}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .nm{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px}
+  .role{color:var(--faint);font-size:12px;font-weight:400}
+  .pills{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .pill{font-size:10px;font-weight:600;padding:3px 9px;border-radius:var(--pill);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+  .p-base{background:var(--oxide-faint);color:var(--oxide-dim)}
+  .p-eth{background:var(--open-faint);color:var(--open-dim)}
+  .p-default{background:var(--surface-3);color:var(--dim)}
+  .p-hot{background:var(--council-faint);color:var(--council-dim)}
+  .p-l1{background:var(--treasury-faint);color:var(--treasury-dim)}
+  .reason{color:var(--dim);font-size:12px;margin:9px 0 10px;line-height:1.5}
+  .bar-wrap{margin:8px 0 4px}
+  .bar-lbl{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);margin-bottom:3px}
+  .bar{height:7px;border-radius:5px;background:var(--surface-3);overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:5px}
+  .fill-ok{background:var(--council)}.fill-warn{background:var(--gold)}.fill-over{background:var(--danger)}
+  .hash{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink);background:var(--surface-2);
+    border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-top:8px;word-break:break-all;line-height:1.5}
+  .hash .k{color:var(--faint);text-transform:uppercase;letter-spacing:.05em;font-size:10px;display:block;margin-bottom:2px}
+  .rel{font-size:11px;color:var(--treasury-dim);margin-top:8px;background:var(--treasury-faint);
+    border-left:3px solid var(--treasury);border-radius:0 8px 8px 0;padding:7px 10px;line-height:1.5}
+  .warn{font-size:11px;color:var(--danger-dim);font-weight:600;margin-top:6px}
+  .foot{color:var(--faint);font-size:11px;margin-top:18px;line-height:1.55}
+  .empty{color:var(--dim);padding:20px 4px}
+  code{font-family:'IBM Plex Mono',monospace;font-size:12px}
+</style></head><body>
+<div class="wrap">
+  <h1>Optimizer Pool</h1>
+  <p class="sub">Per-(contract, chain) optimizer settings, sizes, and the codehashes to pin. Source of truth: <code>public/optimizer_pool.json</code> · sync: <code>deploy/sync_optimizer_pool.sh</code></p>
+  <div class="legend" id="legend"></div>
+  <div id="list"><div class="empty">loading optimizer_pool.json…</div></div>
+  <p class="foot" id="foot"></p>
+</div>
+<script>
+(function(){
+  "use strict";
+  var LIMIT=24576;
+  function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function chainPill(c){ return c==="ethereum"
+      ? '<span class="pill p-eth">ethereum</span>'
+      : '<span class="pill p-base">base</span>'; }
+  function profPill(p){ return '<span class="pill p-'+esc(p)+'">'+esc(p)+'</span>'; }
+
+  function card(c, profiles){
+    var runs=(profiles[c.profile]||{}).runs;
+    var bytes=c.runtime_bytes, over=(bytes!=null&&bytes>LIMIT);
+    var pctRaw = bytes!=null ? bytes/LIMIT : 0;
+    var pct = Math.min(100, Math.round(pctRaw*100));
+    var fill = over?"fill-over":(pct>=88?"fill-warn":"fill-ok");
+    var bar = bytes!=null ?
+      '<div class="bar-wrap"><div class="bar-lbl"><span>'+bytes+' B</span><span>'+pct+'% of 24,576 (EIP-170)</span></div>'+
+      '<div class="bar"><i class="'+fill+'" style="width:'+pct+'%"></i></div></div>'
+      : '<div class="bar-wrap"><div class="bar-lbl"><span>—</span><span>not synced — run sync_optimizer_pool.sh</span></div>'+
+        '<div class="bar"><i class="fill-ok" style="width:0"></i></div></div>';
+    var rel="";
+    if(c.pins_template) rel='<div class="rel">pins <b>'+esc(c.pins_template)+'</b>’s init_codehash — immutable once this factory deploys. Freeze that template’s profile first.</div>';
+    if(c.pinned_by)     rel='<div class="rel">its init_codehash is pinned into <b>'+esc(c.pinned_by)+'</b> — changing this profile means a new factory.</div>';
+    if(c.embeds)        rel='<div class="rel">embeds <b>'+esc(c.embeds)+'</b> via <code>new</code> — that child shares this exact setting.</div>';
+    if(c.welded_to)     rel='<div class="rel">welded to <b>'+esc(c.welded_to)+'</b> — cannot take a different optimizer than its factory.</div>';
+    var hash = c.init_codehash ?
+      '<div class="hash"><span class="k">init_codehash — pin this in a codehash factory</span>'+esc(c.init_codehash)+'</div>' : "";
+    return '<div class="card'+(over?' over':'')+'"><div class="top">'+
+      '<div><span class="nm">'+esc(c.name)+'</span> <span class="role">'+esc(c.role||"")+'</span></div>'+
+      '<div class="pills">'+chainPill(c.chain)+profPill(c.profile)+'<span class="pill p-default">'+runs+' runs</span></div></div>'+
+      '<div class="reason">'+esc(c.reason||"")+'</div>'+ bar +
+      (over?'<div class="warn">✗ Over the 24KB limit at '+runs+' runs — will not deploy. Drop to a lower-runs profile.</div>':'')+
+      hash + rel + '</div>';
+  }
+
+  fetch("./optimizer_pool.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
+    var profs=d.profiles||{};
+    document.getElementById("legend").innerHTML = Object.keys(profs).map(function(k){
+      var p=profs[k]; return '<div class="prof"><b>'+esc(k)+' · '+p.runs+' runs</b>'+esc(p.for)+'</div>';
+    }).join("");
+    var list=(d.contracts||[]);
+    document.getElementById("list").innerHTML = list.length
+      ? list.map(function(c){ return card(c, profs); }).join("")
+      : '<div class="empty">no contracts in the pool</div>';
+    var synced=list.filter(function(c){return c.runtime_bytes!=null;}).length;
+    document.getElementById("foot").innerHTML =
+      synced+' of '+list.length+' synced. A codehash-pattern factory (PossessioFactory) pins a template’s init_codehash <b>immutably</b> at deploy — so freeze a template’s profile before its factory goes live. Re-run the sync after any profile change and re-pin.';
+  }).catch(function(e){
+    document.getElementById("list").innerHTML='<div class="empty">could not load optimizer_pool.json — '+esc(e.message)+'</div>';
+  });
+})();
+</script>
+</body></html>

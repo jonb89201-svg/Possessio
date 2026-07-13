@@ -58,3 +58,5 @@ __pycache__/
 
 # Wrangler local dev state
 .wrangler/
+out-hot/
+out-l1/
