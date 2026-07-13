@@ -113,6 +113,18 @@ export function buildTolledApp(env: Env) {
     const tally = await db.prepare(
       `SELECT outcome, COUNT(*) AS n FROM candidates GROUP BY outcome`
     ).all();
+    // MACRO — live BTC from our OWN Chainlink-on-Base oracle (regime_ticks,
+    // written every cron), with 15m/1h slope. The tide: entries into a falling
+    // BTC underperform (measured), so this is live enter/hold context for the
+    // human, not decoration.
+    const bnow = Date.now();
+    const btc = await db.prepare(
+      `SELECT
+         (SELECT btc_usd FROM regime_ticks ORDER BY ts_ms DESC LIMIT 1)                         AS now,
+         (SELECT MAX(ts_ms) FROM regime_ticks)                                                   AS at,
+         (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?1 ORDER BY ts_ms DESC LIMIT 1)        AS m15,
+         (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?2 ORDER BY ts_ms DESC LIMIT 1)        AS h1`
+    ).bind(bnow - 900_000, bnow - 3_600_000).first();
     // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
@@ -164,6 +176,7 @@ export function buildTolledApp(env: Env) {
       early: early.results,
       earlyPlay: earlyPlay.results,
       scorecard: scorecard.results,
+      btc,
       ticks,
       tally: tally.results,
       method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",

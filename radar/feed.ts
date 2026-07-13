@@ -105,10 +105,34 @@ export const FEED_HTML = `<!doctype html>
   .promo{margin-top:22px;border:1px solid var(--council);border-radius:var(--radius);padding:16px;background:var(--council-faint)}
   .promo b{color:var(--council-dim)}
   .foot{color:var(--faint);font-size:11px;margin-top:18px;line-height:1.5}
+  /* LIVE BTC cockpit strip — sub-second spot via a public exchange websocket
+     (the real-time tide a human needs to time an exit; our Chainlink oracle
+     only moves on ~0.5% deviation). Slope (15m/1h) from our own regime feed. */
+  .btcbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+    background:var(--ink);color:#fff;border-radius:10px;padding:9px 14px;margin:0 0 14px;
+    font-family:'IBM Plex Mono',monospace;font-size:13px;box-shadow:0 2px 10px rgba(15,23,42,.14)}
+  .btcbar .btclbl{font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:.04em;color:#94a3b8}
+  .btcbar .btcpx{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;transition:color .12s;color:#fff}
+  .btcbar .btcslope{font-size:12px;color:#cbd5e1}
+  .btcbar .tide{font-size:11px;padding:2px 8px;border-radius:var(--radius-pill);font-weight:600}
+  .btcbar .tide-red{background:rgba(220,38,38,.22);color:#fca5a5}
+  .btcbar .tide-green{background:rgba(22,163,74,.22);color:#86efac}
+  .btcbar .tide-flat{background:rgba(148,163,184,.18);color:#cbd5e1}
+  .btcbar .btcconn{margin-left:auto;font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+  .btcbar .btcconn.on{color:#4ade80}
+  .livemc{font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}
 </style></head><body>
 <div class="wrap">
   <h1><span class="pulse"></span>POSSESSIO RADAR — AI LIVE SELECTION</h1>
   <p class="sub">What an autonomous trader screens from, in real time. Solana / pump.fun, pre-DEX.</p>
+
+  <div id="btcbar" class="btcbar">
+    <span class="btclbl">BTC/USD</span>
+    <span id="btcpx" class="btcpx">—</span>
+    <span id="btctide" class="tide tide-flat">—</span>
+    <span id="btcslope" class="btcslope"></span>
+    <span id="btcconn" class="btcconn">connecting…</span>
+  </div>
 
   <div class="frame">
     <div class="k">Screening method — RULEBOOK §1 (paper-only, nothing is bought)</div>
@@ -287,18 +311,19 @@ export const FEED_HTML = `<!doctype html>
       flowQ(c)+'<br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right">'+(live?(g.tag+(cv?' '+cv.h:'')+'<br>'):playBadge(c)+'<br>')+
-      '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
+      '<span class="mc">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> <span class="livemc">'+fmt(lastMc)+'</span> '+pct(c.first_hit_mc,lastMc)+'</span>'+
       (c.peak_mc?('<br><span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span>'):'')+'</div></div>'+
       postGrad(c, c.play_exit_mc||c.first_hit_mc);
   }
   function liveRow(c,tk){
     var cv=conviction(tk);
+    var liveNow=(tk&&tk.length)? tk[tk.length-1].mc : c.last_mc;  // freshest MC on the tape
     return '<div class="row '+(cv?cv.cls:'')+'"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,22))+'</span> '+dex(c.token_address)+' '+pf(c.token_address)+'<br>'+
       '<span class="age">qualified '+ago(c.qualified_ms)+' ago</span><br>'+
       spark(tk)+' '+roc(tk)+' '+flow(tk)+'</div>'+
       '<div style="text-align:right">'+(cv?cv.h+' ':'')+'<span class="badge b-live">live</span><br>'+
-      '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="now">'+fmt(c.last_mc)+'</span> '+pct(c.entry_mc,c.last_mc)+'</span><br>'+
+      '<span class="mc">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> <span class="livemc">'+fmt(liveNow)+'</span> '+pct(c.entry_mc,liveNow)+'</span><br>'+
       '<span class="age">peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div></div>'+dexLine(c);
   }
   // Closed §1 trades read as SELLS, colored by P/L vs our entry: green if the
@@ -357,6 +382,18 @@ export const FEED_HTML = `<!doctype html>
        ' &nbsp;vs field '+fW+'/'+fN+(fPct!=null?(' &middot; '+fPct+'%'):'')+
        (go.n<10?' &middot; <span style="color:var(--faint)">building sample…</span>':''))
       : '<span style="color:var(--faint)">Forward ledger: no conviction-tagged coins have resolved yet — accumulating.</span>';
+    // BTC MACRO TIDE — slope from our own Chainlink regime feed (the live spot
+    // ticks sub-second via the Coinbase WS above). Entries into a red tide
+    // underperform (measured), so this is live enter/hold context.
+    if(d.btc){ var b=d.btc,
+      s15=(b.now&&b.m15)?((b.now-b.m15)/b.m15*100):null,
+      s1h=(b.now&&b.h1)?((b.now-b.h1)/b.h1*100):null,
+      tideEl=document.getElementById("btctide");
+      var t=(s15==null)?null:(s15>0.05?"green":(s15<-0.05?"red":"flat"));
+      if(t){ tideEl.className="tide tide-"+t;
+        tideEl.textContent=(t==="red")?"\\u25BC red tide":((t==="green")?"\\u25B2 green tide":"\\u25CF flat"); }
+      document.getElementById("btcslope").innerHTML=
+        (s15!=null?("15m "+sgn(s15)):"")+(s1h!=null?("  &middot;  1h "+sgn(s1h)):""); }
     var tk=d.ticks||{};
     // EARLY RADAR = live/unresolved only — what you'd actually enter. A trade
     // that has CONCLUDED graduates down to Recently Closed (below), where a
@@ -389,13 +426,34 @@ export const FEED_HTML = `<!doctype html>
     var R=document.getElementById("recent");
     R.innerHTML=closed.length? closed.map(function(x){ return x.h; }).join("") : '<div class="empty">—</div>';
   }
+  // LIVE BTC — sub-second spot straight from Coinbase's public ticker WS
+  // (keyless, pushes on every trade). Faster than bitbo's tiers (hourly free /
+  // 5s premium) — same real-time source, no middleman. The macro tide slope
+  // (15m/1h) still comes from our own Chainlink feed via /radar/candidates.
+  function sgn(p){ var c=p>=0?"#86efac":"#fca5a5";
+    return '<span style="color:'+c+'">'+(p>=0?"+":"")+p.toFixed(2)+'%</span>'; }
+  var btcLast=null, btcWS=null, btcRetry=0;
+  function connectBTC(){
+    var px=document.getElementById("btcpx"), conn=document.getElementById("btcconn");
+    try{ btcWS=new WebSocket("wss://ws-feed.exchange.coinbase.com"); }
+    catch(e){ conn.textContent="offline"; setTimeout(connectBTC, Math.min(30000,2000*Math.pow(2,btcRetry++))); return; }
+    btcWS.onopen=function(){ btcRetry=0; conn.textContent="\\u25CF live"; conn.className="btcconn on";
+      btcWS.send(JSON.stringify({type:"subscribe",channels:[{name:"ticker",product_ids:["BTC-USD"]}]})); };
+    btcWS.onmessage=function(m){ var d; try{ d=JSON.parse(m.data); }catch(e){ return; }
+      if(d.type==="ticker" && d.price){ var p=parseFloat(d.price);
+        px.textContent="$"+p.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+        px.style.color=(btcLast==null||p>=btcLast)?"#4ade80":"#f87171"; btcLast=p; } };
+    btcWS.onclose=function(){ conn.textContent="reconnecting\\u2026"; conn.className="btcconn";
+      setTimeout(connectBTC, Math.min(30000,2000*Math.pow(2,btcRetry++))); };
+    btcWS.onerror=function(){ try{ btcWS.close(); }catch(e){} };
+  }
   var lastData=null;
   function poll(){
     fetch("/radar/candidates",{cache:"no-store"}).then(function(r){return r.json();})
       .then(function(d){ lastData=d; render(d); }).catch(function(){});
   }
   document.getElementById("hideSkip").addEventListener("change",function(){ if(lastData) render(lastData); });
-  poll(); setInterval(poll,5000);
+  connectBTC(); poll(); setInterval(poll,5000);
 })();
 </script>
 </body></html>`;
