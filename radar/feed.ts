@@ -269,10 +269,19 @@ export const FEED_HTML = `<!doctype html>
     return '<span class="badge '+(up?'b-target':'b-stop')+'">sell '+pct(c.entry_mc,ex)+'</span>';
   }
   function recentRow(c){
-    return '<div class="row"><div><span class="sym">'+esc(c.symbol||"?")+'</span> '+
+    return '<div class="row"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
       '<span class="name">'+esc((c.name||"").slice(0,20))+'</span> '+dex(c.token_address)+'<br>'+
       '<span class="age">'+fmt(c.entry_mc)+' <span class="arw">&#8594;</span> peak '+fmt(c.peak_mc)+' '+pct(c.entry_mc,c.peak_mc)+'</span></div>'+
       '<div>'+sellBadge(c)+'</div></div>'+dexLine(c);
+  }
+  // A CONCLUDED §0 trade, formatted for Recently Closed: entry -> peak + the
+  // settled ladder badge (which agrees with the numbers now), plus the
+  // post-exit run line if it kept going. Belongs here, not in the live radar.
+  function earlyClosedRow(c){
+    return '<div class="row"><div>'+img(c.img)+'<span class="sym">'+esc(c.symbol||"?")+'</span> '+
+      '<span class="name">'+esc((c.name||"").slice(0,20))+'</span> '+pf(c.token_address)+'<br>'+
+      '<span class="age">'+fmt(c.first_hit_mc)+' <span class="arw">&#8594;</span> peak '+fmt(c.peak_mc)+' '+pct(c.first_hit_mc,c.peak_mc)+'</span></div>'+
+      '<div>'+playBadge(c)+'</div></div>'+postGrad(c, c.play_exit_mc||c.first_hit_mc);
   }
 
   function render(d){
@@ -292,17 +301,13 @@ export const FEED_HTML = `<!doctype html>
       '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' bell exits'+xm+'</span>'+
       (nT+nX>0?(' &middot; ladder rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
     var tk=d.ticks||{};
-    // FLOW GATE: classify live earlies, count them, and (optionally) hide SKIPs.
+    // EARLY RADAR = live/unresolved only — what you'd actually enter. A trade
+    // that has CONCLUDED graduates down to Recently Closed (below), where a
+    // done trade belongs — no more settled-vs-live number clashes up here.
     var hideSkip=document.getElementById("hideSkip").checked;
     var gc={in:0,weak:0,skip:0,wait:0};
     var shown=(d.early||[]).filter(function(c){
-      if(c.play_outcome!=null){
-        // DROP THE DEAD: a resolved coin that never profited AND never graduated
-        // is done — it falls off the map, freeing space (you watched it die live
-        // above). KEEP: winners (exit above entry) AND any coin that graduated —
-        // post-grad tracking wants those visible to show the run past our exit.
-        return c.play_exit_mc>c.first_hit_mc || c.graduated_ms!=null || c.dex_last_ms!=null;
-      }
+      if(c.play_outcome!=null) return false;           // concluded -> Recently Closed
       var r=flowRate(tk[c.token_address]);
       if(r==null){gc.wait++; return true;}
       if(r>2){gc.in++; return true;}
@@ -316,8 +321,16 @@ export const FEED_HTML = `<!doctype html>
     E.innerHTML=shown.length? shown.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';
     var L=document.getElementById("live");
     L.innerHTML=(d.live&&d.live.length)? d.live.map(function(c){ return liveRow(c,tk[c.token_address]); }).join("") : '<div class="empty">waiting for the next qualifier…</div>';
+    // RECENTLY CLOSED = concluded §0 trades (notable: won, graduated, or ran)
+    // merged with §1 closes, newest-close first. Flat dead duds don't clutter it.
+    var closed=(d.early||[])
+      .filter(function(c){ return c.play_outcome!=null &&
+        (c.play_exit_mc>c.first_hit_mc || c.graduated_ms!=null || c.dex_last_ms!=null); })
+      .map(function(c){ return {t:c.play_outcome_ms||c.first_hit_ms, h:earlyClosedRow(c)}; })
+      .concat((d.recent||[]).map(function(c){ return {t:c.outcome_ms||c.qualified_ms, h:recentRow(c)}; }))
+      .sort(function(a,b){ return (b.t||0)-(a.t||0); });
     var R=document.getElementById("recent");
-    R.innerHTML=(d.recent&&d.recent.length)? d.recent.map(recentRow).join("") : '<div class="empty">—</div>';
+    R.innerHTML=closed.length? closed.map(function(x){ return x.h; }).join("") : '<div class="empty">—</div>';
   }
   var lastData=null;
   function poll(){
