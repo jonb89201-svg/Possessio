@@ -129,6 +129,7 @@ export const FEED_HTML = `<!doctype html>
   <p class="sub" style="margin:-2px 0 8px">
     <span class="pb pb-go">&#9670; GO</span> = a <b>tracked entry hypothesis</b> — deep curve reserves (&ge;22 SOL) plus a deliberate ~2-tick climb into the band. Beat the field ~4&times; in-sample and in the unseen later half, but small sample — <b>the forward ledger judges it, not this label.</b> No magic exit exists: target / stop / time-stop only.
   </p>
+  <div id="convscore" class="sub" style="margin:-2px 0 10px"></div>
   <div id="live"><div class="empty">waiting for the next qualifier…</div></div>
 
   <h2>Recently closed</h2>
@@ -341,6 +342,20 @@ export const FEED_HTML = `<!doctype html>
       '§0 ledger: <span class="pct up">'+nT+' full ladders</span> &middot; '+
       '<span class="pct '+((ep.exit2m&&ep.exit2m.avg_mult>=1)?'up':'down')+'">'+nX+' bell exits'+xm+'</span>'+
       (nT+nX>0?(' &middot; ladder rate '+Math.round(100*nT/(nT+nX))+'%'):' &middot; accumulating…');
+    // CONVICTION FORWARD SCORECARD — the radar grading its own GO tag on coins
+    // the thresholds never saw (resolved only). GO vs the pooled field
+    // (slow+bot+thin). This is the honest out-of-sample the backtest owed.
+    var sc={}; (d.scorecard||[]).forEach(function(r){ sc[r.tag]=r; });
+    var go=sc.go||{n:0,win20:0}, fN=0, fW=0;
+    ["slow","bot","thin"].forEach(function(k){ if(sc[k]){ fN+=sc[k].n; fW+=sc[k].win20; } });
+    var goPct=go.n? Math.round(100*go.win20/go.n):null, fPct=fN? Math.round(100*fW/fN):null;
+    document.getElementById("convscore").innerHTML = (go.n||fN)?
+      ('<b>Forward ledger</b> &middot; frozen thresholds on coins the backtest never saw: '+
+       '<span class="pb pb-go">&#9670; GO</span> '+go.win20+'/'+go.n+
+       (goPct!=null?(' <span class="pct '+(goPct>=(fPct||0)?"up":"down")+'">'+goPct+'% hit 20k</span>'):'')+
+       ' &nbsp;vs field '+fW+'/'+fN+(fPct!=null?(' &middot; '+fPct+'%'):'')+
+       (go.n<10?' &middot; <span style="color:var(--faint)">building sample…</span>':''))
+      : '<span style="color:var(--faint)">Forward ledger: no conviction-tagged coins have resolved yet — accumulating.</span>';
     var tk=d.ticks||{};
     // EARLY RADAR = live/unresolved only — what you'd actually enter. A trade
     // that has CONCLUDED graduates down to Recently Closed (below), where a

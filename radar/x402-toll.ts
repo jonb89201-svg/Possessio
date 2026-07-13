@@ -132,6 +132,22 @@ export function buildTolledApp(env: Env) {
          FROM earlies WHERE play_outcome IS NOT NULL
         GROUP BY play_outcome`
     ).all();
+    // CONVICTION FORWARD SCORECARD (migration 0016): the radar grading its own
+    // entry hypothesis on coins the thresholds never saw. Only RESOLVED coins
+    // count — a concluded §0 play OR born >20min ago (past the run window) — so a
+    // still-cooking GO is not scored as a loss. peak = the realized max
+    // (post-grad dex_peak_mc if it ran on DEX, else the curve peak_mc).
+    const convResolvedBefore = Date.now() - 20 * 60_000;
+    const scorecard = await db.prepare(
+      `SELECT conv_tag AS tag, COUNT(*) AS n,
+              SUM(CASE WHEN COALESCE(dex_peak_mc, peak_mc, 0) >= 20000 THEN 1 ELSE 0 END) AS win20,
+              SUM(CASE WHEN conv_entry_mc > 0
+                        AND COALESCE(dex_peak_mc, peak_mc, 0) >= 2*conv_entry_mc THEN 1 ELSE 0 END) AS win2x
+         FROM earlies
+        WHERE conv_tag IS NOT NULL
+          AND (play_outcome IS NOT NULL OR first_hit_ms < ?1)
+        GROUP BY conv_tag`
+    ).bind(convResolvedBefore).all();
     // The oscillation tape for everything currently on screen. 25min covers
     // the longest possible early->qualify->track life; closed coins age out.
     const ticksRaw = await db.prepare(
@@ -147,6 +163,7 @@ export function buildTolledApp(env: Env) {
       recent: recent.results,
       early: early.results,
       earlyPlay: earlyPlay.results,
+      scorecard: scorecard.results,
       ticks,
       tally: tally.results,
       method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",

@@ -47,6 +47,18 @@ const ladderSoldFrac = (k: number) =>
   LADDER_FRACS.slice(0, k).reduce((s, f) => s + f, 0);
 const PLAY_EXIT_AGE_MS = 2 * 60_000;
 
+// CONVICTION forward self-check (migration 0016). The "bucket C" entry
+// hypothesis, stamped at the first-8k-crossing tick and graded later against
+// the realized peak. Frozen thresholds applied to coins the derivation never
+// saw = genuine forward validation. Thresholds mirror feed.ts conviction()
+// exactly; both read curve reserves (sol_reserves) so there is no cross-feed
+// artifact. Ledger-tunable (§7) — but freezing them is the whole point here.
+const CONV_BAND      = 7_500;   // the "~$8k crossing"
+const CONV_DEPTH_MIN = 22;      // floor: ZERO winners below this in the backtest
+const CONV_VEL_LO    = 10;      // bucket-C velocity band (deliberate ~2-tick climb)
+const CONV_VEL_HI    = 16;      // above = bot-spike; below CONV_VEL_LO = slow grind
+const CONV_STAMP_WINDOW_MS = 30 * 60_000; // only consider recently-born earlies
+
 function numOrNull(v: unknown): number | null {
   const n = typeof v === "string" ? parseFloat(v) : (v as number);
   return Number.isFinite(n) ? n : null;
@@ -266,6 +278,38 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   stmts.push(env.RADAR_DB.prepare(
     `DELETE FROM mc_ticks WHERE ms < ?1`
   ).bind(now - TICKS_KEEP_MS));
+
+  // (0.4) CONVICTION STAMP (forward self-check, migration 0016). The FIRST time
+  //       a recently-born watched early is seen at/above the ~$8k band, record
+  //       the conviction tag it earns AT THAT INSTANT — immutable, hindsight-
+  //       free (depth = curve reserves now; velocity = depth / ticks-since-
+  //       first-seen, tape rows INCLUDING this tick). Graded later in
+  //       /radar/candidates against the coin's realized peak. This is the
+  //       radar judging its own entry hypothesis on coins it hadn't seen when
+  //       the thresholds were set — the honest test the in-sample backtest owed.
+  const { results: unstamped } = await env.RADAR_DB.prepare(
+    `SELECT e.token_address,
+            (SELECT COUNT(*) FROM mc_ticks m WHERE m.token_address=e.token_address) AS nticks
+       FROM earlies e
+      WHERE e.conv_tag IS NULL AND e.first_hit_ms > ?1`
+  ).bind(now - CONV_STAMP_WINDOW_MS).all();
+  for (const e of unstamped as any[]) {
+    const addr = e.token_address as string;
+    const mc = mcOf(addr);
+    const depth = solNow.get(addr);
+    // wait until it's in-band AND we have a curve reserve read for the crossing
+    if (mc === null || mc < CONV_BAND || depth === undefined) continue;
+    const ticks = Number(e.nticks) + 1; // +1: this tick's tape row is in the pending batch
+    const vel = depth / ticks;
+    const tag = depth < CONV_DEPTH_MIN ? "thin"
+      : vel >= CONV_VEL_HI ? "bot"
+      : vel >= CONV_VEL_LO ? "go"
+      : "slow";
+    stmts.push(env.RADAR_DB.prepare(
+      `UPDATE earlies SET conv_tag=?2, conv_depth=?3, conv_vel=?4, conv_ms=?5, conv_entry_mc=?6
+         WHERE token_address=?1 AND conv_tag IS NULL`
+    ).bind(addr, tag, depth, vel, now, mc));
+  }
 
   // (0.5) §0 v3 LADDER scoring on the FREE 15s tape (ws=0 rows). The ratified
   //       ladder — buy $3.5k, scale out 50/25/12.5/12.5 @ 6/8/10/12k, remainder
