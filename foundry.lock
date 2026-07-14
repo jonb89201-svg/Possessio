@@ -1,4 +1,10 @@
 {
+  "lib/base-std": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "4658f1b7b54ccc61b036adc32830594018ea507e"
+    }
+  },
   "lib/chainlink-brownie-contracts": {
     "tag": {
       "name": "1.3.0",

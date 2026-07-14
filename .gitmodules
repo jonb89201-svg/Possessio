@@ -13,3 +13,6 @@
 [submodule "lib/hookmate"]
 	path = lib/hookmate
 	url = https://github.com/akshatmittal/hookmate
+[submodule "lib/base-std"]
+	path = lib/base-std
+	url = https://github.com/base/base-std

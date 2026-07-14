@@ -9,7 +9,9 @@ artifacts/
 # =========================
 # Dependencies
 # =========================
-lib/
+# NOTE: do NOT ignore lib/ — dependencies are git submodules (gitlinks are
+# tracked in-tree, submodule contents never are). Ignoring lib/ silently
+# blocked `git submodule add` / `forge install` for new deps (base-std).
 
 # =========================
 # Node (if any frontend tools)
