@@ -128,6 +128,46 @@ async function fetchDexMc(
   return { mc, volM5 };
 }
 
+// PER-MINT CURVE READ — the fix for the frozen-MC gap (2026-07-14). The
+// newest-first list window does NOT contain a coin past age ~5min (documented
+// EMPIRICAL LIMIT above) and DexScreener has not indexed a still-on-curve coin
+// that young, so between those two an on-screen coin had NO live MC source and
+// its display froze at entry (DBCoin sat at $7.2k while the real curve was
+// <$100). pump.fun's per-mint detail route returns the live reserves for ANY
+// mint at ANY age — the one source that spans the gap. Same host as the feed
+// (origin derived, no new var), same object shape, same curveMcUsd math.
+//
+// SAFE BY CONSTRUCTION: only called for coins that BOTH the window and
+// DexScreener missed, so it can never regress a coin those already cover; on a
+// bad status/shape it returns nothing and the caller is exactly as it is today.
+// GRADUATED coins are skipped (complete/raydium_pool) — their curve is drained,
+// so DexScreener's real-DEX pair stays authoritative for them.
+async function fetchCurveMcById(
+  env: WatcherEnv, addrs: string[], solUsd: number | null,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  let base: string;
+  try { base = new URL(env.PUMPFUN_FEED_URL).origin + "/coins/"; } catch { return out; }
+  for (const a of addrs) {
+    let res: Response;
+    try {
+      res = await tfetch(base + a, {
+        headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+      });
+    } catch { continue; } // one hung mint skips, never freezes the pass
+    if (!res.ok) continue;
+    let it: any;
+    try { it = await res.json(); } catch { continue; }
+    if (!it || typeof it !== "object") continue;
+    if (it.complete === true || it.raydium_pool) continue; // graduated -> DexScreener owns it
+    const mc = curveMcUsd(it, solUsd) ?? numOrNull(it.usd_market_cap ?? it.marketCapUsd);
+    if (mc !== null) out.set(a, mc);
+  }
+  return out;
+}
+
+const CURVE_BYID_CAP = 25; // bound per-mint requests/pass (1 req each, no batch route)
+
 function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number, lastMc: number | null) {
   return env.RADAR_DB.prepare(
     `UPDATE candidates
@@ -281,7 +321,18 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const trackAddrs = (tapeSet as any[]).map((r) => r.token_address as string);
   const dex = trackAddrs.length ? await fetchDexMc(env, trackAddrs)
     : { mc: new Map<string, number>(), volM5: new Map<string, number>() };
-  const mcOf = (a: string): number | null => dex.mc.get(a) ?? mcNow.get(a) ?? null;
+  // GAP FILL (2026-07-14): the coins BOTH the window and DexScreener miss are the
+  // aged-on-curve tail that was freezing at entry. Read each one's live curve MC
+  // per-mint. Only these (never the covered set), capped so a big on-screen set
+  // can't blow the request budget — spillover falls back to today's behavior.
+  const missing = trackAddrs.filter((a) => dex.mc.get(a) === undefined && mcNow.get(a) === undefined);
+  if (missing.length > CURVE_BYID_CAP) {
+    console.warn(`screen mc-gap: ${missing.length} coins uncovered, per-mint curve read capped at ${CURVE_BYID_CAP}`);
+  }
+  const byId = missing.length
+    ? await fetchCurveMcById(env, missing.slice(0, CURVE_BYID_CAP), solUsd)
+    : new Map<string, number>();
+  const mcOf = (a: string): number | null => dex.mc.get(a) ?? mcNow.get(a) ?? byId.get(a) ?? null;
 
   for (const r of tapeSet as any[]) {
     const addr = r.token_address as string;

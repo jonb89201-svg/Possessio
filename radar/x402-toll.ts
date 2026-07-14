@@ -199,6 +199,41 @@ export function buildTolledApp(env: Env) {
     const r = await stub.fetch("https://pumptape/status");
     return new Response(r.body, { headers: { "content-type": "application/json" } });
   });
+  // MC-FEED VERIFY-FIRST surface (2026-07-14): fetch pump.fun's per-mint detail
+  // route FROM THE EDGE (the sandbox is egress-blocked; the worker is not) and
+  // echo the raw status + curve fields. This is how the frozen-MC fix is proven
+  // through the deployment — open /radar/mc-probe?mint=<addr> and read the shape.
+  // Public single-mint pump.fun data only; no watching set, no method params.
+  app.get("/radar/mc-probe", async (c) => {
+    const mint = c.req.query("mint");
+    if (!mint) return c.json({ error: "mint query param required" }, 400);
+    let base: string;
+    try { base = new URL((c.env as any).PUMPFUN_FEED_URL).origin + "/coins/"; }
+    catch { return c.json({ error: "PUMPFUN_FEED_URL unset/invalid" }, 500); }
+    let r: Response;
+    try {
+      r = await fetch(base + mint, {
+        headers: { accept: "application/json", "user-agent": "possessio-radar/0.4" },
+      });
+    } catch (e) { return c.json({ mint, endpoint: base + mint, error: String(e) }); }
+    let body: any = null;
+    try { body = await r.json(); } catch { /* non-JSON */ }
+    const f = (k: string) => (body && body[k] !== undefined ? body[k] : null);
+    return c.json({
+      mint,
+      endpoint: base + mint,
+      http_status: r.status,
+      ok: r.ok,
+      is_object: !!body && typeof body === "object",
+      complete: f("complete"),
+      raydium_pool: f("raydium_pool"),
+      usd_market_cap: f("usd_market_cap"),
+      has_reserves: !!(f("virtual_sol_reserves") && f("virtual_token_reserves") && f("total_supply")),
+      virtual_sol_reserves: f("virtual_sol_reserves"),
+      virtual_token_reserves: f("virtual_token_reserves"),
+      total_supply: f("total_supply"),
+    });
+  });
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
     const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_peak_mc, dex_liq_usd,
