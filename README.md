@@ -299,7 +299,7 @@ forge build 2>&1 | tee compile.txt
 forge test -vv | tee report.txt
 ```
 
-(The `forge install` lines are only needed if you didn't clone recursively -- each dependency is already a pinned submodule in `.gitmodules`.) `base/base-std` provides the B20 / PolicyRegistry interfaces imported by `PossessioWhiskyMarket.sol`. POSSESSIO V3 uses CREATE3 sender-locked salt mining (`script/MineCreate3Salt.s.sol`) so the hook address is bytecode-independent and reusable across launches. The full operational sequence and rationale are documented in the MIB operating manual and its amendments, which are maintained privately and not yet committed to this repo.
+(The `forge install` lines are only needed if you didn't clone recursively -- each dependency is already a pinned submodule in `.gitmodules`.) `base/base-std` provides the B20 / PolicyRegistry interfaces imported by `PossessioWhiskyMarket.sol`. POSSESSIO V3 uses CREATE3 sender-locked salt mining (`script/MineCreate3Salt.s.sol`) so the hook address is bytecode-independent and reusable across launches. The full operational sequence and rationale are documented in the MIB operating manual and its amendments — committed at [`laws/MIB.md`](laws/MIB.md) with amendments `laws/MIB-AMD-*.md` (ratified into the public record July 14, 2026).
 
 For surgical test report queries on mobile: `grep -E "Suite result|tests passed" report.txt | tail -30`.
 
@@ -316,8 +316,9 @@ For surgical test report queries on mobile: `grep -E "Suite result|tests passed"
 - [`RULEBOOK_TradingAgent.md`](RULEBOOK_TradingAgent.md) / [`SPEC_CrossChainTradingMCP.md`](SPEC_CrossChainTradingMCP.md) -- trading-agent governance and spec
 - [`HANDOFF_testnet_pool.md`](HANDOFF_testnet_pool.md), [`RADAR_HANDOFF.md`](RADAR_HANDOFF.md), [`RADAR_FIX_R1R2_handoff.md`](RADAR_FIX_R1R2_handoff.md), [`FUEL_COMPUTER_SPEC.md`](FUEL_COMPUTER_SPEC.md), [`SESSION_LEDGER_20260706.md`](SESSION_LEDGER_20260706.md) -- session handoffs and ledgers
 - [`AUDIT_20260714.md`](AUDIT_20260714.md) -- full-repo audit record
+- [`laws/MIB.md`](laws/MIB.md) -- MIB (Mobile Intelligence Bridging) Operating Manual, with amendments [`laws/MIB-AMD-2026-05-03-01.md`](laws/MIB-AMD-2026-05-03-01.md), [`laws/MIB-AMD-2026-05-16-01.md`](laws/MIB-AMD-2026-05-16-01.md), [`laws/MIB-AMD-2026-05-20-01.md`](laws/MIB-AMD-2026-05-20-01.md), [`laws/MIB-AMD-2026-07-14-01.md`](laws/MIB-AMD-2026-07-14-01.md) -- committed to the public record July 14, 2026
 
-**Maintained privately (not yet committed):** `POSSESSIO_Spec.md` (canonical V2 stack specification, source-cited, with business purpose and inventor attributions), the merchant payments product specification, the whitepaper / L.A.T.E. framework / council agreements / amendment records / production-arc documentation, and the MIB (Mobile Intelligence Bridging) Operating Manual with its amendments.
+**Maintained privately (not yet committed):** `POSSESSIO_Spec.md` (canonical V2 stack specification, source-cited, with business purpose and inventor attributions), the merchant payments product specification, and the whitepaper / L.A.T.E. framework / production-arc documentation.
 
 ---
 
