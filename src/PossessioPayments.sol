@@ -6,6 +6,21 @@
 //   M-1 (C):      GUARDIAN_ROLE gains setWithdrawalsFrozen + guardianCancelEmergency;
 //                 withdrawDAI and executeEmergencyWithdraw gated on withdrawalsFrozen.
 //   L-1:          Unauthorized / InvalidLimit replace misleading InvalidAddress.
+// v2.4.4 (2026-07-14) — audit remediation (AUDIT_20260714):
+//   C-2 (MEDIUM): compromised-key blast radius. sendUSDC / sendCbETH /
+//                 redeemMorpho let OWNER move full balances in ONE call while
+//                 only the DAI leg had a rolling daily limit. All three exit
+//                 paths are now subject to the same rolling 24h-window
+//                 machinery as withdrawDAI: per-asset caps (usdcDailyLimit in
+//                 USDC 6-dec — shared by sendUSDC and redeemMorpho's USDC
+//                 output — and cbEthDailyLimit in cbETH 18-dec), asymmetric
+//                 adjustment (decrease instant, increase behind LIMIT_DELAY).
+//                 Moves beyond the daily caps remain possible ONLY via the
+//                 pre-existing 7-day emergency-withdraw timelock path.
+//   C-7 (INFO):   CHAINLINK_DAI doc comments said "DAI/ETH"; the deployed feed
+//                 is DAI/USD (0x591e…C78F, Base) and only FRESHNESS is ever
+//                 read (_isDaiOracleFresh gates the ~1:1 USDC→DAI refill).
+//                 Comments aligned with reality; no behavior change.
 //   Design-1:     Secure-Context-Handshake REMOVED (redundant over internal
 //                 visibility). Extracted to PRIMITIVE_NOTE_sanctioned_context_handshake.md
 //                 for future hook/bridge/call-guard primitives. Revert reasons
@@ -205,7 +220,9 @@ pragma solidity ^0.8.24;
  *   Bitwise Morpho USDC Vault:  <SET PER DEPLOYMENT — mirror L1Anchor.BITWISE_MORPHO_VAULT>
  *   Chainlink cbETH/ETH:        0x806b4Ac04501c29769051e42783cF04dCE41440b
  *                               (18-decimal exchange-rate feed; 24h heartbeat)
- *   Chainlink DAI/ETH:          (set per deployment, 8-decimal price feed)
+ *   Chainlink DAI/USD:          0x591e79239a7d679378eC8c847e5038150364C78F
+ *                               (8-decimal price feed; C-7: freshness-only read —
+ *                                gates the ~1:1 USDC→DAI refill, price unused)
  */
 
 import {IERC20}          from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -265,7 +282,7 @@ interface IAerodromeSlipstreamRouter {
 /// @notice Chainlink oracle feed for staleness validation.
 ///         decimals() added in v2.3 for constructor-guard decimal-class
 ///         verification: cbETH/ETH is 18-decimal (exchange-rate class);
-///         DAI/ETH is 8-decimal (price-feed class). The asymmetry is
+///         DAI/USD is 8-decimal (price-feed class). The asymmetry is
 ///         structural — Chainlink classifies yield-bearing-asset rate
 ///         feeds at native 18-decimal precision and legacy price feeds
 ///         at 8-decimal. Constructor guard enforces alignment at deploy.
@@ -384,9 +401,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     uint256 public constant SWEEP_SLIPPAGE_BPS = 9000;
     uint256 private constant SWEEP_SLIPPAGE_DENOM = 10000;
 
-    /// @notice Legacy staleness window retained for the DAI/ETH price feed
-    ///         and any other 8-decimal Chainlink feed in the contract surface.
-    uint256 public constant ORACLE_STALE    = 3600;       // 1 hour — DAI/ETH and similar
+    /// @notice Legacy staleness window retained for the DAI/USD price feed
+    ///         (freshness-only read — see CHAINLINK_DAI) and any other
+    ///         8-decimal Chainlink feed in the contract surface.
+    uint256 public constant ORACLE_STALE    = 3600;       // 1 hour — DAI/USD and similar 8-dec feeds
     uint256 public constant LIMIT_DELAY     = 24 hours;   // daily limit increase delay
     uint256 public constant WINDOW_SIZE     = 24 hours;   // daily withdrawal window
 
@@ -400,7 +418,12 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     IAerodromeSlipstreamRouter public immutable AERO_ROUTER;  // v2.3 — Aerodrome Slipstream (WETH→cbETH)
     IMorphoVault     public immutable MORPHO_VAULT;  // v2.4 — Bitwise Morpho Blue USDC vault
     IChainlinkFeed   public immutable CHAINLINK;       // cbETH/ETH — 18-decimal exchange-rate feed
-    IChainlinkFeed   public immutable CHAINLINK_DAI;   // DAI/ETH — 8-decimal price feed
+    /// @notice C-7 fix (audit 2026-07-14): this is the DAI/USD 8-decimal feed
+    ///         (Base mainnet 0x591e…C78F, per DeployPayments.s.sol) — earlier
+    ///         comments said "DAI/ETH". Only FRESHNESS is consumed: the answer
+    ///         never enters any math; _isDaiOracleFresh uses a healthy round as
+    ///         the go/no-go signal for the ~1:1-peg USDC→DAI reserve refill.
+    IChainlinkFeed   public immutable CHAINLINK_DAI;   // DAI/USD — 8-decimal price feed (freshness-only)
     IChainlinkFeed   public immutable CHAINLINK_USDC_USD; // v2.4.2 — USDC/USD — 8-decimal price feed (Base mainnet 0x7e86…2bc6B)
     IChainlinkFeed   public immutable CHAINLINK_ETH_USD;  // v2.4.2 — ETH/USD — 8-decimal price feed (Base mainnet 0x7104…Bb70)
     ILSTExchangeRate public immutable LST_RATES;
@@ -465,6 +488,33 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         uint256 executeAfter;
     }
     QueuedLimit public queuedLimitIncrease;
+
+    // ─── C-2 (audit 2026-07-14): per-asset rolling exit limits ─────────────
+    // The daily-limit protection used to cover ONLY the DAI leg; sendUSDC,
+    // sendCbETH and redeemMorpho let a compromised OWNER key drain their full
+    // balances in one call. Each exit path now consumes a per-asset rolling
+    // 24h window (WINDOW_SIZE), mirroring dailyLimit/dailyWithdrawn/windowStart
+    // exactly. USDC-denominated exits — sendUSDC AND redeemMorpho's USDC
+    // output — share usdcDailyLimit; sendCbETH consumes cbEthDailyLimit.
+    // 0 = lockdown (same semantics as dailyLimit). Moves beyond a daily cap
+    // remain possible ONLY via the 7-day emergency-withdraw timelock path.
+    uint256 public usdcDailyLimit;       // max USDC out per 24h window (6-dec)
+    uint256 public usdcDailyWithdrawn;   // USDC out in current window
+    uint256 public usdcWindowStart;      // start of current USDC 24h window
+    uint256 public cbEthDailyLimit;      // max cbETH out per 24h window (18-dec)
+    uint256 public cbEthDailyWithdrawn;  // cbETH out in current window
+    uint256 public cbEthWindowStart;     // start of current cbETH 24h window
+
+    /// @notice C-2 — asset selector for the per-asset limit-adjustment
+    ///         machinery (the DAI leg keeps its original dedicated functions
+    ///         for ABI stability).
+    enum DailyLimitAsset { USDC, CBETH }
+
+    /// @notice C-2 — queued per-asset limit increases, keyed by
+    ///         uint8(DailyLimitAsset). Same asymmetric pattern as
+    ///         queuedLimitIncrease: decrease instant, increase behind
+    ///         LIMIT_DELAY so a stolen key cannot raise a cap and drain.
+    mapping(uint8 => QueuedLimit) public queuedAssetLimitIncrease;
 
     // Timelock queues — matching UCR pattern
     mapping(bytes32 => uint256) public timelockQueue;
@@ -533,6 +583,12 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event DailyLimitIncreaseQueued(uint256 newLimit, uint256 executeAfter);
     event DailyLimitIncreaseExecuted(uint256 newLimit);
     event DailyLimitIncreaseCancelled();
+
+    // C-2 — per-asset exit-limit events (asset = uint8(DailyLimitAsset))
+    event AssetDailyLimitDecreased(uint8 indexed asset, uint256 newLimit);
+    event AssetDailyLimitIncreaseQueued(uint8 indexed asset, uint256 newLimit, uint256 executeAfter);
+    event AssetDailyLimitIncreaseExecuted(uint8 indexed asset, uint256 newLimit);
+    event AssetDailyLimitIncreaseCancelled(uint8 indexed asset);
 
     // Treasury Gauge events
     event TreasuryGaugeUpdated(uint256 totalEthEquivalent);
@@ -631,11 +687,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      * @param aeroRouter_     Aerodrome Slipstream Router address on Base (v2.3)
      * @param morphoVault_    Bitwise Morpho Blue USDC vault address on Base (v2.4)
      * @param chainlink_      Chainlink cbETH/ETH feed address on Base (18-decimal)
-     * @param chainlinkDai_   Chainlink DAI/ETH feed address on Base (8-decimal)
+     * @param chainlinkDai_   Chainlink DAI/USD feed address on Base (8-decimal, freshness-only)
      * @param lstRates_       Immutable LSTExchangeRate singleton address
      * @param minSwapBatch_   Minimum USDC required before sweep allowed
      * @param daiCeiling_     Target DAI reserve (merchant's operating buffer). 0 = opt out.
      * @param dailyLimit_     Max DAI withdrawable per 24h window. 0 = lockdown.
+     * @param usdcDailyLimit_  C-2 — Max USDC exit per 24h window (sendUSDC +
+     *                         redeemMorpho USDC output, 6-dec). 0 = lockdown.
+     * @param cbEthDailyLimit_ C-2 — Max cbETH exit per 24h window (sendCbETH,
+     *                         18-dec). 0 = lockdown.
      */
     /// @notice v2.4.2 — Struct-input deployment parameters.
     ///         Matches PossessioHook.DeployParams pattern; eliminates stack-too-deep
@@ -653,13 +713,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         address aeroRouter;
         address morphoVault;
         address chainlink;          // cbETH/ETH 18-dec exchange-rate feed
-        address chainlinkDai;       // DAI/ETH 8-dec price feed
+        address chainlinkDai;       // DAI/USD 8-dec price feed (C-7: freshness-only read)
         address chainlinkUsdcUsd;   // v2.4.2 — USDC/USD 8-dec price feed
         address chainlinkEthUsd;    // v2.4.2 — ETH/USD 8-dec price feed
         address lstRates;
         uint256 minSwapBatch;
         uint256 daiCeiling;
         uint256 dailyLimit;
+        uint256 usdcDailyLimit;     // C-2 — 24h cap on USDC exits (sendUSDC + redeemMorpho), 6-dec
+        uint256 cbEthDailyLimit;    // C-2 — 24h cap on cbETH exits (sendCbETH), 18-dec
     }
 
     constructor(DeployParams memory p) {
@@ -679,7 +741,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
 
         // ─── Decimal-class validation (v2.3 defense-in-depth + v2.4.2 extension) ───
         // cbETH/ETH must be 18-decimal exchange-rate feed (Chainlink yield-bearing-asset class).
-        // DAI/ETH must be 8-decimal price feed (Chainlink standard price-feed class).
+        // DAI/USD must be 8-decimal price feed (Chainlink standard price-feed class; freshness-only read).
         // USDC/USD and ETH/USD must both be 8-decimal price feeds (cast-verified 2026-05-27).
         // Asymmetric requirement reflects Chainlink's feed-class taxonomy.
         if (IChainlinkFeed(p.chainlink).decimals()        != 18) revert InvalidAddress();
@@ -704,6 +766,13 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         daiCeiling   = p.daiCeiling;
         dailyLimit   = p.dailyLimit;
         windowStart  = block.timestamp;
+
+        // C-2 (audit 2026-07-14) — per-asset exit limits, mirroring the DAI
+        // rolling-window machinery. 0 = lockdown, same as dailyLimit.
+        usdcDailyLimit   = p.usdcDailyLimit;
+        cbEthDailyLimit  = p.cbEthDailyLimit;
+        usdcWindowStart  = block.timestamp;
+        cbEthWindowStart = block.timestamp;
 
         // v2.4 — Dual-acquisition baseline: 50% cbETH, 50% Morpho USDC.
         // Council-ratified merchant-default per historical Claude seats.
@@ -1287,6 +1356,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @notice Send idle USDC out of the contract to any address.
     /// @dev Operational exit for USDC that is sitting in the contract (e.g. a
     ///      payment received but not yet swept). Owner-gated, reentrancy-safe.
+    ///      C-2 (audit 2026-07-14): subject to the rolling usdcDailyLimit
+    ///      window (shared with redeemMorpho's USDC output) — a compromised
+    ///      OWNER key can no longer drain the USDC balance in one call. Larger
+    ///      exits go through the 7-day emergency-withdraw timelock.
     /// @param amount USDC amount (6-dec) to transfer.
     /// @param to     Recipient address.
     function sendUSDC(uint256 amount, address to)
@@ -1295,6 +1368,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (withdrawalsFrozen) revert WithdrawalsFrozen();
         if (to == address(0))  revert InvalidAddress();
         if (amount == 0)       revert ZeroAmount();
+
+        _consumeUsdcDailyLimit(amount);   // C-2
 
         USDC.safeTransfer(to, amount);
         emit USDCSent(msg.sender, amount, to, block.timestamp);
@@ -1305,6 +1380,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///      on Base is a bridge token without native redemption). This exit
     ///      transfers the cbETH to the owner, who unwinds it on a DEX (e.g.
     ///      Aerodrome) themselves. Owner-gated, reentrancy-safe.
+    ///      C-2 (audit 2026-07-14): subject to the rolling cbEthDailyLimit
+    ///      window — the yield-bearing treasury can no longer be drained in
+    ///      one call by a compromised OWNER key. Larger exits go through the
+    ///      7-day emergency-withdraw timelock.
     /// @param amount cbETH amount (18-dec) to transfer.
     /// @param to     Recipient address.
     function sendCbETH(uint256 amount, address to)
@@ -1313,6 +1392,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (withdrawalsFrozen) revert WithdrawalsFrozen();
         if (to == address(0))  revert InvalidAddress();
         if (amount == 0)       revert ZeroAmount();
+
+        _consumeCbEthDailyLimit(amount);  // C-2
 
         CBETH.safeTransfer(to, amount);
         emit CbETHSent(msg.sender, amount, to, block.timestamp);
@@ -1324,6 +1405,13 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///      and sends that USDC directly to `to`. The contract is both the share
     ///      owner and the redemption initiator, so owner == address(this).
     ///      Owner-gated, reentrancy-safe.
+    ///      C-2 (audit 2026-07-14): the redeemed USDC counts against the same
+    ///      rolling usdcDailyLimit window as sendUSDC (a Morpho redemption IS a
+    ///      USDC exit — sharing the cap closes the split-path drain). The limit
+    ///      is consumed AFTER the redeem so the check runs on the vault's actual
+    ///      output, not an estimate; an over-limit redemption reverts atomically
+    ///      (nonReentrant + revert unwinds the redeem). Larger unwinds go
+    ///      through the 7-day emergency-withdraw timelock.
     /// @param shares Vault shares to redeem.
     /// @param to     Recipient of the resulting USDC.
     /// @return usdcOut The USDC amount returned by the vault.
@@ -1339,6 +1427,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         // burning from this contract's share balance.
         usdcOut = MORPHO_VAULT.redeem(shares, to, address(this));
         if (usdcOut == 0) revert ZeroOutput();
+
+        _consumeUsdcDailyLimit(usdcOut);  // C-2 — post-check on verified output
 
         emit MorphoRedeemed(msg.sender, shares, usdcOut, to, block.timestamp);
     }
@@ -1404,6 +1494,78 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit DailyLimitIncreaseCancelled();
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    //          C-2: PER-ASSET EXIT LIMITS (USDC / cbETH — audit 2026-07-14)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Decrease a per-asset daily exit limit. Applies immediately —
+     *         tightening security is always instant (mirrors decreaseDailyLimit).
+     */
+    function decreaseAssetDailyLimit(DailyLimitAsset asset, uint256 newLimit)
+        external onlyRole(OWNER_ROLE)
+    {
+        if (asset == DailyLimitAsset.USDC) {
+            if (newLimit >= usdcDailyLimit) revert InvalidLimit(); // must be lower
+            usdcDailyLimit = newLimit;
+        } else {
+            if (newLimit >= cbEthDailyLimit) revert InvalidLimit(); // must be lower
+            cbEthDailyLimit = newLimit;
+        }
+        emit AssetDailyLimitDecreased(uint8(asset), newLimit);
+    }
+
+    /**
+     * @notice Queue an increase to a per-asset daily exit limit. LIMIT_DELAY
+     *         (24h) before it takes effect. Asymmetric timelock: decreases are
+     *         instant, increases delayed — a compromised key cannot raise a cap
+     *         and immediately drain (mirrors queueDailyLimitIncrease).
+     */
+    function queueAssetDailyLimitIncrease(DailyLimitAsset asset, uint256 newLimit)
+        external onlyRole(OWNER_ROLE)
+    {
+        uint256 current = asset == DailyLimitAsset.USDC ? usdcDailyLimit : cbEthDailyLimit;
+        if (newLimit <= current) revert InvalidLimit(); // must be higher
+        queuedAssetLimitIncrease[uint8(asset)] = QueuedLimit({
+            newLimit: newLimit,
+            executeAfter: block.timestamp + LIMIT_DELAY
+        });
+        emit AssetDailyLimitIncreaseQueued(uint8(asset), newLimit, block.timestamp + LIMIT_DELAY);
+    }
+
+    /**
+     * @notice Execute a queued per-asset limit increase after LIMIT_DELAY elapsed.
+     */
+    function executeAssetDailyLimitIncrease(DailyLimitAsset asset)
+        external onlyRole(OWNER_ROLE)
+    {
+        QueuedLimit memory q = queuedAssetLimitIncrease[uint8(asset)];
+        if (q.executeAfter == 0)              revert NoIncreaseQueued();
+        // LIMIT_DELAY is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
+
+        if (asset == DailyLimitAsset.USDC) {
+            usdcDailyLimit = q.newLimit;
+        } else {
+            cbEthDailyLimit = q.newLimit;
+        }
+        delete queuedAssetLimitIncrease[uint8(asset)];
+
+        emit AssetDailyLimitIncreaseExecuted(uint8(asset), q.newLimit);
+    }
+
+    /**
+     * @notice Cancel a queued per-asset limit increase. Applies immediately.
+     */
+    function cancelAssetDailyLimitIncrease(DailyLimitAsset asset)
+        external onlyRole(OWNER_ROLE)
+    {
+        if (queuedAssetLimitIncrease[uint8(asset)].executeAfter == 0) revert NoIncreaseQueued();
+        delete queuedAssetLimitIncrease[uint8(asset)];
+        emit AssetDailyLimitIncreaseCancelled(uint8(asset));
+    }
+
     /**
      * @notice Roll the daily withdrawal window if 24h has elapsed since start.
      *         Internal — called from withdrawDAI to reset counter on window boundary.
@@ -1415,6 +1577,39 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
             windowStart = block.timestamp;
             dailyWithdrawn = 0;
         }
+    }
+
+    /**
+     * @notice C-2 — roll + consume the rolling USDC exit window. Shared by
+     *         sendUSDC and redeemMorpho (whose exit value IS USDC), so the two
+     *         paths cannot be combined to exceed the cap. Mirrors withdrawDAI's
+     *         _rollWindowIfNeeded + check + accumulate sequence in one place.
+     *         Reverts DailyLimitExceeded when `amount` would breach the window.
+     */
+    function _consumeUsdcDailyLimit(uint256 amount) internal {
+        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= usdcWindowStart + WINDOW_SIZE) {
+            usdcWindowStart = block.timestamp;
+            usdcDailyWithdrawn = 0;
+        }
+        if (usdcDailyWithdrawn + amount > usdcDailyLimit) revert DailyLimitExceeded();
+        usdcDailyWithdrawn += amount;
+    }
+
+    /**
+     * @notice C-2 — roll + consume the rolling cbETH exit window (sendCbETH).
+     *         Reverts DailyLimitExceeded when `amount` would breach the window.
+     */
+    function _consumeCbEthDailyLimit(uint256 amount) internal {
+        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= cbEthWindowStart + WINDOW_SIZE) {
+            cbEthWindowStart = block.timestamp;
+            cbEthDailyWithdrawn = 0;
+        }
+        if (cbEthDailyWithdrawn + amount > cbEthDailyLimit) revert DailyLimitExceeded();
+        cbEthDailyWithdrawn += amount;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1449,8 +1644,13 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         This closes the compromised-key bypass where attacker could queue
      *         emergency withdrawal of full DAI reserve and drain in one transaction
      *         after the 7-day delay.
-     *         Other tokens (cbETH) are not subject to the daily limit on the
-     *         emergency path (7-day timelock is their full protection).
+     *         Other tokens (cbETH, USDC, Morpho vault shares) are not subject
+     *         to their daily limits on the emergency path (7-day timelock is
+     *         their full protection). C-2 (audit 2026-07-14): this is the
+     *         DELIBERATE escape hatch — the operational exits (sendUSDC,
+     *         sendCbETH, redeemMorpho) are daily-capped, so any move beyond a
+     *         daily cap must come through this 7-day queue, which the Guardian
+     *         can freeze and cancel.
      */
     function executeEmergencyWithdraw(address token, address to)
         external onlyRole(OWNER_ROLE) nonReentrant
@@ -1642,6 +1842,34 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         }
         if (dailyWithdrawn >= dailyLimit) return 0;
         return dailyLimit - dailyWithdrawn;
+    }
+
+    /**
+     * @notice C-2 — remaining USDC exit allowance (sendUSDC + redeemMorpho) in
+     *         the current 24h window. Full limit if the window has rolled over.
+     */
+    function usdcDailyRemaining() external view returns (uint256) {
+        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= usdcWindowStart + WINDOW_SIZE) {
+            return usdcDailyLimit;
+        }
+        if (usdcDailyWithdrawn >= usdcDailyLimit) return 0;
+        return usdcDailyLimit - usdcDailyWithdrawn;
+    }
+
+    /**
+     * @notice C-2 — remaining cbETH exit allowance (sendCbETH) in the current
+     *         24h window. Full limit if the window has rolled over.
+     */
+    function cbEthDailyRemaining() external view returns (uint256) {
+        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp >= cbEthWindowStart + WINDOW_SIZE) {
+            return cbEthDailyLimit;
+        }
+        if (cbEthDailyWithdrawn >= cbEthDailyLimit) return 0;
+        return cbEthDailyLimit - cbEthDailyWithdrawn;
     }
 
     /**

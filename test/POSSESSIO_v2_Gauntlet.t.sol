@@ -369,9 +369,17 @@ contract POSSESSIOv2Gauntlet is Test {
 
         v3Router.setDAIReturn(1 * 1e18);
 
-        // v2.6.1 — Pre-fund aeroRouter with WETH for harvest-direction returns
-        // and configure default 1:1 swap ratio at healthy peg.
-        aeroRouter.setCbEthReturn(1 ether);
+        // v2.6.1 — Pre-fund aeroRouter with WETH for harvest-direction returns.
+        // C-1 (audit 2026-07-14): the mock returns a FIXED cbETH amount per swap,
+        // so set it to the ORACLE-FAIR amount for this suite's standard route
+        // (_fundAccumulator(1 ether) → toStaking = 0.75 ether at the 0.98e18
+        // peg). The old flat 1-ether return was a phantom ~0.23 ETH bonus fill
+        // which, under value-based harvest accounting, would surface as instant
+        // harvestable "excess" and distort every principal-erosion assertion.
+        // +1 wei rounds up so floor(cbRet * rate / 1e18) == 0.75 ether exactly:
+        // a fresh deploy carries zero phantom excess.
+        uint256 fairCbReturn = (0.75 ether * 1e18) / uint256(980_000_000_000_000_000) + 1;
+        aeroRouter.setCbEthReturn(fairCbReturn);
         vm.deal(address(this), 100 ether);
         weth.deposit{value: 50 ether}();
         weth.transfer(address(aeroRouter), 50 ether);

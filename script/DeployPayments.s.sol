@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // BUILD-PROOF: DEPLOY_PAYMENTS_V1 - deploys PossessioPayments to Base mainnet.
-// All 16 DeployParams are cast-verified Base mainnet values (the 4 feeds all
+// All 18 DeployParams are cast-verified Base mainnet values (the 4 feeds all
 // validated by the certified fork test - a clean deploy proves every address).
 // lstRates is the LSTExchangeRate already deployed + certified at
 // 0xDDb75e974d99FcF95E241adbFD376861c47a8548.
@@ -40,6 +40,12 @@ contract DeployPayments is Script {
     uint256 constant MIN_SWAP_BATCH = 100_000000;   // 100 USDC (6-dec)
     uint256 constant DAI_CEILING    = 10000e18;      // 10,000 DAI (18-dec)
     uint256 constant DAILY_LIMIT    = 50000e18;      // 50,000 DAI/24h (18-dec)
+    // C-2 (audit 2026-07-14) — per-asset exit caps, USD-parity with DAILY_LIMIT:
+    //   USDC:  50,000 USDC/24h covers sendUSDC + redeemMorpho's USDC output.
+    //   cbETH: 20 cbETH/24h (~$50k at ~$2.5k/ETH-equivalent) covers sendCbETH.
+    // Larger exits go through the 7-day emergency-withdraw timelock.
+    uint256 constant USDC_DAILY_LIMIT  = 50000e6;    // 50,000 USDC/24h (6-dec)
+    uint256 constant CBETH_DAILY_LIMIT = 20e18;      // 20 cbETH/24h (18-dec)
 
     function run() external returns (address paymentsAddr) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
@@ -62,7 +68,9 @@ contract DeployPayments is Script {
             lstRates:         LST_RATES,
             minSwapBatch:     MIN_SWAP_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         });
 
         vm.startBroadcast(pk);
@@ -77,6 +85,8 @@ contract DeployPayments is Script {
         console2.log("  minSwapBatch    :", MIN_SWAP_BATCH);
         console2.log("  daiCeiling      :", DAI_CEILING);
         console2.log("  dailyLimit      :", DAILY_LIMIT);
+        console2.log("  usdcDailyLimit  :", USDC_DAILY_LIMIT);
+        console2.log("  cbEthDailyLimit :", CBETH_DAILY_LIMIT);
         console2.log("");
         console2.log("NEXT: point the console at this address, test reads,");
         console2.log("      send a small USDC amount, confirm balance shows.");

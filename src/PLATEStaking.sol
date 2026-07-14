@@ -4,6 +4,29 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
+ * ╔═══════════════════════════════════════════════════════════════════════╗
+ * ║  ⚠️  DEPRECATED — SUPERSEDED v1. DO NOT DEPLOY.                        ║
+ * ╚═══════════════════════════════════════════════════════════════════════╝
+ *
+ * Part of the superseded v1 PLATE set (see src/PLATE.sol's deprecation
+ * header). POSSESSIO v2 eliminated this contract entirely — the v2.6.3 hook
+ * (src/POSSESSIO_v2-6-3.sol) carries its SAV council logic inline and its
+ * header records: "STAKING REMOVED: PLATEStaking was ceremony over burn —
+ * eliminated from v2." The standalone ServiceAccountabilityVault.sol that
+ * references IPLATEStaking is part of the same superseded v1 set; the v2.6.3
+ * SAV is separate and does not use this contract. Retained in-tree ONLY for
+ * lineage and the historical SAV.t.sol / SAVGauntlet.t.sol suites.
+ *
+ * KNOWN ACCOUNTING DEFECT, ACKNOWLEDGED NOT FIXED (audit 2026-07-14, C-6):
+ *   emergencyWithdraw() zeroes totalStaked but leaves every per-member
+ *   staked[] entry populated. If the contract is ever re-used after an
+ *   emergency withdrawal, a later stake() double-counts in getStaked()
+ *   (staked[] resumes accumulating on top of the stale pre-withdrawal
+ *   values while totalStaked restarts from zero). Deprecation is the fix:
+ *   this contract must not be deployed or re-used, so the defect is
+ *   documented rather than patched. Do NOT rely on getStaked() after any
+ *   emergencyWithdraw().
+ *
  * @title PLATEStaking
  * @notice Internal protocol lock mechanism for the POSSESSIO council allocation.
  *         Called exclusively by the ServiceAccountabilityVault (SAV).
@@ -114,6 +137,10 @@ contract PLATEStaking {
         // Note: individual staked[] mappings are not reset in loop to avoid
         // gas issues with large member counts. totalStaked = 0 is the
         // authoritative accounting signal.
+        // ⚠️ C-6 (audit 2026-07-14): because staked[] stays populated, any
+        // stake() AFTER this call double-counts in getStaked(). This contract
+        // is DEPRECATED (see file header) — the defect is documented, not
+        // patched; the contract must not be re-used post-emergencyWithdraw.
         PLATE_TOKEN.transfer(TREASURY_SAFE, balance);
         emit EmergencyWithdraw(balance);
     }

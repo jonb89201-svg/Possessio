@@ -361,6 +361,23 @@ contract MockMorphoVault {
         if (totalShares == 0) return shares;
         return (shares * totalAssets_) / totalShares;
     }
+
+    // C-2 (audit 2026-07-14) — ERC4626 redeem for the redeemMorpho exit path.
+    // 1:1 share-per-asset (mirrors deposit above); burns owner's shares and
+    // sends USDC to receiver, like the real Bitwise Morpho Blue vault.
+    function redeem(uint256 shares, address receiver, address owner)
+        external returns (uint256 assets)
+    {
+        require(msg.sender == owner, "MockMorphoVault: not owner");
+        require(_shares[owner] >= shares, "MockMorphoVault: insuf shares");
+        assets = totalShares == 0 ? shares : (shares * totalAssets_) / totalShares;
+        _shares[owner] -= shares;
+        totalShares    -= shares;
+        totalAssets_   -= assets;
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        usdc.transfer(receiver, assets);
+        return assets;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -393,6 +410,9 @@ contract PossessioPaymentsTest is Test {
     uint256 constant MIN_BATCH    = 100 * 1e6;       // 100 USDC
     uint256 constant DAI_CEILING  = 5_000 * 1e18;    // $5k merchant operational buffer
     uint256 constant DAILY_LIMIT  = 1_000 * 1e18;    // $1k/day default
+    // C-2 (audit 2026-07-14) — per-asset exit caps under test
+    uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;  // 1,000 USDC/24h
+    uint256 constant CBETH_DAILY_LIMIT = 1 ether;      // 1 cbETH/24h
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -448,7 +468,9 @@ contract PossessioPaymentsTest is Test {
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         });
     }
 
@@ -920,6 +942,253 @@ contract PossessioPaymentsTest is Test {
         vm.expectRevert();
         vm.prank(ATTACKER);
         payments.queueDailyLimitIncrease(10_000 * 1e18);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //     C-2 (audit 2026-07-14) — PER-ASSET EXIT LIMITS (USDC / cbETH)
+    //
+    //  Pre-fix, sendUSDC / sendCbETH / redeemMorpho let OWNER move full
+    //  balances in ONE call — only the DAI leg had a rolling daily limit.
+    //  These tests prove: within-limit succeeds, over-limit reverts, the
+    //  cumulative window holds, the window rolls over after 24h, redeemMorpho
+    //  shares the USDC cap, adjustment is asymmetric (decrease instant /
+    //  increase behind LIMIT_DELAY), and the 7-day emergency path remains the
+    //  only route for moves beyond the caps.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// @dev Seed the contract with real Morpho shares by depositing as the
+    ///      contract itself (mirrors PaymentsFork_t's _seedMorphoShares).
+    function _seedMorphoShares(uint256 usdcAmount) internal returns (uint256 shares) {
+        usdc.mint(address(payments), usdcAmount);
+        vm.startPrank(address(payments));
+        usdc.approve(address(morphoVault), usdcAmount);
+        shares = morphoVault.deposit(usdcAmount, address(payments));
+        vm.stopPrank();
+    }
+
+    function test_ExitLimit_Deploy_InitialState() public {
+        assertEq(payments.usdcDailyLimit(),      USDC_DAILY_LIMIT);
+        assertEq(payments.cbEthDailyLimit(),     CBETH_DAILY_LIMIT);
+        assertEq(payments.usdcDailyWithdrawn(),  0);
+        assertEq(payments.cbEthDailyWithdrawn(), 0);
+        assertEq(payments.usdcDailyRemaining(),  USDC_DAILY_LIMIT);
+        assertEq(payments.cbEthDailyRemaining(), CBETH_DAILY_LIMIT);
+    }
+
+    function test_ExitLimit_SendUSDC_WithinLimitSucceeds() public {
+        usdc.mint(address(payments), 5_000 * 1e6);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(500 * 1e6, PAYEE);
+        assertEq(usdc.balanceOf(PAYEE), 500 * 1e6);
+        assertEq(payments.usdcDailyWithdrawn(), 500 * 1e6);
+        assertEq(payments.usdcDailyRemaining(), USDC_DAILY_LIMIT - 500 * 1e6);
+    }
+
+    function test_ExitLimit_SendUSDC_AtLimitSucceeds() public {
+        usdc.mint(address(payments), 5_000 * 1e6);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(USDC_DAILY_LIMIT, PAYEE);
+        assertEq(usdc.balanceOf(PAYEE), USDC_DAILY_LIMIT);
+        assertEq(payments.usdcDailyRemaining(), 0);
+    }
+
+    function test_ExitLimit_SendUSDC_OverLimitReverts() public {
+        usdc.mint(address(payments), 5_000 * 1e6);
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(USDC_DAILY_LIMIT + 1, PAYEE);
+    }
+
+    function test_ExitLimit_SendUSDC_CumulativeExceedsLimit() public {
+        usdc.mint(address(payments), 5_000 * 1e6);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(600 * 1e6, PAYEE);
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(600 * 1e6, PAYEE);
+    }
+
+    function test_ExitLimit_SendUSDC_WindowRollsAfter24h() public {
+        usdc.mint(address(payments), 5_000 * 1e6);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(USDC_DAILY_LIMIT, PAYEE);
+        vm.warp(block.timestamp + 25 hours);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(USDC_DAILY_LIMIT, PAYEE);
+        assertEq(usdc.balanceOf(PAYEE), 2 * USDC_DAILY_LIMIT);
+    }
+
+    function test_ExitLimit_SendCbETH_WithinLimitSucceeds() public {
+        cbeth.mint(address(payments), 5 ether);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(0.5 ether, PAYEE);
+        assertEq(cbeth.balanceOf(PAYEE), 0.5 ether);
+        assertEq(payments.cbEthDailyWithdrawn(), 0.5 ether);
+        assertEq(payments.cbEthDailyRemaining(), CBETH_DAILY_LIMIT - 0.5 ether);
+    }
+
+    function test_ExitLimit_SendCbETH_OverLimitReverts() public {
+        cbeth.mint(address(payments), 5 ether);
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(CBETH_DAILY_LIMIT + 1, PAYEE);
+    }
+
+    function test_ExitLimit_SendCbETH_CumulativeExceedsLimit() public {
+        cbeth.mint(address(payments), 5 ether);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(0.6 ether, PAYEE);
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(0.6 ether, PAYEE);
+    }
+
+    function test_ExitLimit_SendCbETH_WindowRollsAfter24h() public {
+        cbeth.mint(address(payments), 5 ether);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(CBETH_DAILY_LIMIT, PAYEE);
+        vm.warp(block.timestamp + 25 hours);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(CBETH_DAILY_LIMIT, PAYEE);
+        assertEq(cbeth.balanceOf(PAYEE), 2 * CBETH_DAILY_LIMIT);
+    }
+
+    function test_ExitLimit_RedeemMorpho_WithinLimitSucceeds() public {
+        uint256 shares = _seedMorphoShares(800 * 1e6); // 1:1 mock shares
+        vm.prank(MERCHANT);
+        uint256 out = payments.redeemMorpho(shares, PAYEE);
+        assertEq(out, 800 * 1e6);
+        assertEq(usdc.balanceOf(PAYEE), 800 * 1e6);
+        // Redeemed USDC consumed the SHARED USDC window
+        assertEq(payments.usdcDailyWithdrawn(), 800 * 1e6);
+    }
+
+    function test_ExitLimit_RedeemMorpho_OverLimitReverts() public {
+        uint256 shares = _seedMorphoShares(1_500 * 1e6); // > USDC_DAILY_LIMIT
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.redeemMorpho(shares, PAYEE);
+        // Atomic revert: shares stay in the vault, no partial exit
+        assertEq(morphoVault.balanceOf(address(payments)), shares);
+    }
+
+    function test_ExitLimit_RedeemMorpho_SharesCapWithSendUSDC() public {
+        // The split-path drain: sendUSDC part of the cap, then try to pull the
+        // rest through Morpho. Combined they must respect ONE shared window.
+        usdc.mint(address(payments), 1_000 * 1e6);
+        uint256 shares = _seedMorphoShares(600 * 1e6);
+
+        vm.prank(MERCHANT);
+        payments.sendUSDC(600 * 1e6, PAYEE);
+
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.redeemMorpho(shares, PAYEE);
+    }
+
+    function test_ExitLimit_AssetLimit_DecreaseInstant() public {
+        vm.prank(MERCHANT);
+        payments.decreaseAssetDailyLimit(PossessioPayments.DailyLimitAsset.USDC, 500 * 1e6);
+        assertEq(payments.usdcDailyLimit(), 500 * 1e6);
+
+        vm.prank(MERCHANT);
+        payments.decreaseAssetDailyLimit(PossessioPayments.DailyLimitAsset.CBETH, 0.5 ether);
+        assertEq(payments.cbEthDailyLimit(), 0.5 ether);
+    }
+
+    function test_ExitLimit_AssetLimit_DecreaseToHigherReverts() public {
+        vm.expectRevert(PossessioPayments.InvalidLimit.selector);
+        vm.prank(MERCHANT);
+        payments.decreaseAssetDailyLimit(PossessioPayments.DailyLimitAsset.USDC, USDC_DAILY_LIMIT * 2);
+    }
+
+    function test_ExitLimit_AssetLimit_IncreaseRequiresDelay() public {
+        vm.prank(MERCHANT);
+        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.USDC, 2_000 * 1e6);
+
+        vm.expectRevert(PossessioPayments.TimelockNotPassed.selector);
+        vm.prank(MERCHANT);
+        payments.executeAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.USDC);
+        assertEq(payments.usdcDailyLimit(), USDC_DAILY_LIMIT, "limit must be unchanged before delay");
+
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.prank(MERCHANT);
+        payments.executeAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.USDC);
+        assertEq(payments.usdcDailyLimit(), 2_000 * 1e6);
+    }
+
+    function test_ExitLimit_AssetLimit_IncreaseToLowerReverts() public {
+        vm.expectRevert(PossessioPayments.InvalidLimit.selector);
+        vm.prank(MERCHANT);
+        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH, 0.5 ether);
+    }
+
+    function test_ExitLimit_AssetLimit_CancelQueuedIncrease() public {
+        vm.prank(MERCHANT);
+        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH, 5 ether);
+        vm.prank(MERCHANT);
+        payments.cancelAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH);
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.expectRevert(PossessioPayments.NoIncreaseQueued.selector);
+        vm.prank(MERCHANT);
+        payments.executeAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH);
+    }
+
+    function test_ExitLimit_AssetLimit_AttackerCannotAdjust() public {
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.USDC, 100_000 * 1e6);
+        vm.expectRevert();
+        vm.prank(ATTACKER);
+        payments.decreaseAssetDailyLimit(PossessioPayments.DailyLimitAsset.USDC, 1);
+    }
+
+    function test_ExitLimit_EmergencyPath_UsdcBeyondCapStillWorks() public {
+        // Moves beyond the daily cap remain possible ONLY via the 7-day
+        // emergency-withdraw timelock — prove it still works end-to-end.
+        uint256 bigAmount = USDC_DAILY_LIMIT * 10;
+        usdc.mint(address(payments), bigAmount);
+
+        vm.prank(MERCHANT);
+        payments.queueEmergencyWithdraw(address(usdc), bigAmount);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(MERCHANT);
+        payments.executeEmergencyWithdraw(address(usdc), PAYEE);
+
+        assertEq(usdc.balanceOf(PAYEE), bigAmount,
+            "7-day emergency path must still move the full balance");
+    }
+
+    function test_ExitLimit_EmergencyPath_CbEthBeyondCapStillWorks() public {
+        uint256 bigAmount = CBETH_DAILY_LIMIT * 10;
+        cbeth.mint(address(payments), bigAmount);
+
+        vm.prank(MERCHANT);
+        payments.queueEmergencyWithdraw(address(cbeth), bigAmount);
+
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(MERCHANT);
+        payments.executeEmergencyWithdraw(address(cbeth), PAYEE);
+
+        assertEq(cbeth.balanceOf(PAYEE), bigAmount,
+            "7-day emergency path must still move the full balance");
+    }
+
+    function test_ExitLimit_FrozenStillBlocksAllExits() public {
+        // M-1 Guardian freeze remains upstream of the C-2 limits.
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        payments.enableGuardian();
+        vm.stopPrank();
+        vm.prank(GUARDIAN);
+        payments.setWithdrawalsFrozen(true);
+
+        usdc.mint(address(payments), 100 * 1e6);
+        vm.expectRevert(PossessioPayments.WithdrawalsFrozen.selector);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(1, PAYEE);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1908,6 +2177,10 @@ contract PossessioPaymentsAutomationTest is Test {
     uint256 constant MIN_SWAP_BATCH = 1_000 * 1e6; // 1000 USDC
     uint256 constant DAI_CEILING    = 5_000 * 1e18; // 5000 DAI
     uint256 constant DAILY_LIMIT    = 1_000 * 1e18; // 1000 DAI/day default
+    // C-2 — per-asset exit caps (this suite exercises automation, not exits;
+    // values only need to be sane)
+    uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;
+    uint256 constant CBETH_DAILY_LIMIT = 1 ether;
 
     function setUp() public {
         usdc        = new MockUSDC_A();
@@ -1940,7 +2213,9 @@ contract PossessioPaymentsAutomationTest is Test {
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_SWAP_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         }));
 
         vm.startPrank(OWNER);

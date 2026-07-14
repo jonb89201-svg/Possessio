@@ -48,6 +48,9 @@ contract PaymentsForkTest is Test {
     uint256 constant MIN_SWAP_BATCH = 100_000000;   // 100 USDC (6-dec)
     uint256 constant DAI_CEILING    = 10000e18;      // 10,000 DAI (18-dec)
     uint256 constant DAILY_LIMIT    = 50000e18;      // 50,000 DAI/24h (18-dec)
+    // C-2 (audit 2026-07-14) — per-asset exit caps, matching DeployPayments.s.sol
+    uint256 constant USDC_DAILY_LIMIT  = 50000e6;    // 50,000 USDC/24h (6-dec)
+    uint256 constant CBETH_DAILY_LIMIT = 20e18;      // 20 cbETH/24h (18-dec)
 
     bool forked;
 
@@ -60,7 +63,8 @@ contract PaymentsForkTest is Test {
             // Field order MUST match the struct exactly:
             // owner, usdc, cbeth, dai, weth, router, aeroRouter, morphoVault,
             // chainlink, chainlinkDai, chainlinkUsdcUsd, chainlinkEthUsd,
-            // lstRates, minSwapBatch, daiCeiling, dailyLimit
+            // lstRates, minSwapBatch, daiCeiling, dailyLimit,
+            // usdcDailyLimit, cbEthDailyLimit (C-2)
             PossessioPayments.DeployParams memory p = PossessioPayments.DeployParams({
                 owner:            OWNER,
                 usdc:             USDC,
@@ -77,7 +81,9 @@ contract PaymentsForkTest is Test {
                 lstRates:         LST_RATES,
                 minSwapBatch:     MIN_SWAP_BATCH,
                 daiCeiling:       DAI_CEILING,
-                dailyLimit:       DAILY_LIMIT
+                dailyLimit:       DAILY_LIMIT,
+                usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+                cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
             });
             payments = new PossessioPayments(p);
         }

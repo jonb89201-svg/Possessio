@@ -2,6 +2,29 @@
 pragma solidity ^0.8.20;
 
 /**
+ * ╔═══════════════════════════════════════════════════════════════════════╗
+ * ║  ⚠️  DEPRECATED — SUPERSEDED v1. DO NOT DEPLOY. DO NOT DEPLOY ON BASE. ║
+ * ╚═══════════════════════════════════════════════════════════════════════╝
+ *
+ * This is the superseded v1 PLATE contract, replaced by the v2 rebuild in
+ * src/POSSESSIO_v2-6-3.sol (STEEL + PossessioHook). It is retained in-tree
+ * ONLY for lineage and for the historical regression suites (PLATE.t.sol,
+ * PLATELaunchV2.t.sol, Gauntlet.t.sol) that pin its behavior.
+ *
+ * WHY IT MUST NEVER BE DEPLOYED ON BASE (audit 2026-07-14, finding C-3):
+ *   · _deployToStaking (~L780/786) calls cbETH.deposit{value:} and
+ *     rETH.deposit{value:} directly. On Base mainnet both cbETH and rETH are
+ *     OptimismMintableERC20 bridge tokens with NO payable deposit function —
+ *     the exact "cbETH False Green" defect the v2.5 hook was rebuilt to fix
+ *     (v2 acquires cbETH via Aerodrome Slipstream swap instead). On Base,
+ *     routeETH() halts (reverts) the moment its staking allocation is
+ *     non-zero, bricking the entire fee pipeline.
+ *   · The price math in _getTWAPPrice / _getSpotPrice also carries the bare
+ *     sqrtPriceX96^2 overflow footgun fixed in the v2 hook (see
+ *     test/PossessioHook_M1Overflow.t.sol provenance note). Do not copy any
+ *     of this contract's math forward — POSSESSIO_v2-6-3.sol is the
+ *     canonical fixed reference.
+ *
  * ██████╗ ██╗      █████╗ ████████╗███████╗
  * ██╔══██╗██║     ██╔══██╗╚══██╔══╝██╔════╝
  * ██████╔╝██║     ███████║   ██║   █████╗

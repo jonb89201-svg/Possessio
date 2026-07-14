@@ -718,6 +718,146 @@ contract AutomationInvariants is Test {
     }
 
     /*=======================================================================
+      C-1 (audit 2026-07-14) -- VALUE-BASED HARVEST
+
+      cbETH is NON-REBASING: balanceOf never grows; rewards accrue only via
+      cbETH/ETH exchange-rate appreciation. The pre-fix harvest compared
+      balance against a cbETH-wei principal that mirrored the balance exactly,
+      so harvest ALWAYS reverted ZeroAmount and the checkUpkeep HARVEST branch
+      was dead -- with rescueToken blocking cbETH, the treasury was a one-way
+      trap. These tests prove the fixed pipeline end-to-end:
+
+        (a) routeETH deploys to staking -> simulated rate appreciation (mock
+            oracle answer increase) makes checkUpkeep HARVEST true ->
+            performUpkeep harvests, value reaches the Treasury, and the
+            ETH-denominated principal is preserved.
+        (b) no appreciation -> harvest reverts ZeroAmount exactly as before.
+    =======================================================================*/
+
+    function test_C1_RateAppreciation_MakesHarvestLiveAndPreservesPrincipal() public {
+        // ---- Step 1: route 1 ETH into staking at the 0.98 peg -------------
+        uint256 total = 1 ether;
+        deal(address(hook), total);
+        stdstore.target(address(hook)).sig("accumulatedETH()").checked_write(total);
+
+        // Value-consistent mock fill: toStaking = 0.75 ether at rate 0.98e18.
+        // +1 wei rounds up so floor(fairCb * rate / 1e18) == 0.75 ether exactly
+        // and the fresh deploy carries zero phantom excess.
+        uint256 rate0  = 980_000_000_000_000_000;
+        uint256 fairCb = (0.75 ether * 1e18) / rate0 + 1;
+        aeroRouter.setCbEthReturn(fairCb);
+        clCbETH.setAnswer(int256(rate0));
+
+        vm.prank(TREASURY);
+        hook.routeETH();
+
+        assertEq(hook.cbETHPrincipalETH(), 0.75 ether,
+            "C-1: ETH principal must record the ETH consumed at acquisition");
+        assertEq(hook.cbETHPrincipal(), fairCb,
+            "C-1: cbETH-wei acquisition record must track the fill");
+
+        // ---- Step 2 (b): no appreciation -> dead-calm harvest surface -----
+        // (route branch of checkUpkeep is false here: cooldown just reset)
+        (bool needed,) = hook.checkUpkeep("");
+        assertFalse(needed, "C-1: no excess value must mean no HARVEST upkeep");
+
+        vm.expectRevert(PossessioHook.ZeroAmount.selector);
+        hook.harvestRewards();
+
+        // ---- Step 3 (a): rate appreciates 0.98 -> 1.05 --------------------
+        // Same cbETH balance, higher exchange rate: value now exceeds the ETH
+        // principal. This is the ONLY way cbETH rewards materialize.
+        clCbETH.setAnswer(int256(1_050_000_000_000_000_000));
+
+        (bool needed2, bytes memory pd) = hook.checkUpkeep("");
+        assertTrue(needed2, "C-1: rate appreciation must arm the HARVEST upkeep");
+        assertEq(
+            uint8(abi.decode(pd, (PossessioHook.UpkeepTask))),
+            uint8(PossessioHook.UpkeepTask.HARVEST_REWARDS),
+            "C-1: armed task must be HARVEST_REWARDS"
+        );
+
+        // ---- Step 4: forwarder harvests; treasury paid; principal intact --
+        uint256 excessETH = (fairCb * 1.05e18) / 1e18 - 0.75 ether;
+        aeroRouter.setWethReturn(excessETH);  // fair-value WETH for the excess
+
+        uint256 treasuryBefore = TREASURY.balance;
+        vm.prank(FORWARDER);
+        hook.performUpkeep(pd);
+
+        assertGt(TREASURY.balance, treasuryBefore,
+            "C-1: harvest must transfer value to the Treasury");
+        assertEq(hook.cbETHPrincipalETH(), 0.75 ether,
+            "C-1: ETH principal must be preserved across harvest");
+
+        // Remaining cbETH still covers the ETH principal at the current rate
+        // (allow 2 wei of value-math rounding).
+        uint256 remainVal = (cbETH.balanceOf(address(hook)) * 1.05e18) / 1e18;
+        assertGe(remainVal + 2, 0.75 ether,
+            "C-1: remaining cbETH value must still back the ETH principal");
+
+        // And the harvest signal is consumed -- residual rounding dust sits
+        // below HARVEST_DUST_FLOOR, so the upkeep goes quiet again.
+        (bool needed3,) = hook.checkUpkeep("");
+        assertFalse(needed3, "C-1: no HARVEST signal after harvest");
+    }
+
+    function test_C1_NoAppreciation_HarvestRevertsAndUpkeepStaysQuiet() public {
+        // Standalone (b): deploy at the peg, never move the rate -- the
+        // harvest surface must be exactly as dead as the pre-fix contract
+        // claimed it to be for the no-rewards case.
+        uint256 total = 1 ether;
+        deal(address(hook), total);
+        stdstore.target(address(hook)).sig("accumulatedETH()").checked_write(total);
+
+        uint256 rate0  = 980_000_000_000_000_000;
+        uint256 fairCb = (0.75 ether * 1e18) / rate0 + 1;
+        aeroRouter.setCbEthReturn(fairCb);
+        clCbETH.setAnswer(int256(rate0));
+
+        vm.prank(TREASURY);
+        hook.routeETH();
+
+        (bool needed,) = hook.checkUpkeep("");
+        assertFalse(needed, "C-1: flat rate must not arm HARVEST upkeep");
+
+        vm.expectRevert(PossessioHook.ZeroAmount.selector);
+        hook.harvestRewards();
+    }
+
+    /*=======================================================================
+      C-4 (audit 2026-07-14) -- CALLER REWARD PAID FROM CARVED-OUT SLICE
+
+      Pre-fix, the 0.1% permissionless-caller reward was paid from
+      address(this).balance AFTER routing had spent the whole accumulator, so
+      in production -- where contract balance equals the accumulator exactly --
+      the balance guard failed and the reward silently skipped. (The unit
+      tests only passed because the harness dealt surplus ETH.) This test
+      pins the PRODUCTION condition: balance == accumulatedETH exactly, and
+      the caller must still receive exactly 0.1% of the routed total.
+    =======================================================================*/
+
+    function test_C4_RewardPaid_WhenBalanceEqualsAccumulatorExactly() public {
+        uint256 amt = 0.1 ether;
+        // Production condition: contract ETH balance == accumulatedETH, no surplus.
+        deal(address(hook), amt);
+        stdstore.target(address(hook)).sig("accumulatedETH()").checked_write(amt);
+        vm.warp(block.timestamp + hook.ROUTE_COOLDOWN() + 1);
+        clCbETH.setAnswer(int256(980_000_000_000_000_000)); // refresh post-warp
+
+        uint256 userBefore = USER.balance;
+
+        vm.prank(USER);
+        hook.routeETH();
+
+        assertEq(
+            USER.balance - userBefore,
+            amt / 1000,
+            "C-4: caller must receive exactly 0.1% when balance == accumulator"
+        );
+    }
+
+    /*=======================================================================
       REPLAY PROTECTION -- bonus tests
 
       Defense-in-depth invariants for the executedUpkeeps map.
@@ -1180,6 +1320,9 @@ contract PaymentsAutomationInvariants is Test {
     uint256 constant MIN_SWAP_BATCH = 1_000 * 1e6;  // 1000 USDC
     uint256 constant DAI_CEILING    = 5_000 * 1e18; // 5000 DAI
     uint256 constant DAILY_LIMIT    = 1_000 * 1e18; // 1000 DAI/day default
+    // C-2 — per-asset exit caps (sane values; this suite exercises automation)
+    uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;
+    uint256 constant CBETH_DAILY_LIMIT = 1 ether;
 
     function setUp() public virtual {
         vm.warp(1_000_000);
@@ -1214,7 +1357,9 @@ contract PaymentsAutomationInvariants is Test {
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_SWAP_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         }));
 
         // Register forwarder + grant OPERATOR_ROLE to the contract itself, so
