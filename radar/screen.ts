@@ -138,22 +138,18 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
   ).bind(addr, outcome, now, lastMc);
 }
 
-// 15s FEED (Architect call, 2026-07-12): 4 passes per cron spaced 15s gives the
-// tape 15s resolution — the resolution needed to catch fast movers live and
-// trade them by hand. KNOWN LIMITATION: the 45s setTimeout-in-waitUntil hold
-// can stall the scan after ~4h of unattended runtime (it went blind overnight
-// once). Operationally that's a non-issue: a redeploy at the start of a trading
-// session gives a fresh ~4h window, which covers a session — refresh on sign-on.
-// The permanent non-stalling sub-minute path is the DO-alarm (Layer 3), built
-// when there's time/money to verify it. For now: 15s live, refresh per session.
-const SUB_TICKS = 4;
-const SUB_TICK_GAP_MS = 15_000;
-
+// SINGLE-PASS per cron (RELIABILITY, 2026-07-13). The old 4×15s
+// setTimeout-in-waitUntil sub-tick loop (for 15s resolution) STALLED THE SCAN
+// TWICE — the tape went blind for 21min, then 115min — while its cron-siblings
+// birthScan/btcScan (single-pass, no setTimeout) kept writing every minute. A
+// setTimeout inside a cron waitUntil is not reliably kept alive, and the
+// fetch-timeout self-heal could not fix it because it was never a hung fetch.
+// So: ONE screenScan per cron tick, exactly like the siblings that never die.
+// Cadence drops to 60s but the eye NEVER goes blind. The reliable path back to
+// sub-minute resolution is the Durable-Object alarm (Layer 3, pumptape.ts) —
+// alarms DO survive across invocations; that's the correct 15s mechanism.
 export async function screenLoop(env: WatcherEnv): Promise<void> {
-  for (let i = 0; i < SUB_TICKS; i++) {
-    if (i) await new Promise((r) => setTimeout(r, SUB_TICK_GAP_MS));
-    await screenScan(env).catch((e) => console.error("screenScan", e));
-  }
+  await screenScan(env).catch((e) => console.error("screenScan", e));
 }
 
 export async function screenScan(env: WatcherEnv): Promise<void> {
