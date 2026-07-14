@@ -36,7 +36,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## OPEN — requires Architect decision (tracked from AUDIT_20260714; deliberately NOT fixed by any seat)
 
-- [ ] **D-2 — calibration posture:** Sec6 ratified "method numbers private," but `radar/SPEC_BACKEND.md` §5–§7 + `radar/screen.ts` publish precise constants, and `deploy/optimizer_pool.{json,html}` carry an `"_INTERNAL": PRIVATE` stamp while committed to the public repo. Decide one way.
+- [x] **D-2 — calibration posture: RESOLVED 2026-07-14 — PUBLIC** (Architect ratification: "d-2 can be public"). Sec6's go-private split retired unexecuted; RULEBOOK + calibration constants stay in the public repo. Supersession recorded in STATE_OF_PLAY Sec6; `deploy/optimizer_pool.json` stamp reworded to match.
 - [ ] **D-3 — RULEBOOK drift:** RULEBOOK v1.0 no longer matches the implemented method (the DexScreener exit its own handoff declared INVALID is still law; the STALL amendment, ladder §0, and the cited "Amendment IV, Clause 5" exist nowhere in the repo). Amendments need ratification per the constitution.
 
 ## Parked (deliberately not now)
