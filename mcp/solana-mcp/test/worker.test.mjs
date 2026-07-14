@@ -56,6 +56,16 @@ test("missing secrets -> 503", async () => {
   assert.equal(r.status, 503);
 });
 
+test("ACCESS_KEY shorter than the documented 32 chars -> 503 unconfigured", async () => {
+  const short = KEY.slice(0, 31); // 31 chars: one under the doc's minimum
+  const r = await worker.fetch(new Request("https://w.example/" + short + "/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+  }), { ACCESS_KEY: short, SOLANA_RPC: "https://rpc.example/secret" });
+  assert.equal(r.status, 503);
+});
+
 test("initialize negotiates a known protocol version", async () => {
   const r = await mcp({ jsonrpc: "2.0", id: 1, method: "initialize",
     params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } } });

@@ -115,14 +115,48 @@ test("exit: take-profit beats a simultaneous DexScreener listing", () => {
 });
 function pick(r) { return [r.sell, r.trigger]; }
 
-// ---- Sec5 ledger: append + daily stats (only filled counts) ----
-test("ledger: todayStats counts only filled trades that day", () => {
+// ---- Sec5 ledger: append + daily stats (caps vs performance truth) ----
+test("ledger: todayStats caps view counts filled+built that day, never skips", () => {
   const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "xledger-")), "l.jsonl");
   ledger.append(p, ledger.record({ ts: "2026-07-04T10:00:00Z", outcome: "filled", notionalUsd: 2 }));
-  ledger.append(p, ledger.record({ ts: "2026-07-04T11:00:00Z", outcome: "filled", notionalUsd: 1.5 }));
+  ledger.append(p, ledger.record({ ts: "2026-07-04T11:00:00Z", outcome: "built", notionalUsd: 1.5 }));
   ledger.append(p, ledger.record({ ts: "2026-07-04T12:00:00Z", outcome: "skipped", notionalUsd: 2 }));
   ledger.append(p, ledger.record({ ts: "2026-07-03T10:00:00Z", outcome: "filled", notionalUsd: 2 }));
   const s = ledger.todayStats(p, "2026-07-04");
-  assert.equal(s.todayCount, 2);
-  assert.equal(s.todayExposureUsd, 3.5);
+  assert.equal(s.todayCount, 2);          // filled + built consume the budget
+  assert.equal(s.todayExposureUsd, 3.5);  // skipped/other-day never do
+});
+
+test("ledger: builds are NOT fills - performance truth excludes them (W-1)", () => {
+  const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "xledger-")), "l.jsonl");
+  // 10 unsigned builds at $2 exhaust the $20 daily budget (conservative)...
+  for (let i = 0; i < 10; i++) {
+    ledger.append(p, ledger.record({
+      ts: `2026-07-04T10:0${i}:00Z`, outcome: "built",
+      notionalUsd: 2, reason: "build payload issued" }));
+  }
+  ledger.append(p, ledger.record({
+    ts: "2026-07-04T11:00:00Z", outcome: "filled", notionalUsd: 2, netReturn: -0.4 }));
+  const s = ledger.todayStats(p, "2026-07-04");
+  assert.equal(s.todayCount, 11);           // caps: builds still count
+  assert.equal(s.todayExposureUsd, 22);
+  assert.equal(s.filledCount, 1);           // truth: only the real fill
+  assert.equal(s.filledExposureUsd, 2);
+  assert.equal(s.netReturnUsd, -0.4);       // builds contribute NOTHING here
+});
+
+test("ledger: every row carries factsSource, honest default caller-asserted (W-2)", () => {
+  assert.equal(ledger.record({ ts: "2026-07-04T10:00:00Z", outcome: "built" }).factsSource,
+    "caller-asserted");
+  assert.equal(ledger.record({ ts: "2026-07-04T10:00:00Z", outcome: "filled",
+    factsSource: "device-verified" }).factsSource, "device-verified");
+});
+
+// ---- W-2 tripwire: the hot path must stay hard-blocked on unverified facts.
+// server.js opens a stdio transport on require, so this is a source-level
+// assertion: the constant exists, is false, and gates execute_trade.
+test("server: FACTS_VERIFIED_ON_DEVICE is false and guards hot execution", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  assert.match(src, /const FACTS_VERIFIED_ON_DEVICE = false;/);
+  assert.match(src, /if \(!FACTS_VERIFIED_ON_DEVICE\)/);
 });
