@@ -30,6 +30,20 @@ jobs:
       - name: Install radar deps
         working-directory: radar
         run: npm ci
+      # Diagnostic preflight: prints token LENGTH and Cloudflare's verify
+      # verdict — never the value. API tokens are 40 chars; the Global API
+      # Key (wrong kind for wrangler) is 37 hex chars.
+      - name: Token preflight
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          RAW=${#CLOUDFLARE_API_TOKEN}
+          TRIM=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '[:space:]' | wc -c)
+          echo "token length: raw=$RAW trimmed=$TRIM (API token=40, Global API Key=37)"
+          curl -s -o /tmp/verify.json -w "verify HTTP status: %{http_code}\n" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+          cat /tmp/verify.json; echo
       - name: Deploy radar worker
         working-directory: radar
         run: npx wrangler deploy
