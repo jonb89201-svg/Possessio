@@ -27,7 +27,7 @@ DexScreener can even see them.
 | Database | Cloudflare D1 `possessio-radar-ledger` (`e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde`) |
 | Schedule | Cron `* * * * *` — every minute; all jobs run per tick via `ctx.waitUntil` |
 | Real-time | Durable Object `PumpTape` (Layer 3) holding a PumpPortal WebSocket — currently observes births only (trade stream gated behind a funded key we deliberately don't pay for) |
-| Deploy | `cd radar && npx wrangler deploy`. The repo→Cloudflare connection deploys the **console**, NOT this worker — the radar is always a manual/CI deploy. GitHub Action `radar-refresh` redeploys every 3h to reset the 15s-feed stall (see §10). |
+| Deploy | `cd radar && npx wrangler deploy`. The repo→Cloudflare connection deploys the **console**, NOT this worker — the radar is always a manual/CI deploy. GitHub Action `radar-refresh` redeploys `main` every 3h — originally a mitigation for the 15s sub-tick stall, now just a safety net that keeps production converged on main (see §10). |
 | Secrets | None required for the core. `CLOUDFLARE_API_TOKEN` for deploy is session-local (never persisted). Optional `PUMPPORTAL_API_KEY` unlocks the trade stream. |
 
 ---
@@ -63,8 +63,10 @@ the others:
 2. **`discoveryScan`** (`watcher.ts`) — poll young `watching` tokens on
    DexScreener; flip to `status='discovered'` on graduation, record `gap_ms`
    (birth→graduation) and running `mc_peak_usd`. Expires >24h stale watchers.
-3. **`screenLoop` → `screenScan`** (`screen.ts`) — the core screen (detailed §5).
-   Runs 4× per tick spaced 15s for 15-second tape resolution.
+3. **`screenScan`** (`screen.ts`) — the core screen (detailed §5). ONE
+   single pass per tick — 60s tape resolution. The 4×15s sub-tick loop (and
+   the RadarScanner DO that was meant to replace it) were removed in
+   `b5b32ff` after the loop stalled the scan twice; see §10.
 4. **`dexTrackScan`** (`screen.ts`) — POST-GRADUATION TRACKING: follow every
    flagged coin (early **and** candidate) onto DexScreener after graduation,
    recording a running `dex_peak_mc` — so post-exit runners (DAYNA $10.6k→$26k)
@@ -141,8 +143,9 @@ entry existed).
 - **`births`** — every coin: `token_address`, `symbol/name/creator`,
   `pumpfun_first_seen_ms`, `api_created_ms`, reserves, `mc_at_birth_usd`,
   `mc_peak_usd/mc_peak_ms`, `status` (watching|discovered|expired), `gap_ms`,
-  `graduation_dex`, `curve_pair_seen_ms`, `raw_birth_json` (full payload —
-  carries `image_uri`, `twitter`, `reply_count`, `last_trade_timestamp`, …).
+  `graduation_dex`, `curve_pair_seen_ms`, `raw_birth_json` (always valid JSON:
+  the full payload when ≤4KB, else a slimmed subset — `image_uri`, `twitter`,
+  `reply_count`, `last_trade_timestamp`, … — see AUDIT R-1 in `watcher.ts`).
 - **`earlies`** (§0) — `first_hit_mc`, `age_sec_at_hit`, `peak_mc/peak_ms`,
   `status`, ladder: `play_outcome` (target|exit2m|gap|late), `play_exit_mc`
   (blended), `rungs_filled`, `levels`, `compound_mult`; WS flow-quality:
@@ -160,8 +163,10 @@ entry existed).
 - **`sessions`** — daily session-gate readings (`session_date`, `ratio`,
   `gate_pass`).
 
-Migrations `0007`–`0015` (candidates, DEX cols, earlies, ticks, early-play,
-WS flow, ladder, cycles, post-grad) — all applied live.
+Migrations `0007`–`0017` (candidates, DEX cols, earlies, ticks, early-play,
+WS flow, ladder, cycles, post-grad, conviction; `0017` was a no-op — see its
+corrected header) — all applied live. `schema.sql` is the cumulative mirror,
+regenerated from the migrations as of `0017`.
 
 ---
 
@@ -179,7 +184,9 @@ an honest `TOLL_NOT_ARMED` header.
   - `GET /radar/ws-status` — the Durable Object's connection/parse state +
     raw samples (the VERIFY-FIRST surface).
 - **Paid (when armed)** — aggregate/discovered-only, never live `watching` rows:
-  `/radar/gap-stats`, `/radar/session-gate`, `/radar/tape`.
+  `/radar/gap-stats`, `/radar/tape`. (`/radar/session-gate` serves free until a
+  session writer exists — today it can only answer `NO_READING_YET`, and a paid
+  permanent error is a no-op nobody should be sold; AUDIT R-8.)
 
 **Product boundary:** the paid routes never leak the pre-graduation `watching`
 set. The public candidate feed is the one ratified exception (Amendment IV,
@@ -194,14 +201,20 @@ Codebyte "if it can't be tested it doesn't exist": every method number is scored
 against the ledger, which kills or confirms it.
 
 **Known limitations.**
-- The 15-second tape uses a 4× `setTimeout` sub-tick loop that **stalls
-  screenScan after ~4h** of runtime (birthScan is unaffected). Mitigated by the
-  3-hourly `radar-refresh` redeploy; the permanent fix is a Durable-Object-alarm
-  sub-minute driver, not a `setTimeout` loop.
-- Flow can only be read ~45s after a crossing at 15s resolution — the fastest
-  rockets outrun the gate. True per-second flow needs the PumpPortal trade
-  stream (the one paid upgrade with a proven ROI: it makes the winning screen
-  near-instant).
+- The tape runs at **60-second resolution**: one `screenScan` per cron tick,
+  exactly like the siblings that never die. The 4× `setTimeout` sub-tick loop
+  that used to give 15s resolution **stalled the scan twice** (21min, then
+  115min, silently) and was stripped in `b5b32ff` along with the RadarScanner
+  DO that failed to deploy as its replacement. The reliable path back to
+  sub-minute resolution is a Durable-Object **alarm** driver (the mechanism
+  `pumptape.ts` already uses), never a `setTimeout` loop. The `radar-refresh`
+  Action — originally the 3-hourly stall mitigation — is kept as a safety net
+  that redeploys `main`; the R-7 watchdog (`index.ts`) logs a loud
+  `RADAR_TAPE_STALE` line if the tape ever goes quiet while coins are live.
+- Flow can only be read a couple of minutes after a crossing at 60s
+  resolution — the fastest rockets outrun the gate. True per-second flow needs
+  the PumpPortal trade stream (the one paid upgrade with a proven ROI: it
+  makes the winning screen near-instant).
 
 **Roadmap.** Trade-resolution flow (buyer-count / whale-share entry filter) ·
 score the *cycle* against `dex_peak_mc` · unused free signals in `raw_birth_json`

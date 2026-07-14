@@ -23,9 +23,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # npm ci ONLY — the committed radar/package-lock.json is the reviewed
+      # supply chain. The old `|| npm install` fallback silently re-resolved
+      # every dependency range on each scheduled deploy (AUDIT R-2); if ci
+      # fails now, the deploy fails loudly, which is the point.
       - name: Install radar deps
         working-directory: radar
-        run: npm ci || npm install
+        run: npm ci
       - name: Deploy radar worker
         working-directory: radar
         run: npx wrangler deploy

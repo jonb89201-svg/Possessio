@@ -161,6 +161,57 @@ test("R-3: birthScan batches EVERY birth in a 120-item burst (no 50/100 cap)", a
   assert.equal(db.batched[0].args[6], 2300, "usd_market_cap read (unit rule)");
 });
 
+// ---- R-1 (AUDIT 2026-07-14): raw_birth_json is VALID JSON, never a truncation ----
+// The old JSON.stringify(it).slice(0,4000) turned any >4KB payload (a
+// creator-controlled long description is enough) into invalid JSON; SQLite's
+// json_extract then THREW "malformed JSON" on every /radar/candidates poll —
+// an externally triggerable 500 of the public feed.
+
+test("R-1: >4000-char birth payload stores VALID slim JSON (image_uri survives)", async () => {
+  const huge = {
+    mint: "HUGE", symbol: "HG", created_timestamp: 1783456000000,
+    usd_market_cap: 3100, image_uri: "https://ipfs.example/huge.png",
+    twitter: "https://x.com/huge", reply_count: 7,
+    description: "x".repeat(6000), // the attack payload: pushes the doc past the cap
+  };
+  const small = {
+    mint: "SMOL", symbol: "SM", created_timestamp: 1783456000001,
+    usd_market_cap: 2900, image_uri: "https://ipfs.example/smol.png",
+  };
+  const db = birthDb();
+  globalThis.fetch = async () => ({ ok: true, json: async () => [huge, small] });
+  await birthScan({ ...ENV_BIRTH, RADAR_DB: db });
+  assert.equal(db.batched.length, 2, "both births captured");
+  const rawOf = (mint) => db.batched.find((s) => s.args[0] === mint).args[7];
+
+  // oversize -> slimmed object: PARSES (json_valid would pass), keeps the
+  // fields downstream reads, and is marked slimmed — never a mid-doc cut.
+  const slim = JSON.parse(rawOf("HUGE")); // the old code made this line throw
+  assert.equal(slim.image_uri, "https://ipfs.example/huge.png", "the field /radar/candidates extracts survives");
+  assert.equal(slim.twitter, "https://x.com/huge", "roadmap signal kept");
+  assert.equal(slim.slimmed, true, "oversize payload marked slimmed");
+  assert.ok(rawOf("HUGE").length <= 4000, "slim doc respects the storage cap");
+
+  // in-cap -> the full payload, stored whole (unchanged behavior)
+  assert.deepEqual(JSON.parse(rawOf("SMOL")), small, "small payload round-trips in full");
+});
+
+test("R-1: exactly-at-cap payload is kept whole, one char over is slimmed", async () => {
+  const { rawBirthJson } = await import("../watcher.ts");
+  const pad = (target) => { // build an item whose serialization is exactly `target` chars
+    const base = { mint: "PAD", image_uri: "u", description: "" };
+    const skel = JSON.stringify(base).length;
+    return { ...base, description: "d".repeat(target - skel) };
+  };
+  const atCap = pad(4000);
+  assert.equal(JSON.stringify(atCap).length, 4000, "fixture sanity");
+  assert.deepEqual(JSON.parse(rawBirthJson(atCap)), atCap, "at-cap doc stored in full");
+  const over = pad(4001);
+  const slim = JSON.parse(rawBirthJson(over));
+  assert.equal(slim.slimmed, true, "over-cap doc slimmed");
+  assert.equal(slim.image_uri, "u", "extracted field intact");
+});
+
 test("R-3: idle gate still holds when the feed URL is empty", async () => {
   const db = birthDb();
   let fetched = false;

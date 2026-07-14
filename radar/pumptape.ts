@@ -56,6 +56,10 @@ function rungsFor(level: number): number[] {
 const PLAY_EXIT_AGE_MS = 2 * 60_000;
 const ALARM_EVERY_MS   = 30_000;
 const STALE_SOCKET_MS  = 90_000;
+// R-6 (AUDIT 2026-07-14): the WS-upgrade fetch is a fetch like any other and
+// obeys the same bounded-fetch law as watcher.ts/screen.ts — a hung upgrade
+// must throw, never hang the alarm handler that called it.
+const WS_CONNECT_TIMEOUT_MS = 10_000;
 
 type Coin = {
   createdMs: number;
@@ -128,6 +132,13 @@ export class PumpTape {
   }
 
   async ensure(): Promise<void> {
+    // ARM THE WATCHDOG FIRST (R-6): the upgrade fetch below is fallible —
+    // before it was timed, a hang here could consume a fired alarm's handler
+    // and die before re-arming, leaving the DO with NO alarm at all: a dead
+    // watchdog that every per-minute cron poke then re-entered. Alarm before
+    // any fallible work, so the worst case is a wasted 30s tick, never silence.
+    const cur = await this.state.storage.getAlarm();
+    if (cur === null) await this.state.storage.setAlarm(Date.now() + ALARM_EVERY_MS);
     if (this.ws) return;
     // SHAPE PINNED (live samples via /radar/ws-status, 2026-07-11):
     // subscribeNewToken is FREE and answers anonymously; subscribeTokenTrade /
@@ -139,8 +150,11 @@ export class PumpTape {
     if (key) url += (url.includes("?") ? "&" : "?") + "api-key=" + key;
     try {
       // Workers outbound WebSocket: fetch with Upgrade, then accept().
+      // Timed (R-6): a hung upgrade throws into the catch below instead of
+      // freezing whichever caller (alarm or cron poke) awaited ensure().
       const resp = await fetch(url.replace(/^wss:/, "https:"), {
         headers: { Upgrade: "websocket" },
+        signal: AbortSignal.timeout(WS_CONNECT_TIMEOUT_MS),
       });
       const ws = (resp as any).webSocket as WebSocket | null;
       if (!ws) {
@@ -166,14 +180,19 @@ export class PumpTape {
       console.error("pumptape connect", e);
       this.ws = null;
     }
-    const cur = await this.state.storage.getAlarm();
-    if (cur === null) await this.state.storage.setAlarm(Date.now() + ALARM_EVERY_MS);
+    // (alarm already armed at the top — see R-6 note)
   }
 
   // Layer 2: the watchdog. Reconnect a dead/stale socket, sweep unresolved
   // plays past their 2:00 bell, prune coins past the tracking window.
   async alarm(): Promise<void> {
     const now = Date.now();
+    // RE-ARM FIRST (R-6): everything below can throw or hang (ensure()'s
+    // upgrade fetch, D1 writes), and a fired alarm is CONSUMED — if this
+    // handler died before setting the next one, the chain was dead and the
+    // watchdog with it. setAlarm before the fallible work makes the chain
+    // unbreakable; the sweep/reconnect below is best-effort per tick.
+    await this.state.storage.setAlarm(now + ALARM_EVERY_MS);
     if (this.ws && now - this.stats.lastMsgMs > STALE_SOCKET_MS) {
       try { this.ws.close(); } catch {}
       this.ws = null;
@@ -211,7 +230,7 @@ export class PumpTape {
         this.ws.send(JSON.stringify({ method: "unsubscribeTokenTrade", keys: pruned }));
       } catch {}
     }
-    await this.state.storage.setAlarm(now + ALARM_EVERY_MS);
+    // (next alarm already armed at the top — see R-6 note)
   }
 
   onMessage(data: unknown): void {
