@@ -54,8 +54,13 @@ Verify **through the deployment**: D1 via the Cloudflare MCP, untolled diagnosti
 ## Product boundary (HIGH finding if relaxed)
 - The public console/feed shows **which** coins clear the screen — never entry/exit
   prices, size, pool architecture, or method thresholds. Real trade prices stay private.
-- The **PossessioPool** ("the heart") is fed only by auto-launch fees + x402Core.
-  v2.6.3 (STEEL+hook) is the **customer's** product and is NOT connected to the pool;
+- The **PossessioPool** ("the heart") is **DESIGNED** to be fed only by auto-launch
+  fees + x402Core. This is intended architecture, **NOT yet wired in code** (audit
+  2026-07-14): `PossessioX402Core.sol` sweeps to its own treasury address with zero
+  references to the pool, and the factory→pool link is a documented "later upgrade."
+  Only `PossessioWhiskyMarket` actually calls `POOL.receiveInfraFunds`. State it as
+  design intent, never as built fact.
+- v2.6.3 (STEEL+hook) is the **customer's** product and is NOT connected to the pool;
   payments are NOT a pool source. Never put pool architecture on the public surface.
 
 ## Git
