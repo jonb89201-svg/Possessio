@@ -11,9 +11,6 @@
       "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
     }
   },
-  "lib/hookmate": {
-    "rev": "33408fbc15e083eb0bc4205fa37cb6ba0a926f44"
-  },
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.6.1",
