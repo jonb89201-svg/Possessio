@@ -1,12 +1,15 @@
 {
+  "lib/base-std": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "4658f1b7b54ccc61b036adc32830594018ea507e"
+    }
+  },
   "lib/chainlink-brownie-contracts": {
     "tag": {
       "name": "1.3.0",
       "rev": "5cb41fbc9b525338b6098da5ea7dd0b7e92f89e4"
     }
-  },
-  "lib/hookmate": {
-    "rev": "33408fbc15e083eb0bc4205fa37cb6ba0a926f44"
   },
   "lib/openzeppelin-contracts": {
     "tag": {

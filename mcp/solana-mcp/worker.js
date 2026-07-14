@@ -183,7 +183,7 @@ async function handleMcp(env, msg) {
 
 export default {
   async fetch(request, env) {
-    if (!env.ACCESS_KEY || env.ACCESS_KEY.length < 16 || !env.SOLANA_RPC) {
+    if (!env.ACCESS_KEY || env.ACCESS_KEY.length < 32 || !env.SOLANA_RPC) {
       return jsonResponse({ error: "worker not configured (secrets missing)" }, 503);
     }
 

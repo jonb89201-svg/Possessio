@@ -194,6 +194,9 @@ contract PossessioPaymentsH1SlippageTest is Test {
     uint256 constant MIN_BATCH = 10 * 1e6;
     uint256 constant DAI_CEILING = 2280 * 1e18;
     uint256 constant DAILY_LIMIT = 1000 * 1e18;
+    // C-2 — per-asset exit caps (sane values; this suite exercises sweep slippage)
+    uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;
+    uint256 constant CBETH_DAILY_LIMIT = 1 ether;
 
     // Oracle config (mirrors main suite healthy values):
     //   ETH/USD = $3000 (8-dec), USDC/USD = $1.00 (8-dec)
@@ -234,7 +237,9 @@ contract PossessioPaymentsH1SlippageTest is Test {
             lstRates:         address(lst),
             minSwapBatch:     MIN_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         }));
     }
 

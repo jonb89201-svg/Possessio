@@ -9,15 +9,16 @@ artifacts/
 # =========================
 # Dependencies
 # =========================
-lib/
+# NOTE: do NOT ignore lib/ — dependencies are git submodules (gitlinks are
+# tracked in-tree, submodule contents never are). Ignoring lib/ silently
+# blocked `git submodule add` / `forge install` for new deps (base-std).
 
 # =========================
 # Node (if any frontend tools)
 # =========================
 node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# NOTE: lockfiles (package-lock.json etc.) are COMMITTED, never ignored —
+# CI uses `npm ci`, and an unpinned production worker is a supply-chain hole.
 
 # =========================
 # Environment / Secrets
@@ -67,3 +68,4 @@ __pycache__/
 
 # Wrangler local secrets (NEYNAR_API_KEY etc) — NEVER commit
 .dev.vars
+.dev.vars.*

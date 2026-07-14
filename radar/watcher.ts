@@ -43,6 +43,33 @@ function wfetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(WATCH_FETCH_TIMEOUT_MS) });
 }
 
+// R-1 (AUDIT 2026-07-14): raw_birth_json must be VALID JSON, always. The old
+// JSON.stringify(it).slice(0, 4000) truncated any >4KB payload MID-DOCUMENT
+// (a creator-controlled long description is enough), and SQLite's
+// json_extract() THROWS "malformed JSON" on a truncated document — so one bad
+// row 500'd every /radar/candidates poll for as long as it sat in the feed
+// window. Externally triggerable outage of the public surface. The fix: keep
+// the full payload when it fits the cap; when it doesn't, store a SLIMMED
+// object of the fields downstream actually reads (json_extract '$.image_uri'
+// in x402-toll.ts) plus the free signals the roadmap names — a smaller valid
+// document, never an invalid big one. (x402-toll.ts additionally guards its
+// json_extract with json_valid() so historical bad rows can't 500 the feed.)
+const RAW_BIRTH_MAX_CHARS = 4000;
+export function rawBirthJson(it: any): string {
+  const full = JSON.stringify(it);
+  if (full.length <= RAW_BIRTH_MAX_CHARS) return full;
+  return JSON.stringify({
+    image_uri: it.image_uri ?? null,                       // the feed card image (read live)
+    twitter: it.twitter ?? null,                           // roadmap: CT narrative detection
+    telegram: it.telegram ?? null,
+    website: it.website ?? null,
+    reply_count: it.reply_count ?? null,                   // roadmap: hype signal
+    last_trade_timestamp: it.last_trade_timestamp ?? null, // roadmap: trade recency
+    description: typeof it.description === "string" ? it.description.slice(0, 500) : null,
+    slimmed: true, // marker: source payload was oversize; full document intentionally dropped
+  });
+}
+
 export async function birthScan(env: WatcherEnv): Promise<void> {
   if (!env.PUMPFUN_FEED_URL) {
     console.warn("PUMPFUN_FEED_URL unset — birthScan idle (VERIFY-FIRST gate)");
@@ -95,7 +122,7 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
         numOrNull(it.created_timestamp ?? it.createdAt),
         now,
         numOrNull(it.usd_market_cap ?? it.marketCapUsd),
-        JSON.stringify(it).slice(0, 4000)
+        rawBirthJson(it) // R-1: valid JSON always — full if <=4KB, else the slimmed field subset
       )
     );
   }

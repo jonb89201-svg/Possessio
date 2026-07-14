@@ -49,8 +49,10 @@ failure - see `STATEMENT_console_markets_final.md`.
 
 ## Console - LIVE
 - **Deploy:** Cloudflare Worker `possessio`, **git-connected to `main`**,
-  serves **only `./public/`** via `wrangler.jsonc`. Every push to `main`
-  auto-rebuilds. `possessio.jonb89201.workers.dev` live; `possessio.io`
+  runs `worker/index.ts` via `wrangler.jsonc`: routes `/api/*` (the
+  testnet drip endpoint) and serves `./public/` for everything else
+  (assets-first — asset hits never reach the script). Every push to
+  `main` auto-rebuilds. `possessio.jonb89201.workers.dev` live; `possessio.io`
   apex is the last dashboard step (no www).
 - **`public/index.html` (v0.5.0), top to bottom:** header (brand, Pre-deploy
   tag, chain select Base/Ethereum L1, Connect Wallet / Launch / Markets,
@@ -176,8 +178,9 @@ failure - see `STATEMENT_console_markets_final.md`.
 - **Live D1 VERIFIED by read-back** (`possessio-radar-ledger`
   e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde): exactly 4 tables (births,
   sessions, spends, trades) + 6 indexes; `spends` DDL matches
-  migration_0002 byte-for-byte. Recorded as `radar/schema.live.sql`
-  (read-back provenance) + `radar/migrations/0002_spends.sql`.
+  migration_0002 byte-for-byte. Recorded as `radar/schema.sql` (the
+  authored mirror later replaced the original `schema.live.sql`
+  read-back copy) + `radar/migrations/0002_spends.sql`.
 - **VERIFY-FIRST catch:** the handed-off toll snapshot named `x402-hono`
   (v1) - that package is DEPRECATED (security patches only). Current
   official stack is x402 v2: `@x402/hono` 2.17.0 + `@x402/core` +
@@ -208,7 +211,9 @@ failure - see `STATEMENT_console_markets_final.md`.
   frontend-api-v3 /coins route answers 200 ANONYMOUSLY, newest-first,
   shape matches the normalizer (mint / created_timestamp /
   usd_market_cap). PUMPFUN_FEED_URL set in radar/wrangler.jsonc
-  (limit=50 lookback, includeNsfw=true); normalizer pinned with the
+  (limit=1000 lookback — originally 50, raised via R-3 then R-9 so
+  the screen's 10-min tracking window stays covered at burst birth
+  rates; includeNsfw=true); normalizer pinned with the
   unit-corruption rule (usd_market_cap only, never SOL-denominated
   market_cap).
 - **graduation_dex (migration 0004, 2026-07-07) - the anomaly was

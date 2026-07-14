@@ -1,13 +1,21 @@
--- 0017: index mc_ticks(ms) — RELIABILITY.
+-- 0017: index mc_ticks(ms) — A NO-OP (correction, AUDIT 2026-07-14 R-4).
 --
--- The tape prune runs every screenScan: DELETE FROM mc_ticks WHERE ms < ?.
--- mc_ticks' PK is (token_address, ms), so a predicate on ms ALONE cannot use
--- the composite index — it full-scans the whole table (340MB+ and growing)
--- every pass. As the table grew this got slower each tick and likely helped
--- push screenScan over its time budget, contributing to the tape stalling
--- while the lighter cron-siblings (birthScan/btcScan) kept running.
+-- HISTORY, KEPT HONEST: this migration shipped 2026-07-13 with a diagnosis
+-- that the tape prune (DELETE FROM mc_ticks WHERE ms < ?) was full-scanning a
+-- 340MB table because the composite PK (token_address, ms) can't serve a
+-- predicate on ms alone, and that the scan contributed to the tape stall. The
+-- reasoning about the PK was correct — but the prescribed index ALREADY
+-- EXISTED: 0009_earlies_ticks.sql created idx_mc_ticks_ms with this identical
+-- definition, so the IF NOT EXISTS below matched and CHANGED NOTHING, live or
+-- fresh. Every mc_ticks query was index-served the whole time: the prune and
+-- the feed's ms-range read (x402-toll.ts) use idx_mc_ticks_ms, the per-token
+-- conviction count (screen.ts) uses the PK prefix. Whatever share of the
+-- stall this migration was credited with fixing remains UNVALIDATED — the
+-- real fix was the single-pass rework (b5b32ff), and the R-7 watchdog
+-- (index.ts) now screams if the tape goes quiet again.
 --
--- An index on ms makes the range-delete (and the freshness/window queries)
--- cheap. Applied live to possessio-radar-ledger 2026-07-13.
+-- Applied live to possessio-radar-ledger 2026-07-13 (as a no-op). Statement
+-- kept verbatim: this migration already ran in production and its semantics
+-- must not change.
 
 CREATE INDEX IF NOT EXISTS idx_mc_ticks_ms ON mc_ticks(ms);

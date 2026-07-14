@@ -1,14 +1,14 @@
 name: radar-refresh
 
-# Auto-redeploys possessio-radar every 3 hours. The 15s-feed sub-tick loop in
-# screenScan stalls after ~4h of runtime; a redeploy spins a fresh isolate and
-# resets it. 3h stays comfortably under the observed ~4.4h stall. Also runnable
-# on demand from the Actions tab (workflow_dispatch).
+# Auto-redeploys possessio-radar every 3 hours. Originally a mitigation for
+# the 15s sub-tick loop stall (removed in b5b32ff — single-pass scan now);
+# kept as a safety redeploy + on-demand deploy from the Actions tab
+# (workflow_dispatch).
 #
 # REQUIRES: a repo Actions secret named CLOUDFLARE_API_TOKEN.
-# GOTCHA: GitHub runs scheduled workflows ONLY from the default branch (main),
-# so this file must live on main. It checks out the radar dev branch to deploy
-# that code. Update `ref:` if the dev branch changes/merges.
+# GOTCHA: GitHub runs scheduled workflows ONLY from the default branch (main).
+# Deploys main — the radar dev branch merged in PR #14; deploying the frozen
+# dev branch here was silently reverting every later merge to main.
 
 on:
   schedule:
@@ -20,14 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: claude/internet-access-xdttz9
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # npm ci ONLY — the committed radar/package-lock.json is the reviewed
+      # supply chain. The old `|| npm install` fallback silently re-resolved
+      # every dependency range on each scheduled deploy (AUDIT R-2); if ci
+      # fails now, the deploy fails loudly, which is the point.
       - name: Install radar deps
         working-directory: radar
-        run: npm ci || npm install
+        run: npm ci
       - name: Deploy radar worker
         working-directory: radar
         run: npx wrangler deploy

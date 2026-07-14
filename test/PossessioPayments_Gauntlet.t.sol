@@ -360,6 +360,21 @@ contract MockMorphoVault_G {
         if (totalShares == 0) return shares;
         return (shares * totalAssets_) / totalShares;
     }
+
+    // C-2 (audit 2026-07-14) — ERC4626 redeem for the redeemMorpho exit path.
+    function redeem(uint256 shares, address receiver, address owner)
+        external returns (uint256 assets)
+    {
+        require(msg.sender == owner, "MockMorphoVault_G: not owner");
+        require(_shares[owner] >= shares, "MockMorphoVault_G: insuf shares");
+        assets = totalShares == 0 ? shares : (shares * totalAssets_) / totalShares;
+        _shares[owner] -= shares;
+        totalShares    -= shares;
+        totalAssets_   -= assets;
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        usdc.transfer(receiver, assets);
+        return assets;
+    }
 }
 
 /**
@@ -444,6 +459,9 @@ contract PossessioPaymentsGauntlet is Test {
     uint256 constant MIN_BATCH    = 100 * 1e6;
     uint256 constant DAI_CEILING  = 5_000 * 1e18;
     uint256 constant DAILY_LIMIT  = 1_000 * 1e18;
+    // C-2 (audit 2026-07-14) — per-asset exit caps under adversarial test
+    uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;  // 1,000 USDC/24h
+    uint256 constant CBETH_DAILY_LIMIT = 1 ether;      // 1 cbETH/24h
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -493,7 +511,9 @@ contract PossessioPaymentsGauntlet is Test {
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         });
     }
 
@@ -643,6 +663,56 @@ contract PossessioPaymentsGauntlet is Test {
     //   ThresholdReached event no longer exists. Spam protection invariant
     //   no longer applicable.
     // ───────────────────────────────────────────────────────────────────────
+
+    // ───────────────────────────────────────────────────────────────────────
+    // C-2 (audit 2026-07-14): COMPROMISED-OWNER SINGLE-CALL DRAIN
+    //
+    // Pre-fix, a stolen OWNER key could empty USDC / cbETH / Morpho in one
+    // transaction each — the daily-limit machinery only covered the DAI leg.
+    // The attack must now hit DailyLimitExceeded on every exit path; only the
+    // 7-day emergency queue (freezable + cancellable by the Guardian) can
+    // move more than a daily cap.
+    // ───────────────────────────────────────────────────────────────────────
+
+    function test_Attack_CompromisedOwnerCannotDrainExitsInOneCall() public {
+        // Stuff every treasury pocket well above its daily cap.
+        usdc.mint(address(payments), USDC_DAILY_LIMIT * 10);
+        cbeth.mint(address(payments), CBETH_DAILY_LIMIT * 10);
+        usdc.mint(address(this), USDC_DAILY_LIMIT * 5);
+
+        // Seed Morpho shares worth 5x the USDC cap (deposit as the contract).
+        vm.startPrank(address(payments));
+        usdc.mint(address(payments), USDC_DAILY_LIMIT * 5);
+        usdc.approve(address(morphoVault), USDC_DAILY_LIMIT * 5);
+        uint256 shares = morphoVault.deposit(USDC_DAILY_LIMIT * 5, address(payments));
+        vm.stopPrank();
+
+        // One-call full-balance drains must all fail on the daily caps.
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendUSDC(USDC_DAILY_LIMIT * 10, ATTACKER);
+
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.sendCbETH(CBETH_DAILY_LIMIT * 10, ATTACKER);
+
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.redeemMorpho(shares, ATTACKER);
+
+        // Raising a cap is not instant either — the increase sits behind
+        // LIMIT_DELAY, giving the Guardian its reaction window.
+        vm.prank(MERCHANT);
+        payments.queueAssetDailyLimitIncrease(
+            PossessioPayments.DailyLimitAsset.USDC, USDC_DAILY_LIMIT * 100
+        );
+        vm.expectRevert(PossessioPayments.TimelockNotPassed.selector);
+        vm.prank(MERCHANT);
+        payments.executeAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.USDC);
+
+        assertEq(usdc.balanceOf(ATTACKER), 0, "no USDC escaped");
+        assertEq(cbeth.balanceOf(ATTACKER), 0, "no cbETH escaped");
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     //              ROLE ESCALATION & UNAUTHORIZED ACCESS ATTACKS

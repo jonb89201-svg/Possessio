@@ -30,7 +30,18 @@ ffi = true  # SymmetryGuardCore.t.sol shells to script/gen_proof.py via vm.ffi
 fs_permissions = [{ access = "read", path = "./test/fixtures" }]  # vm.etch CreateX runtime for the offline salt-pool CREATE3 test
 
 remappings = [
-    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/"
+    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/",
+    # hookmate ships a node_modules-relative forge-std remapping that doesn't
+    # exist in a submodule checkout — pin forge-std to v4-core's vendored copy.
+    "forge-std/=lib/v4-core/lib/forge-std/src/"
+]
+
+# Foundry 1.x requires a compiler profile to exist that satisfies each
+# compilation restriction below — these declare the runs=10000 / runs=800
+# variants the restrictions select.
+additional_compiler_profiles = [
+    { name = "runs-10000", optimizer_runs = 10000 },
+    { name = "runs-800", optimizer_runs = 800 },
 ]
 
 # Hardcoded per-contract optimizer presets (only contracts that differ from

@@ -2922,10 +2922,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<div class="fh">Test wallet is low on fuel' +
       '<span class="lr-i" role="button" tabindex="0" onclick="LaunchRail.info(\'lr-ifuel\')">i</span></div>' +
       '<div class="lr-ip" id="lr-ifuel">Free test fuel so you can try a launch — this is practice money on a test network, worth nothing.' +
-      '<div class="tech">PossessioTestnetLaunchPool ' + (S.pool || "(deploying)") + ' · Base Sepolia · 0.02 test ETH + 100 test USDC per draw · 12 h cooldown per address · honest errors: POOL_EMPTY / COOLDOWN_ACTIVE</div></div>' +
+      '<div class="tech">PossessioTestnetLaunchPool ' + escapeHtml(S.pool || "(deploying)") + ' · Base Sepolia · 0.02 test ETH + 100 test USDC per draw · 12 h cooldown per address · honest errors: POOL_EMPTY / COOLDOWN_ACTIVE</div></div>' +
       '<div class="fb" style="font-size:13.5px;color:var(--ink-dim)">Balance: ' + ethS + ' ETH · ' + usdcS + ' USDC — a launch needs ~0.005 ETH gas' + (S.low.usdc ? " + 100 USDC fee" : "") + '.</div>' +
       '<button class="lr-go t" id="lr-fuel-btn" onclick="TestnetFuel.fuel()"' + (S.busy ? " disabled" : "") + '>' + (S.busy ? "Fueling…" : "Fuel from pool") + '</button>' +
-      (S.msg ? '<div class="fstat">' + S.msg + '</div>' : '');
+      // S.msg / S.pool carry RPC + drip-API text (revert strings, j.error) —
+      // dynamic, so they go through the page's escapeHtml at the sink.
+      (S.msg ? '<div class="fstat">' + escapeHtml(S.msg) + '</div>' : '');
   }
 
   /* Hook: after the live rail inits on the Deploy step, run the fuel check.

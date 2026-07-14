@@ -65,8 +65,17 @@ contract PossessioHookCreate3ForkTest is Test {
 
     uint160 constant ALL_HOOK_MASK = uint160((1 << 14) - 1); // low 14 permission bits
 
+    bool internal forked;
+
     function setUp() public {
-        vm.createSelectFork(vm.envString("BASE_RPC_URL"));
+        // Skip cleanly without BASE_RPC_URL — same discipline as the other
+        // fork suites (PossessioFactoryFork, PaymentsFork, LSTExchangeRateFork).
+        try vm.envString("BASE_RPC_URL") returns (string memory rpc) {
+            vm.createSelectFork(rpc);
+        } catch {}
+        forked = (block.chainid == 8453);
+        if (!forked) return;
+
         // This test is meaningless if the architect-only fills are blank.
         require(address(POOL_MANAGER) != address(0), "set POOL_MANAGER");
         require(DEPLOYER != address(0), "set DEPLOYER");
@@ -98,6 +107,7 @@ contract PossessioHookCreate3ForkTest is Test {
 
     // 1. The real mine-and-deploy pipeline lands at the flagged address.
     function test_create3_deploys_to_mined_0x8C8_address() public {
+        if (!forked) return;
         vm.prank(DEPLOYER);
         address deployed = CREATEX.deployCreate3(MINED_SALT, _hookInitCode());
 
@@ -110,6 +120,7 @@ contract PossessioHookCreate3ForkTest is Test {
     //    mined address. Catches the "app fires from a different wallet than the
     //    one mined-for" False Green.
     function test_wrong_sender_cannot_reach_mined_address() public {
+        if (!forked) return;
         address wrongSender = address(0xBEEF);
         vm.assume(wrongSender != DEPLOYER);
 
@@ -125,6 +136,7 @@ contract PossessioHookCreate3ForkTest is Test {
     //    Hooks.validateHookPermissions internally; if the address bits did not
     //    match the hook's declared permissions, this reverts.
     function test_live_poolManager_accepts_hook() public {
+        if (!forked) return;
         vm.prank(DEPLOYER);
         address hook = CREATEX.deployCreate3(MINED_SALT, _hookInitCode());
 

@@ -4,7 +4,7 @@
 //
 // NON-PROVEN end-to-end in the sandbox: the Jupiter calls are network-
 // blocked here. The GATING logic (F-1, session/rug/entry gates, caps,
-// mode triple-gate) is unit-proven (test/constitution.test.js, 19/19).
+// mode triple-gate) is unit-proven (test/constitution.test.js).
 // The Architect proves the live quote->build->sign->land path on device.
 //
 // Activation is bound by RULEBOOK Sec4: this ships build-mode only;
@@ -23,6 +23,16 @@ const { sessionGate } = require("./sessiongate");
 const { entryOk, exitTrigger } = require("./method");
 const ledger = require("./ledger");
 const jupiter = require("./adapters/jupiter");
+
+// W-2 hard guard. The gate "facts" (mintRenounced, lpLockedOrBurned,
+// creatorHoldingPct, mc, vol...) arrive as TOOL ARGUMENTS - the caller's
+// word, not chain reads. scripts/deviceverify.js proves only the live
+// quote->build network path; it verifies NONE of these facts. RULEBOOK
+// Sec4 requires the server to verify them on-device (its own RPC reads)
+// before hot execution can exist. This constant stays false until that
+// verification layer is real code; flipping it without wiring chain
+// reads is a constitutional violation, not a config change.
+const FACTS_VERIFIED_ON_DEVICE = false;
 
 const rt = runtimeEnv();
 const nowIso = () => new Date().toISOString();
@@ -57,7 +67,8 @@ server.tool("check_method", "Entry admissibility and/or exit trigger for supplie
     : exitTrigger(a, LAW)));
 
 // --- Sec5 ledger stats ---
-server.tool("get_ledger_stats", "Today's filled-trade count and exposure vs caps.", {},
+server.tool("get_ledger_stats",
+  "Today's cap usage (filled+built) and performance truth (filled only) vs caps.", {},
   async () => text({ ...ledger.todayStats(rt.ledgerPath, day()),
     caps: { maxTradesPerDay: rt.maxTradesPerDay, maxDailyExposureUsd: rt.maxDailyExposureUsd } }));
 
@@ -101,8 +112,10 @@ server.tool("build_trade",
         amountAtomic: f.amountAtomic, slippageBps: Math.min(a.slippageBps, rt.maxSlippageBps) });
       const built = await jupiter.buildSwapTx(rt, { quoteResponse: q, userPublicKey: a.userPublicKey });
 
+      // W-1: an unsigned build is NOT a fill. "built" consumes the daily
+      // cap budget (conservative) but stays out of net-return truth.
       ledger.append(rt.ledgerPath, ledger.record({
-        ts: nowIso(), tokenAddress: mint, outcome: "filled", entryMc: f.mc,
+        ts: nowIso(), tokenAddress: mint, outcome: "built", entryMc: f.mc,
         sessionGate: sg, rugGate: rg, notionalUsd: a.notionalUsd, reason: "build payload issued" }));
       return text({ mode: "build", unsignedTx: built.unsignedTxBase64,
         note: "UNSIGNED. Sign in your wallet / dedicated trading wallet.",
@@ -124,6 +137,16 @@ server.tool("execute_trade",
     if (m.mode !== "hot") {
       return text({ refused: true, reason: m.reason,
         next: "Call build_trade for the unsigned payload." });
+    }
+    // W-2 hard guard, checked BEFORE any signer question: hot execution
+    // on caller-asserted facts is forbidden regardless of key ceremony.
+    // Wiring a signer does not open this path - only a real on-device
+    // fact-verification layer (and flipping FACTS_VERIFIED_ON_DEVICE
+    // with it) can.
+    if (!FACTS_VERIFIED_ON_DEVICE) {
+      return text({ refused: true,
+        reason: "facts are caller-asserted, not device-verified: RULEBOOK Sec4 forbids hot execution until the server verifies mint/LP/creator%/MC via its own chain reads (FACTS_VERIFIED_ON_DEVICE).",
+        next: "Use build_trade; the Architect verifies facts and signs on device." });
     }
     // Hot execution is intentionally NOT implemented pre key-ceremony
     // (RULEBOOK Sec4 activation sequence step 4). The gates can pass in

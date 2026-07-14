@@ -11,7 +11,11 @@ function record(fields) {
     ts: fields.ts,                         // ISO string (caller stamps - keeps this pure/testable)
     tokenAddress: fields.tokenAddress || null,
     chain: fields.chain || "solana",
-    outcome: fields.outcome,               // "filled" | "skipped" | "refused"
+    outcome: fields.outcome,               // "filled" | "built" | "skipped" | "refused"
+    // W-2: where the gate inputs came from. Until the server reads
+    // mint/LP/creator% from the chain itself, every row is honest about
+    // running on the caller's word - never claim device-verified facts.
+    factsSource: fields.factsSource ?? "caller-asserted",
     pumpFirstSeen: fields.pumpFirstSeen ?? null,
     dexFirstSeen: fields.dexFirstSeen ?? null,   // gap vs pumpFirstSeen = the edge proxy
     sessionGate: fields.sessionGate ?? null,     // { ratio, cutoff, play }
@@ -44,16 +48,31 @@ function readAll(ledgerPath) {
     .filter(Boolean);
 }
 
-// Sec3 daily caps read from here. Only FILLED trades count toward the
-// notional caps; skips/refusals are logged but do not consume exposure.
+// Sec3 daily caps read from here. Cap accounting is CONSERVATIVE: both
+// "filled" and "built" rows consume the daily count/exposure budget (an
+// unsigned build reserves the notional it asked for, so build spam cannot
+// mint unlimited payloads). Skips/refusals never consume exposure.
+// Performance truth (Sec5 net-return) is STRICTER: only "filled" rows -
+// a build is an unsigned payload, not a trade, and must never inflate
+// the record the method is judged by.
+const CAP_OUTCOMES = new Set(["filled", "built"]);
+
 function todayStats(ledgerPath, dayIso) {
   const day = dayIso; // "YYYY-MM-DD"
   const rows = readAll(ledgerPath).filter(
-    (r) => r.outcome === "filled" && typeof r.ts === "string" && r.ts.slice(0, 10) === day
+    (r) => typeof r.ts === "string" && r.ts.slice(0, 10) === day
   );
+  const capRows = rows.filter((r) => CAP_OUTCOMES.has(r.outcome));
+  const filled = rows.filter((r) => r.outcome === "filled");
+  const sumUsd = (rs, k) => rs.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   return {
-    todayCount: rows.length,
-    todayExposureUsd: rows.reduce((s, r) => s + (Number(r.notionalUsd) || 0), 0),
+    // caps view (Sec3): filled + built
+    todayCount: capRows.length,
+    todayExposureUsd: sumUsd(capRows, "notionalUsd"),
+    // performance view (Sec5): filled ONLY
+    filledCount: filled.length,
+    filledExposureUsd: sumUsd(filled, "notionalUsd"),
+    netReturnUsd: sumUsd(filled, "netReturn"),
   };
 }
 

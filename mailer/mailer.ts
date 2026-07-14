@@ -6,10 +6,17 @@
 //
 // Deliberately paced: sends a small batch per tick, not everything at once --
 // this is outreach to real people, not a blast list.
+//
+// GET /status is gated: it leaks pipeline counts, so it requires
+// `Authorization: Bearer <STATUS_KEY>` where STATUS_KEY is a worker secret
+// (wrangler secret put STATUS_KEY - long random, >= 32 chars). Wrong or
+// missing token gets a bare 404 - the endpoint never confirms it exists.
+// Compare is the same timing-safe-ish pattern as mcp/solana-mcp/worker.js.
 
 export interface MailerEnv {
   LEADS_DB: D1Database;
   RESEND_API_KEY: string;
+  STATUS_KEY: string;   // wrangler secret - bearer token for GET /status
   FROM_EMAIL: string;   // e.g. "jon@possessio.io"
   FROM_NAME: string;    // e.g. "Jon Solo"
   MAX_PER_TICK: string; // small batch size per cron run
@@ -97,16 +104,33 @@ export async function runMailerTick(env: MailerEnv): Promise<{ sent: number; fai
   return { sent, failed };
 }
 
+// Constant-time-ish token compare (same pattern as mcp/solana-mcp/worker.js
+// keyMatches - length leak is fine for a random 32+ char secret).
+function keyMatches(given: string, expected: string): boolean {
+  const enc = new TextEncoder();
+  const a = enc.encode(given), b = enc.encode(expected);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
 export default {
   async fetch(request: Request, env: MailerEnv): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/status") {
+      // Fail closed: no STATUS_KEY secret set, or no/wrong bearer -> bare 404.
+      const auth = request.headers.get("authorization") || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+      if (!env.STATUS_KEY || !token || !keyMatches(token, env.STATUS_KEY)) {
+        return new Response("not found", { status: 404 });
+      }
       const counts = await env.LEADS_DB.prepare(
         `SELECT status, COUNT(*) as n FROM leads GROUP BY status`
       ).all();
       return Response.json({ counts: counts.results });
     }
-    return new Response("possessio-mailer: see /status", { status: 200 });
+    return new Response("possessio-mailer", { status: 200 });
   },
 
   async scheduled(_event: ScheduledEvent, env: MailerEnv, ctx: ExecutionContext): Promise<void> {

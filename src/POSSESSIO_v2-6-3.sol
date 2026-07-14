@@ -13,6 +13,41 @@ pragma solidity ^0.8.24;
  * POSSESSIO PROTOCOL — v2.6.3 (STEEL + Chainlink Automation + Aerodrome cbETH route)
  * Protocol Liquidity Asset Treasury Engine, rebuilt as Uniswap V4 hook
  *
+ * AUDIT REMEDIATION (2026-07-14, AUDIT_20260714 findings C-1 / C-4 / C-5):
+ *   · C-1 (HIGH) — cbETH harvest was permanently dead. cbETH is NON-REBASING:
+ *     balanceOf never grows; rewards accrue exclusively via cbETH/ETH
+ *     exchange-rate appreciation (this contract's own staking comments say
+ *     so). Yet _harvestRewards computed rewards as
+ *     (cbETH.balanceOf(this) - cbETHPrincipal) with cbETHPrincipal tracking
+ *     the balance exactly, so harvest ALWAYS reverted ZeroAmount, the
+ *     checkUpkeep HARVEST branch could never become true, and rescueToken
+ *     blocks cbETH — 75% of every captured fee converted into a one-way trap.
+ *     Fix: VALUE-BASED harvest. New cbETHPrincipalETH accumulates the ETH-wei
+ *     consumed by each staking deploy; harvest values the live cbETH balance
+ *     via the existing Chainlink cbETH/ETH exchange-rate feed (the same feed
+ *     _computeHarvestSlippageGuard already uses) and swaps out only the
+ *     ETH-denominated excess:
+ *         currentValueETH = cbBal * rate / 1e18
+ *         excessETH       = currentValueETH - cbETHPrincipalETH
+ *         rewardsCbETH    = excessETH * 1e18 / rate
+ *     The ETH principal stays constant across harvests. Oracle-health guards
+ *     keep the revert-and-retry-next-cycle semantics. HARVEST_DUST_FLOOR now
+ *     gates the ETH-denominated excess on BOTH checkUpkeep and the execution
+ *     path (value-math rounding residue below the floor is unharvestable by
+ *     design, never a gas-burn loop). checkUpkeep's HARVEST predicate mirrors
+ *     the execution math exactly, so it can actually fire. cbETHPrincipal
+ *     (cbETH-wei) is retained as a pure acquisition record — see its NatSpec.
+ *   · C-4 (LOW) — the 0.1% permissionless-caller reward was a production
+ *     no-op: it was paid from address(this).balance AFTER routing had already
+ *     spent the entire accumulator, so the balance guard failed unless the
+ *     hook happened to hold untracked surplus ETH. Fix: the reward is carved
+ *     out of `total` BEFORE the split; routing distributes (total - reward)
+ *     and the reward is paid last, best-effort, CEI preserved. Exemptions
+ *     unchanged (Treasury, automation forwarder, address(this)).
+ *   · C-5 (LOW) — FeeCaptured now logs beforeSwap's `sender` parameter (the
+ *     router/caller that invoked PoolManager.swap) instead of tx.origin, so
+ *     indexers no longer misattribute router-mediated swaps.
+ *
  * v2.6.3 (2026-05-30 RECONSTRUCTION) — supersedes the 2026-05-24 carry-through
  *   entry below, which is REVERTED (retained for lineage). Size + green
  *   reduction: revert the v2.6 dispatch and the 2026-05-24 carry-through
@@ -387,8 +422,15 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
     // ─── Chainlink Automation constants (council IV.1, IV.4 — ratified 2026-05-12) ───
 
-    /// @notice IV.1 — minimum cbETH excess above principal before harvest upkeep triggers.
+    /// @notice IV.1 — minimum harvestable excess before harvest triggers.
     ///         Prevents gas-burn loops on rounding dust.
+    ///         C-1 fix (audit 2026-07-14): the floor is ETH-DENOMINATED — it gates
+    ///         the exchange-rate-appreciation excess (currentValueETH −
+    ///         cbETHPrincipalETH), not a cbETH balance delta (which can never occur
+    ///         on non-rebasing cbETH). It is enforced by BOTH checkUpkeep and
+    ///         _harvestRewards so the value-based rounding residue each harvest
+    ///         leaves behind (≲ a few wei) can never re-arm the upkeep or trigger a
+    ///         dust-sized swap.
     uint256 public constant HARVEST_DUST_FLOOR = 0.001 ether;
 
     /// @notice IV.4 — multiplier for checkUpkeep hysteresis buffer (basis 100).
@@ -476,7 +518,27 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
     // Treasury state
     // v3 — daiReserve removed; the ETH reserve slice stays in-contract (no DAI).
+
+    /// @notice Cumulative cbETH-wei acquired by _deployToStaking.
+    ///         C-1 fix (audit 2026-07-14): this is now a pure ACQUISITION RECORD
+    ///         (console/monitoring surface) and is no longer consumed by harvest
+    ///         math. cbETH is non-rebasing, so the v2.5 "balance minus principal"
+    ///         comparison (both in cbETH-wei) was identically zero and the harvest
+    ///         path was dead. After harvests the live cbETH balance may drop below
+    ///         this record — harvest sells the appreciation excess — which is
+    ///         expected, not principal loss; the ETH-value baseline lives in
+    ///         cbETHPrincipalETH below.
     uint256 public cbETHPrincipal;
+
+    /// @notice C-1 fix (audit 2026-07-14) — cumulative ETH-wei consumed to acquire
+    ///         the cbETH treasury, recorded at acquisition time. THE harvest
+    ///         baseline: the cbETH holding is valued via the Chainlink cbETH/ETH
+    ///         exchange-rate feed and only the value in excess of this principal is
+    ///         harvestable. Constant across harvests; grows only when routeETH
+    ///         deploys to staking. (Supersedes the v2.5 "semantic shift" that moved
+    ///         principal accounting to cbETH-wei — that shift is what killed the
+    ///         harvest path on a non-rebasing token.)
+    uint256 public cbETHPrincipalETH;
 
     // Circuit breaker
     bool public routingPaused;
@@ -559,6 +621,12 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
     // ═══════════════════════════════════════════════════════════════════════
 
     // Fee / routing events
+
+    /// @notice Emitted on every fee capture in beforeSwap.
+    /// @param  swapper C-5 fix (audit 2026-07-14): the `sender` PoolManager hands to
+    ///         beforeSwap — i.e. the router/periphery contract (or direct caller)
+    ///         that invoked PoolManager.swap. Previously tx.origin, which
+    ///         misattributed router-mediated swaps to the transaction originator.
     event FeeCaptured(address indexed swapper, uint256 ethAmount, uint256 accumulated, uint256 timestamp);
     event ETHRouted(uint256 total, uint256 toLP, uint256 toDAI, uint256 toStaking, uint256 timestamp);
     event LiquidityAdded(uint256 ethIn, uint256 steelIn, uint256 timestamp);
@@ -854,7 +922,7 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
      *      paused. Fees accumulate safely; only treasury routing is halted.
      */
     function beforeSwap(
-        address /* sender */,
+        address sender,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata /* hookData */
@@ -926,7 +994,9 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
             delta = toBeforeSwapDelta(int128(0), feeETH.toInt256().toInt128());
         }
 
-        emit FeeCaptured(tx.origin, feeETH, accumulatedETH, block.timestamp);
+        // C-5 fix (audit 2026-07-14): attribute the capture to the swap initiator
+        // PoolManager actually hands us (the router/caller), not tx.origin.
+        emit FeeCaptured(sender, feeETH, accumulatedETH, block.timestamp);
         return (this.beforeSwap.selector, delta, uint24(0));
     }
 
@@ -999,17 +1069,35 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         uint256 total = accumulatedETH;
         if (total == 0) revert ZeroAmount();
 
+        // --- C-4 fix (audit 2026-07-14): carve the caller reward out FIRST ---
+        // The reward used to be paid from address(this).balance AFTER routing
+        // had spent the entire accumulator, so the balance guard failed in
+        // production (it only "worked" in tests that dealt surplus ETH) and the
+        // reward silently skipped. Carving 0.1% out of `total` before the split
+        // guarantees the ETH is still in the contract when the reward is paid.
+        // Exemptions unchanged: Treasury, the automation forwarder (paid in
+        // LINK), and address(this) (defense-in-depth, never the predicate
+        // here). v2.6.3 uses msg.sender directly: with direct dispatch there is
+        // no address(this) context shift, so msg.sender is the real caller and
+        // the v2.6.2 reward-skip regression cannot occur.
+        bool rewardEligible = msg.sender != TREASURY_SAFE
+            && msg.sender != automationForwarder
+            && msg.sender != address(this);
+        uint256 reward   = rewardEligible ? total / 1000 : 0; // 0.1% of routed
+        uint256 routable = total - reward;
+
         // --- v3 slippage computed here at execution time -----------------
         // Only the cbETH leg needs a slippage guard now (DAI leg removed).
-        (uint256 minCbETH, ) = _computeRouteSlippageGuards(total);
+        // C-4: guard sized from `routable` — the amount that actually routes.
+        (uint256 minCbETH, ) = _computeRouteSlippageGuards(routable);
 
         // Compute allocations upfront (matching v1 safety pattern)
         // v3 — DAI leg removed. Treasury serves as the reserve directly: the
         // 20%-of-75% that formerly swapped ETH→DAI now simply STAYS as ETH in
         // the contract (Treasury Safe withdraws it as needed). Staking keeps its
         // original 80%-of-75% proportion — the freed slice does NOT flow to it.
-        uint256 toLP       = (total * LP_PCT) / 100;
-        uint256 toTreasury = total - toLP;
+        uint256 toLP       = (routable * LP_PCT) / 100;
+        uint256 toTreasury = routable - toLP;
         // v3 — full treasury portion routes to cbETH staking. No in-contract
         // carve-out: the reserve function lives in PossessioPayments (the base
         // contract owns the DAI reserve), so the hook deduplicates it and holds
@@ -1030,22 +1118,20 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
         // ETHRouted: toDAI always 0 (DAI leg cut); full treasury portion routes
         // to staking (no in-contract reserve — Payments holds the reserve).
+        // `total` keeps its historical meaning (full accumulator drained);
+        // C-4: toLP + toStaking = total - reward.
         emit ETHRouted(total, toLP, 0, toStaking, block.timestamp);
 
-        // Permissionless caller reward (0.1%). Exempt: Treasury, the automation
-        // forwarder (paid in LINK), and address(this) (defense-in-depth, never
-        // the predicate here). v2.6.3 uses msg.sender directly: with direct
-        // dispatch there is no address(this) context shift, so msg.sender is the
-        // real caller and the v2.6.2 reward-skip regression cannot occur.
-        if (msg.sender != TREASURY_SAFE
-            && msg.sender != automationForwarder
-            && msg.sender != address(this))
-        {
-            uint256 reward = total / 1000; // 0.1% of routed
-            if (reward > 0 && address(this).balance >= reward) {
-                (bool ok,) = msg.sender.call{value: reward}("");
-                if (!ok) { /* swallow - reward is best-effort */ }
-            }
+        // Permissionless caller reward — paid LAST (CEI preserved: all state
+        // writes happened above; this is the final external interaction). C-4:
+        // the balance check is now belt-and-suspenders — the reward was carved
+        // out of `total` before the split, so absent an LP/staking anomaly the
+        // ETH is guaranteed present even when contract balance exactly equals
+        // the accumulator (the production condition). Best-effort send: a
+        // reverting caller forfeits the reward (stays as untracked surplus).
+        if (reward > 0 && address(this).balance >= reward) {
+            (bool ok,) = msg.sender.call{value: reward}("");
+            if (!ok) { /* swallow - reward is best-effort */ }
         }
     }
 
@@ -1187,10 +1273,14 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
      *         (cbETH on Base is OptimismMintableERC20, no payable deposit).
      *         v2.5 acquires cbETH by swap: WETH wrap → Aerodrome WETH→cbETH.
      *
-     *         cbETHPrincipal SEMANTIC SHIFT: in v2.5, cbETHPrincipal tracks
-     *         cbETH-wei held (matching PossessioPayments_v2-3 pattern), not
-     *         ETH-wei sent. Harvest computes rewards as (current cbETH balance
-     *         minus principal cbETH), which is the natural rewards denomination.
+     *         PRINCIPAL ACCOUNTING (C-1 fix, audit 2026-07-14): the v2.5
+     *         "semantic shift" that tracked principal ONLY in cbETH-wei made
+     *         harvest permanently dead — cbETH is non-rebasing, so the balance
+     *         never exceeds a principal that mirrors it. Both records are now
+     *         kept: cbETHPrincipal (cbETH-wei, acquisition record only) and
+     *         cbETHPrincipalETH (ETH-wei consumed at acquisition — the harvest
+     *         baseline). Harvest values the live balance via the cbETH/ETH
+     *         oracle and swaps out only the value above cbETHPrincipalETH.
      *
      *         Failure modes (in order of precedence):
      *           1. ethAmt == 0 → no-op
@@ -1263,8 +1353,15 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
                 revert LeakageDetected();
             }
 
-            // cbETHPrincipal in cbETH-wei (v2.5 semantic shift from v2.4 ETH-wei)
-            cbETHPrincipal += cbReceived;
+            // C-1 fix (audit 2026-07-14) — dual principal accounting:
+            //   cbETHPrincipal    (cbETH-wei) — acquisition record only.
+            //   cbETHPrincipalETH (ETH-wei)   — harvest baseline: the ETH this
+            //   deploy consumed, valued at acquisition. Harvest compares the
+            //   oracle value of the live balance against this figure; a
+            //   favorable fill (more cbETH than the oracle-fair amount) simply
+            //   becomes harvestable excess on the next cycle.
+            cbETHPrincipal    += cbReceived;
+            cbETHPrincipalETH += ethAmt;
 
             // Reset approval — defense-in-depth
             WETH.approve(address(AERO_ROUTER), 0);
@@ -1331,7 +1428,12 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
     /**
      * @notice Harvest cbETH staking rewards — principal stays staked.
-     *         Follows v1 pattern: only withdraws ABOVE tracked principal.
+     *         Only harvests VALUE above the tracked ETH principal (C-1 fix,
+     *         audit 2026-07-14): cbETH is non-rebasing, so rewards exist only
+     *         as cbETH/ETH exchange-rate appreciation. The live balance is
+     *         valued via the Chainlink cbETH/ETH feed; the excess over
+     *         cbETHPrincipalETH is converted back to cbETH-wei and swapped
+     *         out. The ETH principal is untouched by harvests.
      *         25% → LP · 75% → Treasury.
      *
      *         If LP add fails, the rewards portion is redirected to Treasury
@@ -1355,11 +1457,32 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         }
         _activeExecutionSecret = 0;
 
-        // --- Compute harvestable cbETH excess -----------------------------
-        // In v2.5, cbETHPrincipal is cbETH-wei (semantic shift from v2.4 ETH-wei).
+        // --- Compute harvestable excess (C-1 fix: VALUE-BASED) -------------
+        // cbETH is NON-REBASING: balanceOf never grows. Rewards materialize
+        // exclusively as cbETH/ETH exchange-rate appreciation, so the excess
+        // is measured in ETH value against cbETHPrincipalETH (ETH-wei consumed
+        // at acquisition), then converted back to the cbETH-wei to swap out.
+        // Oracle unhealthy → revert and retry next cycle (no blind valuation),
+        // preserving the pre-fix revert-and-retry semantics.
+        (uint256 rate, bool rateValid) = _readCbEthRate();
+        if (!rateValid) revert OracleInvalid();
+
         uint256 cbBal = cbETH.balanceOf(address(this));
-        if (cbBal <= cbETHPrincipal) revert ZeroAmount();
-        uint256 rewardsCbETH = cbBal - cbETHPrincipal;
+        uint256 currentValueETH = (cbBal * rate) / 1e18;
+        if (currentValueETH <= cbETHPrincipalETH) revert ZeroAmount();
+        uint256 excessETH = currentValueETH - cbETHPrincipalETH;
+
+        // Dust guard — value-based math leaves sub-floor rounding residue
+        // (≲ a few wei) after every harvest; gating the execution path on the
+        // same HARVEST_DUST_FLOOR checkUpkeep uses keeps AUTO-INV-1
+        // (check ⇒ executable) exact and blocks dust-sized swaps.
+        if (excessETH < HARVEST_DUST_FLOOR) revert ZeroAmount();
+
+        uint256 rewardsCbETH = (excessETH * 1e18) / rate;
+        if (rewardsCbETH == 0) revert ZeroAmount();
+        // Provably ≤ cbBal (excessETH ≤ currentValueETH); clamp kept as
+        // defense-in-depth against any future rounding regression.
+        if (rewardsCbETH > cbBal) rewardsCbETH = cbBal;
 
         // --- v2.6.3 slippage computed here at execution time --------------
         // Retired carry-through: minWETH was passed from checkUpkeep/wrapper.
@@ -1457,9 +1580,9 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
      *         Returns whether and which task to execute.
      *
      *         Hysteresis (IV.4): accumulatedETH must exceed ROUTE_THRESHOLD by 20%
-     *         and harvestable cbETH excess must exceed HARVEST_DUST_FLOOR before
-     *         upkeep triggers, even though the underlying functions accept the
-     *         canonical thresholds.
+     *         and the ETH-denominated harvestable excess (C-1: oracle value of the
+     *         cbETH holding minus cbETHPrincipalETH) must reach HARVEST_DUST_FLOOR
+     *         before upkeep triggers.
      *
      *         cbETHPaused is checked for the harvest branch as a deliberate
      *         policy choice — the depeg flag is the protocol's "wait for re-peg"
@@ -1479,10 +1602,43 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
+     * @notice C-1 fix (audit 2026-07-14) — single health-guarded read of the
+     *         Chainlink cbETH/ETH 18-decimal exchange-rate feed. Shared by
+     *         checkUpkeep, both slippage helpers and _harvestRewards so
+     *         decision-time and execution-time math run off identical
+     *         oracle-validity rules (round completeness, finalization,
+     *         ORACLE_STALE_CBETH staleness, positive answer).
+     * @return rate  ETH-wei value of 1e18 cbETH-wei, or 0 if unhealthy.
+     * @return valid True iff the read is healthy.
+     */
+    function _readCbEthRate() internal view returns (uint256 rate, bool valid) {
+        try CHAINLINK_CBETH_ETH.latestRoundData() returns (
+            uint80 roundId,
+            int256 answer,
+            uint256,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        ) {
+            bool ok = (answeredInRound >= roundId)
+                && (updatedAt != 0)
+                // forge-lint: disable-next-line(block-timestamp)
+                && (block.timestamp - updatedAt <= ORACLE_STALE_CBETH)
+                && (answer > 0);
+
+            if (ok) {
+                // forge-lint: disable-next-line(unsafe-typecast)
+                rate  = uint256(answer);
+                valid = true;
+            }
+        } catch {}
+    }
+
+    /**
      * @notice Compute the cbETH slippage guard for a routeETH cycle from current
      *         oracle reads. (v3 — DAI leg removed; treasury serves as reserve, so
      *         only the cbETH staking leg needs an oracle-derived floor.)
-     * @param  ethAmt   Total ETH to be routed (full accumulatedETH).
+     * @param  ethAmt   Total ETH to be routed (C-4: the routable amount, i.e.
+     *                  accumulator net of the caller-reward carve-out).
      * @return minCbETH 90% of expected cbETH for the staking leg, or 0 if oracle invalid.
      * @return valid    True iff the cbETH oracle read is healthy. If false, caller must
      *                  NOT fire upkeep; the internal core retains ETH instead of
@@ -1503,25 +1659,11 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         if (toStaking == 0) {
             minCbETH = 1; // sentinel: staking leg not exercised this cycle
         } else {
-            try CHAINLINK_CBETH_ETH.latestRoundData() returns (
-                uint80 roundId,
-                int256 cbEthRate,
-                uint256,
-                uint256 updatedAt,
-                uint80 answeredInRound
-            ) {
-                bool vCb = (answeredInRound >= roundId)
-                    && (updatedAt != 0)
-                    // forge-lint: disable-next-line(block-timestamp)
-                    && (block.timestamp - updatedAt <= ORACLE_STALE_CBETH)
-                    && (cbEthRate > 0);
-
-                if (vCb) {
-                    // forge-lint: disable-next-line(unsafe-typecast)
-                    uint256 expectedCbETH = (toStaking * 1e18) / uint256(cbEthRate);
-                    minCbETH = (expectedCbETH * SLIPPAGE) / 100;
-                }
-            } catch {}
+            (uint256 rate, bool rateValid) = _readCbEthRate();
+            if (rateValid) {
+                uint256 expectedCbETH = (toStaking * 1e18) / rate;
+                minCbETH = (expectedCbETH * SLIPPAGE) / 100;
+            }
         }
 
         valid = (minCbETH > 0);
@@ -1529,7 +1671,9 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
     /**
      * @notice Compute slippage guard for a harvestRewards cycle.
-     * @param  rewardsCbETH  Excess cbETH above principal that will be unwound to WETH.
+     * @param  rewardsCbETH  cbETH-wei of exchange-rate-appreciation excess that
+     *                       will be unwound to WETH (C-1: value-based, computed
+     *                       by _harvestRewards from the same oracle read class).
      * @return minWETH       90% of expected WETH, or 0 if oracle invalid.
      * @return valid         True iff oracle healthy.
      */
@@ -1538,25 +1682,11 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         view
         returns (uint256 minWETH, bool valid)
     {
-        try CHAINLINK_CBETH_ETH.latestRoundData() returns (
-            uint80 roundId,
-            int256 cbEthRate,
-            uint256,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) {
-            bool v = (answeredInRound >= roundId)
-                && (updatedAt != 0)
-                // forge-lint: disable-next-line(block-timestamp)
-                && (block.timestamp - updatedAt <= ORACLE_STALE_CBETH)
-                && (cbEthRate > 0);
-
-            if (v) {
-                // forge-lint: disable-next-line(unsafe-typecast)
-                uint256 expectedWETH = (rewardsCbETH * uint256(cbEthRate)) / 1e18;
-                minWETH = (expectedWETH * SLIPPAGE) / 100;
-            }
-        } catch {}
+        (uint256 rate, bool rateValid) = _readCbEthRate();
+        if (rateValid) {
+            uint256 expectedWETH = (rewardsCbETH * rate) / 1e18;
+            minWETH = (expectedWETH * SLIPPAGE) / 100;
+        }
 
         valid = (minWETH > 0);
     }
@@ -1583,12 +1713,24 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
 
         // HARVEST_REWARDS branch -- cbETHPaused gates harvest at the Automation
         // layer (stricter than harvestRewards; AUTO-INV-1 compliant).
+        // C-1 fix (audit 2026-07-14): VALUE-BASED predicate mirroring
+        // _harvestRewards exactly. cbETH is non-rebasing, so the old
+        // balance-vs-cbETHPrincipal comparison was identically false and this
+        // branch was dead. The oracle must be healthy at decision time —
+        // unhealthy means _harvestRewards would revert OracleInvalid, so
+        // firing upkeep would only burn the forwarder's gas.
         if (!routingPaused && !cbETHPaused) {
             uint256 cbBal = cbETH.balanceOf(address(this));
-            if (cbBal > cbETHPrincipal) {
-                uint256 excess = cbBal - cbETHPrincipal;
-                if (excess >= HARVEST_DUST_FLOOR) {
-                    return (true, abi.encode(UpkeepTask.HARVEST_REWARDS));
+            if (cbBal > 0) {
+                (uint256 rate, bool rateValid) = _readCbEthRate();
+                if (rateValid) {
+                    uint256 currentValueETH = (cbBal * rate) / 1e18;
+                    if (currentValueETH > cbETHPrincipalETH) {
+                        uint256 excessETH = currentValueETH - cbETHPrincipalETH;
+                        if (excessETH >= HARVEST_DUST_FLOOR) {
+                            return (true, abi.encode(UpkeepTask.HARVEST_REWARDS));
+                        }
+                    }
                 }
             }
         }
@@ -1986,8 +2128,11 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
      * @notice Returns key state for external monitoring (Operator Console etc.).
      * @dev    v3 — daiReserve field removed from this tuple (DAI leg gone). The
      *         Operator Console's getState() decode must drop the daiReserve slot
-     *         to match. cbPrincipal is in cbETH-wei; ethEquiv = cbPrincipal *
-     *         cbEthRate / 1e18 via CHAINLINK_CBETH_ETH.
+     *         to match. cbPrincipal is in cbETH-wei and is the ACQUISITION RECORD
+     *         only (C-1 fix, audit 2026-07-14); the harvest baseline is the
+     *         separate public cbETHPrincipalETH getter (ETH-wei at acquisition).
+     *         Live ethEquiv of the holding = cbETH.balanceOf(hook) * cbEthRate /
+     *         1e18 via CHAINLINK_CBETH_ETH.
      */
     function getState() external view returns (
         uint256 accumulated,

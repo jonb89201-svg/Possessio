@@ -71,6 +71,9 @@ contract PossessioFactoryForkTest is Test {
     uint256 constant MIN_SWAP_BATCH = 100_000000;
     uint256 constant DAI_CEILING    = 10000e18;
     uint256 constant DAILY_LIMIT    = 50000e18;
+    // C-2 (audit 2026-07-14) — per-asset exit caps, matching DeployPayments.s.sol
+    uint256 constant USDC_DAILY_LIMIT  = 50000e6;
+    uint256 constant CBETH_DAILY_LIMIT = 20e18;
 
     uint256 constant FEE = 100_000000; // 100 USDC, the ratified tier price
 
@@ -116,7 +119,9 @@ contract PossessioFactoryForkTest is Test {
             lstRates:         LST_RATES,
             minSwapBatch:     MIN_SWAP_BATCH,
             daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT
+            dailyLimit:       DAILY_LIMIT,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
         });
         payments = new PossessioPayments(pp);
 

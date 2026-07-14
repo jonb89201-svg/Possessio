@@ -10,6 +10,6 @@
 [submodule "lib/chainlink-brownie-contracts"]
 	path = lib/chainlink-brownie-contracts
 	url = https://github.com/smartcontractkit/chainlink-brownie-contracts
-[submodule "lib/hookmate"]
-	path = lib/hookmate
-	url = https://github.com/akshatmittal/hookmate
+[submodule "lib/base-std"]
+	path = lib/base-std
+	url = https://github.com/base/base-std

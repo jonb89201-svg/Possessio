@@ -99,7 +99,7 @@ function curveMcUsd(it: any, solUsd: number | null): number | null {
 // Current MC per token from DexScreener, batched 30 addresses/request (the
 // pattern discoveryScan proved: R-2 batching, R-4 max-across-pairs MC, polite
 // stop on 429). On-screen sets are small (<=80), so this is 1-3 requests per
-// screen pass — x4 sub-ticks stays far under DexScreener's 300 req/min.
+// screen pass — one pass per minute stays far under DexScreener's 300 req/min.
 async function fetchDexMc(
   env: WatcherEnv, addrs: string[],
 ): Promise<{ mc: Map<string, number>; volM5: Map<string, number> }> {
@@ -144,14 +144,11 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
 // birthScan/btcScan (single-pass, no setTimeout) kept writing every minute. A
 // setTimeout inside a cron waitUntil is not reliably kept alive, and the
 // fetch-timeout self-heal could not fix it because it was never a hung fetch.
-// So: ONE screenScan per cron tick, exactly like the siblings that never die.
+// So: ONE screenScan per cron tick, exactly like the siblings that never die
+// (index.ts calls this directly; the old screenLoop wrapper is gone — R-11).
 // Cadence drops to 60s but the eye NEVER goes blind. The reliable path back to
 // sub-minute resolution is the Durable-Object alarm (Layer 3, pumptape.ts) —
 // alarms DO survive across invocations; that's the correct 15s mechanism.
-export async function screenLoop(env: WatcherEnv): Promise<void> {
-  await screenScan(env).catch((e) => console.error("screenScan", e));
-}
-
 export async function screenScan(env: WatcherEnv): Promise<void> {
   if (!env.PUMPFUN_FEED_URL) {
     console.warn("PUMPFUN_FEED_URL unset — screenScan idle");

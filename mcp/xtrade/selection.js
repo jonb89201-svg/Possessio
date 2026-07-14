@@ -25,8 +25,12 @@ function assertContractAddress(id) {
   return id.trim();
 }
 
-// RULEBOOK Sec2 rug gate. Pure evaluator over facts fetched on-device
-// (mint/LP/creator% come from chain reads - see server device-verify).
+// RULEBOOK Sec2 rug gate. Pure evaluator - it checks whatever facts it
+// is HANDED. In the shipped server those facts are caller-supplied tool
+// args (ledgered as factsSource:"caller-asserted"); no chain read
+// verifies them yet, which is why server.js hard-blocks hot execution
+// (FACTS_VERIFIED_ON_DEVICE). scripts/deviceverify.js proves the
+// quote->build network path only, NOT these facts.
 // Any sub-check false -> skip the token. No override.
 function rugGate({ mintRenounced, lpLockedOrBurned, creatorHoldingPct }, tune) {
   const fails = [];

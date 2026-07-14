@@ -2,8 +2,8 @@
 
 A deterministic, non-custodial DeFi protocol on Base mainnet with an L1 settlement extension on Ethereum mainnet. MIT licensed. Mobile-origin build. V3 generation: two contracts (PossessioPayments, LSTExchangeRate) live on Base mainnet; treasury-engine hook fork-proven and pending mainnet deploy.
 
-**Live site:** _pending publication_ (operator console hosted via GitHub Pages; URL added once live)
-**Canonical spec:** [`POSSESSIO_Spec.md`](POSSESSIO_Spec.md) -- source-cited reference for institutional reviewers, grant evaluators, and dev-language-fluent counterparties.
+**Live site:** [possessio.io](https://possessio.io) -- the operator console, LIVE, served by the Cloudflare Worker `possessio` (git-connected to `main`; custom domain attached as config-as-code via `wrangler.jsonc` routes).
+**Canonical spec:** `POSSESSIO_Spec.md` -- source-cited reference for institutional reviewers, grant evaluators, and dev-language-fluent counterparties -- is maintained privately and not yet committed to this repo. For the current verified state of the system, see [`STATE_OF_PLAY.md`](STATE_OF_PLAY.md).
 
 ---
 
@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 691 tests run across 33 suites (690 passing; 1 intentional `vm.skip`; zero genuine failures), of which 674 are certified by the last full on-machine two-chain sweep and the 17 `PossessioFactory` tests are forge-verified pending the Architect's final pre-deploy sweep. Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. 700+ tests across 37 suites -- run `forge test` for the live tally. Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,49 +35,20 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result (July 2026): 33 suites · 691 tests · 690 passed · 1 skipped · 0 genuine failures** (forge-verified)
-
-Of these, **674 (31 suites) are certified by the last full on-machine two-chain sweep**; the 17 `PossessioFactory` tests (2 suites) are forge-verified (builder + Code Integrity adversarial pass) and are confirmed in the Architect's **final pre-deploy sweep**, which is the deploy gate. Every number here reflects a test that passes under `forge test`.
-
-Certification runs each fork suite on the chain it forks. The main sweep on **Base Sepolia** returns **671 passed · 2 failed · 1 skipped** across 31 suites in 47.4s. The skip is an intentional `vm.skip` (a mock-mode-only path). The 2 non-passes are both `PossessioHookCreate3Fork`: its hook-creation path needs live **Base mainnet** V4 PoolManager state, so on a Sepolia fork CreateX reverts mid-CREATE3 (`0xc05cee7a`, emitter = CreateX's own address `0xba5Ed0...`) - a chain mismatch, not a contract defect. Run that one suite against a **Base mainnet** RPC and it is **3/3 pass**. Union across both chains: **673 passed · 1 skipped · 0 genuine failures**. The `0xc05cee7a`/CreateX-emitter signature on Sepolia means chain-mismatch, never regression. Terminal-confirmed on both chains.
+**Result: 700+ tests across 37 suites -- run `forge test` for the live tally.** Precise totals are deliberately not pinned in this README: the suite is actively being extended, and the live `forge test` output is the only count that cannot go stale. The suite spans unit, adversarial/gauntlet, invariant, fuzz, ffi, and fork tests; the per-suite breakdown is printed by `forge test` itself. Fork suites skip cleanly when no fork RPC is configured.
 
 Build verified: `forge build` succeeds with current Solc, compiling all source files with 0 errors. Pre-existing informational notices (forge-std `error` keyword future-deprecation, test mock unchecked transfers, V4 hook math typecasts, hour-scale timelock timestamp checks) -- none block compilation or test execution.
 
-| Suite (file : contract) | Tests |
-|---|---|
-| `PLATE.t.sol` : PLATETest | 98 |
-| `Gauntlet.t.sol` : PLATEAttackTest (PLATE adversarial) | 29 |
-| `PLATELaunchV2.t.sol` | 3 |
-| `SAV.t.sol` : PLATEStakingTest | 24 |
-| `SAV.t.sol` : SAVTest | 76 |
-| `SAVGauntlet.t.sol` | 42 |
-| `POSSESSIO_v2_Gauntlet.t.sol` : POSSESSIOv2Gauntlet | 32 |
-| `POSSESSIO_v2_Invariants.t.sol` | 17 |
-| `PossessioPayments_t.sol` : PossessioPaymentsTest | 108 (107 + 1 skip) |
-| `PossessioPayments_t.sol` : PossessioPaymentsAutomationTest | 28 |
-| `PossessioPayments_Gauntlet.t.sol` | 32 |
-| `PossessioPayments_H1Slippage.t.sol` | 4 |
-| `AutomationInvariants.t.sol` : AutomationInvariants (hook) | 27 |
-| `AutomationInvariants.t.sol` : PaymentsAutomationInvariants | 4 |
-| `PossessioHook_M1Overflow.t.sol` | 5 |
-| `PossessioHookCreate3Fork.t.sol` (fork - run on Base mainnet) | 3 † |
-| `PaymentsFork_t.sol` : PaymentsForkTest (fork) | 21 |
-| `LSTExchangeRateFork.t.sol` (fork) | 5 |
-| `L1AnchorFactory.t.sol` | 35 |
-| `L1AnchorAdversarial.t.sol` (6 suites: Oracle 6 / Reentrancy 3 / SilentFailure 3 / Sovereignty 7 / EmergencyUnwind 5 / Identity 7) | 31 |
-| `L1AnchorReentrancyMocks.sol` (Behavioral) | 5 |
-| `L1AnchorInvariant.t.sol` | 1 |
-| `SymmetryGuardCore.t.sol` : SymmetryGuardCoreGauntlet (typed additive MEV toll + sha256 Merkle handshake) | 20 |
-| `PossessioSaltPool.t.sol` : PossessioSaltPoolTest **(new - CREATE3 salt pool, DoD)** | 17 |
-| `PossessioSaltPoolCreate3.t.sol` **(new - offline CREATE3 integration; live CreateX codehash notarization)** | 4 |
-| `PossessioX402CoreDecay.t.sol` **(new - x402 velocity-decay oracle mirror, ffi)** | 3 |
-| `PossessioFactory.t.sol` : PossessioFactoryTest **(new - automated deploy engine, DoD)** | 9 |
-| `PossessioFactoryAdversarial.t.sol` **(new - Invariant 1/2 adversarial pass; reentrancy tripwire)** | 8 |
-| **Total (33 suites)** | **691** |
+*Historical certification record (July 2026, the last full on-machine two-chain sweep -- kept as provenance; counts have since grown):* certification runs each fork suite on the chain it forks. The **Base Sepolia** sweep returned **671 passed · 2 failed · 1 skipped** across 31 suites in 47.4s. The skip is an intentional `vm.skip` (a mock-mode-only path). The 2 non-passes were both `PossessioHookCreate3Fork`: its hook-creation path needs live **Base mainnet** V4 PoolManager state, so on a Sepolia fork CreateX reverts mid-CREATE3 (`0xc05cee7a`, emitter = CreateX's own address `0xba5Ed0...`) - a chain mismatch, not a contract defect. Run that one suite against a **Base mainnet** RPC and it is **3/3 pass** (transcript committed as [`fork_hook_mainnet.txt`](fork_hook_mainnet.txt)). The `PossessioSaltPoolCreate3` suite etches canonical CreateX (deployed-runtime codehash `0xbd8a7ea8...`, reconstructed offline from CreateX's presigned deploy tx and pinned in `setUp`) so it runs offline; `test_fork_pinnedCodehashMatchesLiveCreateX` also confirms the pin against live Base when an RPC is set. `SymmetryGuardCore` passes its gauntlet including `test_ffi_leaf_matches_onchain` - on-chain confirmation that `script/gen_proof.py` matches `HandshakeLib` byte-for-byte. The Architect's final pre-deploy sweep remains the deploy gate - nothing deploys before that sweep is green.
 
-*Terminal-confirmed on two chains. **Base Sepolia** sweep: **671 passed · 2 failed · 1 skipped across 31 suites (674 total)**, July 2026, 47.4s. `PossessioHookCreate3Fork` runs **3/3** against a **Base mainnet** RPC - union: **673 passed · 1 skipped · 0 genuine failures**. † `PossessioHookCreate3Fork`'s hook-creation path requires live Base mainnet V4 PoolManager state; on a Sepolia fork CreateX reverts mid-CREATE3 with `0xc05cee7a` (emitter = CreateX's own address) - chain-mismatch, never regression. The `PossessioSaltPoolCreate3` suite etches canonical CreateX (deployed-runtime codehash `0xbd8a7ea8...`, reconstructed offline from CreateX's presigned deploy tx and pinned in `setUp`) so it runs offline; `test_fork_pinnedCodehashMatchesLiveCreateX` also confirms the pin against live Base when an RPC is set. `SymmetryGuardCore` passes 20/20, including `test_ffi_leaf_matches_onchain` - on-chain confirmation that `script/gen_proof.py` matches `HandshakeLib` byte-for-byte.*
+### Proof artifacts (repo root)
 
-*Provenance: **674** is the last full on-machine two-chain sweep; **691** is the forge-verified total. The two `PossessioFactory` suites (17 tests) are forge-verified (builder + Code Integrity adversarial pass, including a reentrancy-guard tripwire) against the real salt pool and etched canonical CreateX; they have not yet ridden a full on-machine sweep. The Architect's final pre-deploy sweep confirms them and is the deploy gate - nothing deploys before that sweep is green.*
+Raw terminal outputs committed as evidence for specific claims -- verify-by-artifact:
+
+- [`deployer_steel_before.txt`](deployer_steel_before.txt) / [`deployer_steel_after.txt`](deployer_steel_after.txt) -- STEEL deployer balance before/after the SAV allocation (`1e27` -> `9.7e26` wei: exactly 3% of total supply left the deployer).
+- [`sav_vault_before.txt`](sav_vault_before.txt) / [`sav_vault_after.txt`](sav_vault_after.txt) -- SAV vault balance before/after the same allocation (`0` -> `3e25` wei: the 3% council allocation landed).
+- [`sav_allocation_proof.txt`](sav_allocation_proof.txt) -- the allocated SAV amount in wei (`3e25` = 3% of the `1e27` total supply).
+- [`fork_hook_mainnet.txt`](fork_hook_mainnet.txt) -- tee'd `forge test` transcript: `PossessioHookCreate3Fork` 3/3 passing against Base mainnet, backing the "CREATE3 fork-proven" claim.
 
 ---
 
@@ -216,7 +187,7 @@ A merchant payment processor -- non-custodial smart contract infrastructure for 
 
 This is what "crypto treasury without crypto custody" looks like operationally -- merchants get a treasury-management layer integrated with their existing payment processor, routing operational liquidity to DAI and accumulating cbETH yield in their own contract, without giving up custody at any point.
 
-**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the 691 total above.
+**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the totals above.
 
 ---
 
@@ -232,6 +203,13 @@ This is what "crypto treasury without crypto custody" looks like operationally -
 | [`src/PLATE.sol`](src/PLATE.sol) | PLATE v1 ($PLATE) -- treasury engine | Deployed Base Mainnet -- dormant (LP pulled, sole holder) |
 | [`src/ServiceAccountabilityVault.sol`](src/ServiceAccountabilityVault.sol) | v1 standalone SAV | Certified -- superseded by v2 embedded SAV |
 | [`src/PLATEStaking.sol`](src/PLATEStaking.sol) | SAV staking-lock primitive | Intact in build -- retained |
+| [`src/PossessioFactory.sol`](src/PossessioFactory.sol) | Deployment-fee engine -- one atomic tx: template-codehash check -> EIP-3009 USDC fee settle -> forward to the shared sink -> pull a pre-mined salt -> CreateX CREATE3 deploy -> ownership to the caller; immutable per-tier fee, no admin setter | Forge-verified -- deploy pending (see TODO) |
+| [`src/PossessioSaltPool.sol`](src/PossessioSaltPool.sol) | Pre-mined CREATE3 salt pool the factory draws from -- factory-only pull, compute-only keeper refill, honest `PoolEmpty()` revert | Built + tested -- deploy pending |
+| [`src/PossessioPool.sol`](src/PossessioPool.sol) | "The Heart" -- standalone economic pool: every organ's fee inflow lands in one USDC balance; velocity floor keeps infrastructure funded; only surplus draws one-way to the immutable operator | Built + DoD-green offline -- pre-fork, pre-deploy |
+| [`src/PossessioX402Core.sol`](src/PossessioX402Core.sol) | Reusable pay-per-call payment engine (EIP-3009) -- the foundation the data-product APIs are built on | v0.6, offline-proven -- testnet deploy pending |
+| [`src/SymmetryGuardCore.sol`](src/SymmetryGuardCore.sol) | V4-independent core of the Symmetry Guard + Handshake primitive: typed additive MEV-toll triggers (base fee + per-behavior penalties, total-clamped, self-curing decay) over a Merkle-proof registration handshake | Abstract core -- gauntlet-tested |
+| [`src/PossessioTestnetLaunchPool.sol`](src/PossessioTestnetLaunchPool.sol) | Base Sepolia ONLY fuel pool -- aggregates faucet drips; operator-gated stipends fund console testnet launches (gas + factory fee); constructor refuses to exist off chain 84532 | Built + tested -- testnet deploy pending |
+| [`src/PossessioWhiskyMarket.sol`](src/PossessioWhiskyMarket.sol) | "The Bond" -- primary English auction for tokenized allocated whisky (B20 lot tokens, escrowed USDC bids, anti-snipe extension, fee to PossessioPool) | **PROPOSED / v0.1 -- NON-PROVEN**, cold-seat re-audit before ratification |
 
 ---
 
@@ -299,11 +277,13 @@ PLATE v1 ($PLATE) and PLATE v2 ($STEEL) are forks of the same token name with di
 | AI Council (SAV) | 3% |
 | Protocol reserve | 2% |
 
-Vesting and unlock conditions in `docs/`.
+Vesting and unlock conditions are documented in the privately maintained docs (not yet committed to this repo).
 
 ---
 
 ## Quickstart
+
+Dependencies are pinned git submodules, so `git clone --recursive` is the path of least surprise (or `git submodule update --init --recursive` after a plain clone).
 
 ```bash
 curl -L https://foundry.paradigm.xyz | bash
@@ -313,27 +293,31 @@ forge install OpenZeppelin/openzeppelin-contracts
 forge install Uniswap/v4-core
 forge install Uniswap/v4-periphery
 forge install smartcontractkit/chainlink-brownie-contracts
-forge install akshatmittal/hookmate@33408fbc15e083eb0bc4205fa37cb6ba0a926f44
-cd lib/hookmate && npm install && cd -
+forge install base/base-std
 forge clean
 forge build 2>&1 | tee compile.txt
 forge test -vv | tee report.txt
 ```
 
-Hookmate provides HookMiner tooling for V4 hook permission bits via npm-resolved `@uniswap/v4-periphery/`. POSSESSIO V3 uses CREATE3 sender-locked salt mining (`script/MineCreate3Salt.s.sol`) so the hook address is bytecode-independent and reusable across launches. The pinned commit matches the Uniswap Foundation's `v4-template`. Full operational sequence and rationale documented in [`MIB.md`](MIB.md) §III plus [`MIB-AMD-2026-05-16-01`](MIB-AMD-2026-05-16-01.md).
+(The `forge install` lines are only needed if you didn't clone recursively -- each dependency is already a pinned submodule in `.gitmodules`.) `base/base-std` provides the B20 / PolicyRegistry interfaces imported by `PossessioWhiskyMarket.sol`. POSSESSIO V3 uses CREATE3 sender-locked salt mining (`script/MineCreate3Salt.s.sol`) so the hook address is bytecode-independent and reusable across launches. The full operational sequence and rationale are documented in the MIB operating manual and its amendments, which are maintained privately and not yet committed to this repo.
 
-For surgical test report queries on mobile: `grep -E "Suite result|tests passed" report.txt | tail -30` -- documented in [`MIB-AMD-2026-05-20-01`](MIB-AMD-2026-05-20-01.md).
+For surgical test report queries on mobile: `grep -E "Suite result|tests passed" report.txt | tail -30`.
 
 ---
 
 ## Documentation
 
-- [`POSSESSIO_Spec.md`](POSSESSIO_Spec.md) -- canonical V2 stack specification, source-cited, with business purpose and inventor attributions throughout
-- `docs/PossessioPayments.md` -- merchant payments product specification
-- `docs/` -- whitepaper, L.A.T.E. framework, council agreements, amendment records, production-arc documentation
-- [`MIB.md`](MIB.md) -- Mobile Intelligence Bridging Operating Manual
-- [`MIB-AMD-2026-05-16-01`](MIB-AMD-2026-05-16-01.md) -- canonical 14-step fresh terminal sequence
-- [`MIB-AMD-2026-05-20-01`](MIB-AMD-2026-05-20-01.md) -- surgical test report query via `tee` + `grep`
+**Committed to this repo:**
+
+- [`STATE_OF_PLAY.md`](STATE_OF_PLAY.md) -- the living, verified state of the system (seats, live deployments, open lanes)
+- [`TODO.md`](TODO.md) -- the running to-do and honestly-tiered status board
+- [`laws/`](laws/) -- ratified council documents: the POSSESSIO Constitution and council statements
+- [`specs/SPEC_PossessioWhiskyMarket.md`](specs/SPEC_PossessioWhiskyMarket.md) -- Whisky RWA ("The Bond") market specification
+- [`RULEBOOK_TradingAgent.md`](RULEBOOK_TradingAgent.md) / [`SPEC_CrossChainTradingMCP.md`](SPEC_CrossChainTradingMCP.md) -- trading-agent governance and spec
+- [`HANDOFF_testnet_pool.md`](HANDOFF_testnet_pool.md), [`RADAR_HANDOFF.md`](RADAR_HANDOFF.md), [`RADAR_FIX_R1R2_handoff.md`](RADAR_FIX_R1R2_handoff.md), [`FUEL_COMPUTER_SPEC.md`](FUEL_COMPUTER_SPEC.md), [`SESSION_LEDGER_20260706.md`](SESSION_LEDGER_20260706.md) -- session handoffs and ledgers
+- [`AUDIT_20260714.md`](AUDIT_20260714.md) -- full-repo audit record
+
+**Maintained privately (not yet committed):** `POSSESSIO_Spec.md` (canonical V2 stack specification, source-cited, with business purpose and inventor attributions), the merchant payments product specification, the whitepaper / L.A.T.E. framework / council agreements / amendment records / production-arc documentation, and the MIB (Mobile Intelligence Bridging) Operating Manual with its amendments.
 
 ---
 
@@ -347,4 +331,4 @@ If it can't be tested it doesn't exist. If it's not in the terminal it's not pro
 
 ---
 
-**MIT License. Open source. Run the tests yourself.**
+**[MIT License](LICENSE). Open source. Run the tests yourself.**

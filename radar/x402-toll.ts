@@ -85,21 +85,34 @@ function parseRss(xml: string, src: string, limit = 8): any[] {
   return out;
 }
 
+// BOUNDED + CONCURRENT (AUDIT 2026-07-14, R-5): this runs on the REQUEST path
+// (GET /radar/news), and the repo's own law — learned when a hung upstream
+// froze the scan for 21min (see watcher.ts/screen.ts) — is that no await on an
+// external host goes un-timed. The three feeds fetch in PARALLEL, each with
+// its own timeout and its own failure (one dead feed never blocks or kills the
+// others), so the worst case is one bounded wait, not three stacked ones. On
+// total failure the last good cache serves stale — better than a blank strip.
+const NEWS_FETCH_TIMEOUT_MS = 5_000;
+
 async function getNews(): Promise<any[]> {
   if (Date.now() - newsCache.ts < NEWS_TTL_MS && newsCache.items.length) return newsCache.items;
-  const all: any[] = [];
-  for (const [src, url] of NEWS_FEEDS) {
-    try {
+  const settled = await Promise.allSettled(
+    NEWS_FEEDS.map(async ([src, url]) => {
       const r = await fetch(url, {
         headers: { "user-agent": "possessio-radar/0.4", accept: "application/rss+xml,application/xml,text/xml" },
+        signal: AbortSignal.timeout(NEWS_FETCH_TIMEOUT_MS),
       });
-      if (!r.ok) continue;
-      all.push(...parseRss(await r.text(), src));
-    } catch { /* one source down doesn't sink the strip */ }
+      if (!r.ok) return [];
+      return parseRss(await r.text(), src);
+    }),
+  );
+  const all: any[] = [];
+  for (const s of settled) {
+    if (s.status === "fulfilled") all.push(...s.value); // one source down doesn't sink the strip
   }
   all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   if (all.length) newsCache = { ts: Date.now(), items: all.slice(0, 12) };
-  return newsCache.items;
+  return newsCache.items; // empty fetch round -> stale cache (or [] if never primed)
 }
 
 export function buildTolledApp(env: Env) {
@@ -122,8 +135,13 @@ export function buildTolledApp(env: Env) {
         {
           "GET /radar/gap-stats": accepts(env.PRICE_GAP_STATS,
             "Rolling pump.fun->DexScreener gap distribution (aggregates only)"),
-          "GET /radar/session-gate": accepts(env.PRICE_SESSION_GATE,
-            "Today's Sec0 regime reading: pass/fail + ratio"),
+          // /radar/session-gate is deliberately UNPRICED (AUDIT 2026-07-14,
+          // R-8): nothing writes the sessions table yet, so the route can only
+          // answer NO_READING_YET — charging PRICE_SESSION_GATE for a permanent
+          // error would be selling a paid no-op. The route itself stays live
+          // (free) below; re-add the line here the day a session writer lands:
+          //   "GET /radar/session-gate": accepts(env.PRICE_SESSION_GATE,
+          //     "Today's Sec0 regime reading: pass/fail + ratio"),
           "GET /radar/tape": accepts(env.PRICE_TAPE,
             "Discovered-only historical tape, last 100"),
         },
@@ -205,8 +223,14 @@ export function buildTolledApp(env: Env) {
               dex_vol_h1, dex_chg_m5, dex_chg_h1, dex_last_ms`;
     // img: the coin's launch image (pump.fun image_uri), pulled free from the
     // stored birth JSON — makes cards recognizable at a glance.
+    // json_valid guard (AUDIT 2026-07-14, R-1): rows written before the
+    // watcher fix hold TRUNCATED (invalid) JSON, and SQLite's json_extract
+    // THROWS "malformed JSON" on those — one historical bad row would 500
+    // this whole route. The CASE turns a bad row into img=NULL, never a 500.
     const imgCol = (t: string) =>
-      `(SELECT json_extract(b.raw_birth_json,'$.image_uri') FROM births b WHERE b.token_address=${t}.token_address) AS img`;
+      `(SELECT CASE WHEN json_valid(b.raw_birth_json)
+                    THEN json_extract(b.raw_birth_json,'$.image_uri') END
+          FROM births b WHERE b.token_address=${t}.token_address) AS img`;
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
               peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${imgCol("candidates")}, ${dexCols}
@@ -364,6 +388,8 @@ export function buildTolledApp(env: Env) {
     });
   });
 
+  // Unpriced until a session writer exists (R-8, see the middleware note above):
+  // today this can only say NO_READING_YET, so it serves free, honestly.
   app.get("/radar/session-gate", async (c) => {
     const row = await c.env.RADAR_DB.prepare(
       `SELECT session_date, ratio, gate_pass FROM sessions

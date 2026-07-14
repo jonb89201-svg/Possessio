@@ -198,24 +198,12 @@ export const FEED_HTML = `<!doctype html>
     return '<span class="pct '+(v>=0?"up":"down")+'">'+(v>=0?"+":"")+v.toFixed(0)+'%</span>'; }
   function dex(addr){ if(!addr) return "";
     return '<a class="dex" href="https://dexscreener.com/solana/'+esc(addr)+'" target="_blank" rel="noopener">chart &#8599;</a>'; }
-  function pf(addr){ if(!addr) return "";
-    return '<a class="dex" href="https://pump.fun/coin/'+esc(addr)+'" target="_blank" rel="noopener">pump &#8599;</a>'; }
   // the coin's launch image (pump.fun image_uri). Hidden if missing/broken.
   function img(u){ if(!u) return "";
     return '<img class="coinimg" loading="lazy" src="'+esc(u)+'" onerror="this.style.display=&quot;none&quot;">'; }
-  // the oscillators — computed client-side from the 15s MC tape (d.ticks)
-  function spark(tk){ if(!tk||tk.length<2) return "";
-    var t=tk.slice(-16), lo=Infinity, hi=-Infinity;
-    t.forEach(function(x){ lo=Math.min(lo,x.mc); hi=Math.max(hi,x.mc); });
-    if(hi<=lo) return '<span class="osc">&#9644;&#9644;flat</span>';
-    var bars="\\u2581\\u2582\\u2583\\u2584\\u2585\\u2586\\u2587\\u2588";
-    return '<span class="osc">'+t.map(function(x){
-      return bars[Math.round((x.mc-lo)/(hi-lo)*7)]; }).join("")+'</span>'; }
-  function roc(tk){ if(!tk||tk.length<2) return "";
-    var a=tk[tk.length-2].mc, b=tk[tk.length-1].mc;
-    if(!a) return "";
-    var p=((b-a)/a)*100;
-    return '<span class="pct '+(p>=0?"up":"down")+'">'+(p>=0?"&#9650;":"&#9660;")+Math.abs(p).toFixed(1)+'%/tick</span>'; }
+  // (pf/spark/roc live further down, next to the row renderers that use them.
+  //  A dead earlier copy of the three sat here — hoisting made the later set
+  //  silently win — deleted, AUDIT 2026-07-14 R-9.)
   // NET BUY FLOW: delta of the curve's real SOL reserves (buys add, sells
   // drain) over the last ~1min of samples. "steady" = 3+ of the last 4
   // deltas positive — the Architect's steady-volume-increase read.
@@ -462,8 +450,14 @@ export const FEED_HTML = `<!doctype html>
     var N=document.getElementById("news");
     if(!items||!items.length){ N.innerHTML='<div class="empty">news unavailable</div>'; return; }
     N.innerHTML=items.map(function(it){
+      // scheme whitelist (R-10): esc() stops markup injection but not a
+      // javascript: href from a compromised feed — only link http(s) URLs,
+      // anything else renders as plain text.
+      var link=String(it.link||"");
+      var safe=link.slice(0,7)==="http://"||link.slice(0,8)==="https://";
       return '<div class="newsitem"><span class="newssrc">'+esc(it.src)+'</span>'+
-        '<a href="'+esc(it.link)+'" target="_blank" rel="noopener">'+esc(it.title)+'</a>'+
+        (safe?('<a href="'+esc(link)+'" target="_blank" rel="noopener">'+esc(it.title)+'</a>')
+             :('<span style="font-size:13px;font-weight:500;line-height:1.4">'+esc(it.title)+'</span>'))+
         (it.ts?('<span class="newsage">'+ago(it.ts)+'</span>'):'')+'</div>';
     }).join("");
   }
