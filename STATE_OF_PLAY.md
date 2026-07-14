@@ -258,7 +258,13 @@ failure - see `STATEMENT_console_markets_final.md`.
   calibration constant (stall N, session-gate cutoffs, refined bands)
   born/moved PRIVATE (private repo or env-injected config). Architect's
   signature; the ask is that it is a booked decision, not a default.
-- **TAPE WIPED CLEAN (2026-07-07 15:10Z):** 1,336 poisoned rows deleted
+- **Sec6 SUPERSEDED - RATIFIED 2026-07-14 (Architect: "d-2 can be
+  public"):** the calibration posture is PUBLIC. The 2026-07-07
+  go-private split is retired without ever being executed; RULEBOOK,
+  the calibration constants in `radar/SPEC_BACKEND.md`/`radar/screen.ts`,
+  and the deploy presets stay in the public repo as the booked
+  decision. The BAIT caveat above remains on record as an accepted
+  risk, not a mitigation debt. Closes AUDIT_20260714 finding D-2. 1,336 poisoned rows deleted
   (DELETE FROM births), zero verified, trades untouched (was empty).
   Executed by the REPO seat on the Architect's direct order - a
   recorded deviation from the wipe protocol's letter (step 3 assigned
