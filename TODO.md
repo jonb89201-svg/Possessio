@@ -34,6 +34,11 @@ Updated as things get named or done. Last updated: 2026-07-10._
 - [x] App live at superfoods-logan.jonb89201.workers.dev
 - [x] Weekly flyer — Tuesday-night reminder set (fires into this session).
 
+## OPEN — requires Architect decision (tracked from AUDIT_20260714; deliberately NOT fixed by any seat)
+
+- [ ] **D-2 — calibration posture:** Sec6 ratified "method numbers private," but `radar/SPEC_BACKEND.md` §5–§7 + `radar/screen.ts` publish precise constants, and `deploy/optimizer_pool.{json,html}` carry an `"_INTERNAL": PRIVATE` stamp while committed to the public repo. Decide one way.
+- [ ] **D-3 — RULEBOOK drift:** RULEBOOK v1.0 no longer matches the implemented method (the DexScreener exit its own handoff declared INVALID is still law; the STALL amendment, ladder §0, and the cited "Amendment IV, Clause 5" exist nowhere in the repo). Amendments need ratification per the constitution.
+
 ## Parked (deliberately not now)
 
 - ⏸ **Fundstrat / Tom Lee (MAVAN) email** — drafted, held. Send only after (a) ecosystem standing (a grant) and (b) the real MAVAN staking interface. The ask *is* that interface; L1Anchor's `IMAVANEntry` is a placeholder.
@@ -77,7 +82,7 @@ The radar's screened-candidate feed. Ratified public (Architect, Amendment IV Cl
 - **LIVE at:** `https://possessio-radar.jonb89201.workers.dev/feed` (verified rendering 2026-07-11).
 - **DB**: `candidates` table (migrations 0007 + 0008), applied live to `possessio-radar-ledger`.
 
-**Deploy note:** the radar worker deploys **manually** (`cd radar && npx wrangler deploy`) — the repo→Cloudflare connection only rebuilds the console/site, NOT this separate worker. Deploy from branch `claude/internet-access-xdttz9` (the code isn't on main).
+**Deploy note:** the radar worker is NOT covered by the repo→Cloudflare connection (that only rebuilds the console/site). It deploys via CI: `.github/workflows/radar-refresh.yml` deploys **from `main`** every 3h + on-demand (workflow_dispatch) — the old "deploy from branch `claude/internet-access-xdttz9`" instruction is retired since PR #14 merged that branch. Manual fallback still works: `cd radar && npx wrangler deploy`.
 
 **Open follow-ups:**
 - [ ] **Validate §1**: watch the `candidates` tally over days — target/stop/graduated/timestop. This is the ledger that kills or confirms the method (§7). Method still UNPROVEN.
@@ -86,7 +91,7 @@ The radar's screened-candidate feed. Ratified public (Architect, Amendment IV Cl
 
 **Named provable accomplishment — in-app mobile debug console ("MIB DEBUG"):** a live on-device inspector built into the console — timestamped logs, bridge status, and full raw JSON-RPC transaction payloads with exact wallet error/revert codes (e.g. `eth_sendTransaction` calldata, `to`, gas, `code: 4001 ACTION_REJECTED`, ethers version). Desktop-F12-grade inspection **on a phone**, where mobile browsers provide none — the enabling tooling that makes phone-only contract development and debugging actually possible, not a boast. **Provable:** open possessio.io and tap DBG. (Evidence: console screenshot 2026-07-09, showing the raw `eth_sendTransaction` to PossessioPayments `0x1c0F…AB91` and the live "no factory configured for chain 8453" RAIL log.)
 
-**Build model:** mobile-only, one architect directing a multi-model AI council, 690 tests / 33 suites — adversarial, invariant, fork-proven. The mobile-only claim is backed, not asserted: mainnet deploys go out from the phone, and the on-device MIB DEBUG console (above) provides the F12-grade inspection that makes debugging on a phone real.
+**Build model:** mobile-only, one architect directing a multi-model AI council, 700+ tests across 37 suites (run `forge test` for the live tally) — adversarial, invariant, fork-proven. The mobile-only claim is backed, not asserted: mainnet deploys go out from the phone, and the on-device MIB DEBUG console (above) provides the F12-grade inspection that makes debugging on a phone real.
 
 ---
 
