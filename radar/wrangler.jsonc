@@ -11,19 +11,11 @@
   "compatibility_flags": ["nodejs_compat"], // @x402/extensions imports node:url
   "triggers": { "crons": ["* * * * *"] }, // every minute; both watcher jobs run per tick
 
-  // Layer 3 DOs. PumpTape = real-time WS engine (pumptape.ts). RadarScanner =
-  // the reliable 15s tape scan on a self-rescheduling alarm (scanner.ts) — each
-  // alarm fire gets a fresh 30s CPU budget, unlike the cron's shared budget.
+  // Layer 3: the real-time engine (pumptape.ts). SQLite-backed DO class.
   "durable_objects": {
-    "bindings": [
-      { "name": "PUMPTAPE", "class_name": "PumpTape" },
-      { "name": "RADAR_SCANNER", "class_name": "RadarScanner" }
-    ]
+    "bindings": [{ "name": "PUMPTAPE", "class_name": "PumpTape" }]
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["PumpTape"] },
-    { "tag": "v2", "new_sqlite_classes": ["RadarScanner"] }
-  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PumpTape"] }],
 
   "d1_databases": [
     {

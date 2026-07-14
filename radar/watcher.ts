@@ -33,7 +33,6 @@ export type WatcherEnv = Env & {
   PUMPPORTAL_WS_URL?: string;
   PUMPPORTAL_API_KEY?: string; // secret; unlocks subscribeTokenTrade (key funded >=0.02 SOL)
   PUMPTAPE?: DurableObjectNamespace; // Layer 3 engine (pumptape.ts)
-  RADAR_SCANNER: DurableObjectNamespace; // 15s tape scan on a self-rescheduling DO alarm (scanner.ts)
 };
 
 // SELF-HEAL: bounded fetch (mirrors screen.ts). A hung upstream must throw, not
