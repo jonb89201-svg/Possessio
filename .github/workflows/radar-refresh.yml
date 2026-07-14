@@ -1,0 +1,35 @@
+name: radar-refresh
+
+# Auto-redeploys possessio-radar every 3 hours. The 15s-feed sub-tick loop in
+# screenScan stalls after ~4h of runtime; a redeploy spins a fresh isolate and
+# resets it. 3h stays comfortably under the observed ~4.4h stall. Also runnable
+# on demand from the Actions tab (workflow_dispatch).
+#
+# REQUIRES: a repo Actions secret named CLOUDFLARE_API_TOKEN.
+# GOTCHA: GitHub runs scheduled workflows ONLY from the default branch (main),
+# so this file must live on main. It checks out the radar dev branch to deploy
+# that code. Update `ref:` if the dev branch changes/merges.
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"   # every 3 hours
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/internet-access-xdttz9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install radar deps
+        working-directory: radar
+        run: npm ci || npm install
+      - name: Deploy radar worker
+        working-directory: radar
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

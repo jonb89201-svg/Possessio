@@ -37,7 +37,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 ## Parked (deliberately not now)
 
 - ⏸ **Fundstrat / Tom Lee (MAVAN) email** — drafted, held. Send only after (a) ecosystem standing (a grant) and (b) the real MAVAN staking interface. The ask *is* that interface; L1Anchor's `IMAVANEntry` is a placeholder.
-- 💭 **Whisky RWA** (allocated tokenized casks via bonded warehouse) — vision stage, its own grant doors. Not started.
+- 🥃 **Whisky RWA — "The Bond"** (allocated tokenized bottles, bonded warehouse). STARTED. Spec `specs/SPEC_PossessioWhiskyMarket.md` (V1/V5 resolved, English live-event auction ratified). `src/PossessioWhiskyMarket.sol` v0.1 built — primary English auction module, **compiles vs real base/base-std B20 interfaces**. NON-PROVEN. **Requirement for the pool deploy** (§6: mine market CreateX salt → address → pool's immutable source set). Next: secondary order book, DoD suite via `base-foundryup` (§8), B20 issuance wrap + relay + app. Deploy gated on §7 legal (holding co, warehouse agreement, securities framing, jurisdiction).
 
 ---
 
@@ -62,6 +62,27 @@ Updated as things get named or done. Last updated: 2026-07-10._
 - **x402Core** (`src/PossessioX402Core.sol`) — the reusable pay-per-call payment engine (EIP-3009); the foundation the data-product APIs (and PITI) are built on. Testnet deploy lane built (`script/DeployX402Testnet.s.sol`, ratified *placeholder* economics). Tests pass OFFLINE against mocks (`test/X402TestnetMocks.sol`) + decay suite (ffi). **PENDING, in order:** (1) fork run — `X402_FORK_RPC=<Base Sepolia RPC>` against real chain state; (2) testnet `--broadcast` deploy (no address exists yet); (3) ratify real economics (placeholders now); (4) mainnet deploy. **THIS IS THE GATE for PITI.**
 
 **Running (off-chain infra):** the console (possessio.io — operates the live contracts, real wallet-confirmed txns), the Solana radar (self-running), the Superfoods app (live).
+
+---
+
+## AI Live Selection feed (radar) — BUILT & LIVE (2026-07-11)
+
+The radar's screened-candidate feed. Ratified public (Architect, Amendment IV Clause 5): shows the SELECTION to promote the x402Core autonomous trader + feed the pool; shared visibility on a $10k micro-cap is a tailwind, never entry/exit prices or size.
+
+- **The screen** (`radar/screen.ts` `screenScan`, every-minute cron): RULEBOOK §1 — pre-DEX (`watching`) + age 4–7min + curve MC in the $8–13k band → writes to `candidates`. **Paper-only, no keys, no orders.**
+- **Outcome tracker**: §1 exit ladder — $20k target / $6k stop / graduation (edge-loss) / 10-min time-stop.
+- **Continuous tracking past the DEX boundary** (`dexTrackScan`): once a candidate graduates, keeps enriching it for 48h with live DexScreener data (price, MC, liquidity, vol1h, 5m, 1h). One row = the coin's whole arc: pump.fun feeds pre-DEX, DexScreener feeds post-DEX.
+- **Public feed page** `/feed` (`radar/feed.ts`): dark, self-polling, honest "most fail by design — you're watching a discipline" framing + the x402Core pitch. Screener-style rows (entry→now/peak %move, chart↗ link, ON-DEX line).
+- **Console button**: Markets → **AI Live Selection** (`public/index.html`).
+- **LIVE at:** `https://possessio-radar.jonb89201.workers.dev/feed` (verified rendering 2026-07-11).
+- **DB**: `candidates` table (migrations 0007 + 0008), applied live to `possessio-radar-ledger`.
+
+**Deploy note:** the radar worker deploys **manually** (`cd radar && npx wrangler deploy`) — the repo→Cloudflare connection only rebuilds the console/site, NOT this separate worker. Deploy from branch `claude/internet-access-xdttz9` (the code isn't on main).
+
+**Open follow-ups:**
+- [ ] **Validate §1**: watch the `candidates` tally over days — target/stop/graduated/timestop. This is the ledger that kills or confirms the method (§7). Method still UNPROVEN.
+- [ ] **Rug gate (§2)** + **Session gate (§0)** are `NULL` (not evaluated) — need on-chain creator-holdings data + Solana vol-vs-7d data wired before they're real.
+- [ ] **`radar.possessio.io`** deferred: needs possessio.io as a full Cloudflare zone (nameserver migration) → risks the Resend email records. Not worth it for a feed page; workers.dev URL works. Do the domain move only deliberately, later.
 
 **Named provable accomplishment — in-app mobile debug console ("MIB DEBUG"):** a live on-device inspector built into the console — timestamped logs, bridge status, and full raw JSON-RPC transaction payloads with exact wallet error/revert codes (e.g. `eth_sendTransaction` calldata, `to`, gas, `code: 4001 ACTION_REJECTED`, ethers version). Desktop-F12-grade inspection **on a phone**, where mobile browsers provide none — the enabling tooling that makes phone-only contract development and debugging actually possible, not a boast. **Provable:** open possessio.io and tap DBG. (Evidence: console screenshot 2026-07-09, showing the raw `eth_sendTransaction` to PossessioPayments `0x1c0F…AB91` and the live "no factory configured for chain 8453" RAIL log.)
 

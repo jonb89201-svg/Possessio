@@ -30,16 +30,30 @@ export type WatcherEnv = Env & {
   YOUNG_WINDOW_MIN: string;
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
+  PUMPPORTAL_WS_URL?: string;
+  PUMPPORTAL_API_KEY?: string; // secret; unlocks subscribeTokenTrade (key funded >=0.02 SOL)
+  PUMPTAPE?: DurableObjectNamespace; // Layer 3 engine (pumptape.ts)
 };
+
+// SELF-HEAL: bounded fetch (mirrors screen.ts). A hung upstream must throw, not
+// hang the cron job — timeout -> caught -> next cron tick retries. No un-timed
+// await on an external host in the scheduled path.
+const WATCH_FETCH_TIMEOUT_MS = 10_000;
+function wfetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(WATCH_FETCH_TIMEOUT_MS) });
+}
 
 export async function birthScan(env: WatcherEnv): Promise<void> {
   if (!env.PUMPFUN_FEED_URL) {
     console.warn("PUMPFUN_FEED_URL unset — birthScan idle (VERIFY-FIRST gate)");
     return;
   }
-  const res = await fetch(env.PUMPFUN_FEED_URL, {
-    headers: { accept: "application/json", "user-agent": "possessio-radar/0.2" },
-  });
+  let res: Response;
+  try {
+    res = await wfetch(env.PUMPFUN_FEED_URL, {
+      headers: { accept: "application/json", "user-agent": "possessio-radar/0.2" },
+    });
+  } catch (e) { console.warn("birth feed timeout/err", String(e)); return; }
   if (!res.ok) {
     console.warn("birth feed", res.status);
     return;
@@ -123,9 +137,12 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
   // 300 req/min (VERIFY-FIRST vs docs.dexscreener.com/api/reference).
   for (let c = 0; c < live.length; c += 30) {
     const chunk = live.slice(c, c + 30);
-    const res = await fetch(env.DEXSCREENER_TOKEN_URL + chunk.map((t) => t.addr).join(","), {
-      headers: { accept: "application/json", "user-agent": "possessio-radar/0.3" },
-    });
+    let res: Response;
+    try {
+      res = await wfetch(env.DEXSCREENER_TOKEN_URL + chunk.map((t) => t.addr).join(","), {
+        headers: { accept: "application/json", "user-agent": "possessio-radar/0.3" },
+      });
+    } catch { continue; } // hung batch skips; next tick retries
     if (res.status === 429) {
       console.warn("dexscreener 429 — yielding this tick");
       break; // polite backoff; cron returns in 60s; batched writes still land
@@ -219,12 +236,15 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
 export async function btcScan(env: WatcherEnv): Promise<void> {
   const feed = env.CHAINLINK_BTC_USD || "0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F";
   const rpc = env.BASE_RPC_URL || "https://mainnet.base.org";
-  const res = await fetch(rpc, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call",
-      params: [{ to: feed, data: "0xfeaf968c" }, "latest"] }), // latestRoundData()
-  });
+  let res: Response;
+  try {
+    res = await wfetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ to: feed, data: "0xfeaf968c" }, "latest"] }), // latestRoundData()
+    });
+  } catch (e) { console.warn("btc feed timeout/err", String(e)); return; }
   if (!res.ok) { console.warn("btc feed rpc", res.status); return; }
   const j: any = await res.json();
   const hex: string = j?.result;

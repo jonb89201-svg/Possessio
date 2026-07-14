@@ -11,7 +11,37 @@
     "iconUrl": "https://possessio.io/icon-1024.png",
     "splashImageUrl": "https://possessio.io/splash-200.png",
     "splashBackgroundColor": "#556870",
+    "subtitle": "Own your protocol on Base",
+    "description": "Connect a wallet and auto-deploy your own protocol contracts on Base in one signature — then operate and verify them from a single operator console.",
+    "tagline": "Deploy. Operate. Verify.",
     "primaryCategory": "finance",
-    "description": "Own your protocol. The Possessio operator console: deploy, operate, and verify contracts on Base."
+    "tags": ["base", "deploy", "defi", "onchain", "protocol"],
+    "heroImageUrl": "https://possessio.io/og.png",
+    "ogTitle": "Possessio — Own Your Protocol",
+    "ogDescription": "Auto-deploy, operate, and verify your protocol contracts on Base from one console.",
+    "ogImageUrl": "https://possessio.io/og.png",
+    "noindex": false,
+    "requiredChains": ["eip155:8453"],
+    "canonicalDomain": "possessio.io"
+  },
+  "frame": {
+    "version": "1",
+    "name": "Possessio",
+    "homeUrl": "https://possessio.io",
+    "iconUrl": "https://possessio.io/icon-1024.png",
+    "splashImageUrl": "https://possessio.io/splash-200.png",
+    "splashBackgroundColor": "#556870",
+    "subtitle": "Own your protocol on Base",
+    "description": "Connect a wallet and auto-deploy your own protocol contracts on Base in one signature — then operate and verify them from a single operator console.",
+    "tagline": "Deploy. Operate. Verify.",
+    "primaryCategory": "finance",
+    "tags": ["base", "deploy", "defi", "onchain", "protocol"],
+    "heroImageUrl": "https://possessio.io/og.png",
+    "ogTitle": "Possessio — Own Your Protocol",
+    "ogDescription": "Auto-deploy, operate, and verify your protocol contracts on Base from one console.",
+    "ogImageUrl": "https://possessio.io/og.png",
+    "noindex": false,
+    "requiredChains": ["eip155:8453"],
+    "canonicalDomain": "possessio.io"
   }
 }

@@ -58,3 +58,12 @@ __pycache__/
 
 # Wrangler local dev state
 .wrangler/
+
+# =========================
+# MCP local config (holds RPC tokens / keys — NEVER commit)
+# =========================
+.mcp.json
+.mcp.local.json
+
+# Wrangler local secrets (NEYNAR_API_KEY etc) — NEVER commit
+.dev.vars

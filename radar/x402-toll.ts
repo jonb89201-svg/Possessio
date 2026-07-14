@@ -35,10 +35,72 @@ export type Env = {
   PRICE_GAP_STATS: string;   // OPEN — Architect prices after the tape has data
   PRICE_SESSION_GATE: string;
   PRICE_TAPE: string;
+  // Farcaster Mini App (the radar, launchable inside Warpcast/Base App).
+  CONSOLE_URL?: string;             // where icon/splash/og assets live (default possessio.io)
+  FC_ACCOUNT_ASSOCIATION?: string;  // signed JFS (JSON) proving the domain -> your FID; set via `wrangler secret put`
+  NEYNAR_API_KEY?: string;          // Neynar-powered features (notifications/posting); base mini app needs none
 };
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const CAIP2: Record<string, string> = { base: "eip155:8453", "base-sepolia": "eip155:84532" };
+
+// ── BITCOIN NEWS (bitbo.io has no API — its news page is itself an aggregator
+// of standard RSS, so we pull the same primary sources directly, server-side
+// since RSS sends no CORS). Cached per-isolate, 5-min TTL; the /radar/news
+// route serves it and the feed renders a compact strip. Display only. ──
+const NEWS_FEEDS: [string, string][] = [
+  ["CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"],
+  ["Cointelegraph", "https://cointelegraph.com/rss"],
+  ["Bitcoin Magazine", "https://bitcoinmagazine.com/feed"],
+];
+const NEWS_TTL_MS = 5 * 60_000;
+let newsCache: { ts: number; items: any[] } = { ts: 0, items: [] };
+
+// RSS titles arrive HTML-entity-encoded (and occasionally with stray tags).
+// Decode to clean text here; the feed re-escapes with esc() before display, so
+// the result is both correct (no double-escaped &amp;) and XSS-safe.
+function decodeEntities(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&"); // amp last
+}
+
+function parseRss(xml: string, src: string, limit = 8): any[] {
+  const out: any[] = [];
+  const grab = (b: string, tag: string) => {
+    const m = b.match(new RegExp("<" + tag + "[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</" + tag + ">", "i"));
+    return m ? m[1].trim() : "";
+  };
+  for (const b of xml.split(/<item[\s>]/i).slice(1, limit + 1)) {
+    const title = decodeEntities(grab(b, "title"));
+    if (!title) continue;
+    const pd = grab(b, "pubDate");
+    const ts = pd ? Date.parse(pd) : NaN;
+    out.push({ title, link: grab(b, "link"), src, ts: Number.isFinite(ts) ? ts : null });
+  }
+  return out;
+}
+
+async function getNews(): Promise<any[]> {
+  if (Date.now() - newsCache.ts < NEWS_TTL_MS && newsCache.items.length) return newsCache.items;
+  const all: any[] = [];
+  for (const [src, url] of NEWS_FEEDS) {
+    try {
+      const r = await fetch(url, {
+        headers: { "user-agent": "possessio-radar/0.4", accept: "application/rss+xml,application/xml,text/xml" },
+      });
+      if (!r.ok) continue;
+      all.push(...parseRss(await r.text(), src));
+    } catch { /* one source down doesn't sink the strip */ }
+  }
+  all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (all.length) newsCache = { ts: Date.now(), items: all.slice(0, 12) };
+  return newsCache.items;
+}
 
 export function buildTolledApp(env: Env) {
   const app = new Hono();
@@ -82,25 +144,147 @@ export function buildTolledApp(env: Env) {
   // $10k micro-cap is a tailwind, not a leak. It exposes WHICH coins clear §1,
   // never entry/exit prices or size. Always free, even when the toll is armed
   // (it's marketing for the paid execution product, not a paid data route). ----
-  app.get("/feed", (c) => c.html(FEED_HTML));
+  // The feed doubles as a Farcaster Mini App. We inject the fc:miniapp embed
+  // meta per-request (built from the actual origin, so it works on workers.dev
+  // or a custom domain with no hardcoding). Assets come from the console domain.
+  const consoleUrl = (env as any).CONSOLE_URL || "https://possessio.io";
+  app.get("/feed", (c) => {
+    const origin = new URL(c.req.url).origin;
+    const embed = JSON.stringify({
+      version: "1",
+      imageUrl: consoleUrl + "/og.png",
+      button: {
+        title: "Open Radar",
+        action: {
+          type: "launch_miniapp", name: "POSSESSIO Radar", url: origin + "/feed",
+          splashImageUrl: consoleUrl + "/splash-200.png", splashBackgroundColor: "#ffffff",
+        },
+      },
+    }).replace(/"/g, "&quot;");
+    const meta = '<meta name="fc:miniapp" content="' + embed + '">';
+    return c.html(FEED_HTML.replace("<!--FC_EMBED-->", meta));
+  });
+  // FARCASTER MINI APP MANIFEST. Served at the domain root; miniapp metadata is
+  // built from the request origin so it's domain-agnostic. accountAssociation
+  // (the JFS proving this domain belongs to your FID) is injected from an env
+  // secret — until it's set the app still launches, it just isn't "verified"
+  // for publishing. Generate it with Warpcast's manifest tool or Neynar.
+  app.get("/.well-known/farcaster.json", (c) => {
+    const origin = new URL(c.req.url).origin;
+    const miniapp: any = {
+      version: "1",
+      name: "POSSESSIO Radar",
+      iconUrl: consoleUrl + "/icon-1024.png",
+      homeUrl: origin + "/feed",
+      splashImageUrl: consoleUrl + "/splash-200.png",
+      splashBackgroundColor: "#ffffff",
+      subtitle: "AI live memecoin selection",
+      description: "What an autonomous trader screens from, live. Solana / pump.fun, pre-DEX — with the bucket-C conviction tag graded forward against real outcomes.",
+      primaryCategory: "finance",
+      tags: ["solana", "trading", "memecoins", "ai", "radar"],
+    };
+    const body: any = { miniapp, frame: miniapp }; // frame alias for older clients
+    const assoc = (env as any).FC_ACCOUNT_ASSOCIATION;
+    if (assoc) { try { body.accountAssociation = JSON.parse(assoc); } catch { /* leave unverified */ } }
+    return c.json(body);
+  });
+  // Bitcoin news strip — cached RSS aggregate (display only, public, free).
+  app.get("/radar/news", async (c) => c.json({ items: await getNews() }));
+  // Layer 3 VERIFY-FIRST surface: WS engine state, parse rate, raw samples.
+  // Aggregates + public mint data only — nothing here leaks method params.
+  app.get("/radar/ws-status", async (c) => {
+    const ns = (c.env as any).PUMPTAPE as DurableObjectNamespace | undefined;
+    if (!ns) return c.json({ error: "PUMPTAPE_NOT_BOUND" }, 503);
+    const stub = ns.get(ns.idFromName("main"));
+    const r = await stub.fetch("https://pumptape/status");
+    return new Response(r.body, { headers: { "content-type": "application/json" } });
+  });
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
+    const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_peak_mc, dex_liq_usd,
+              dex_vol_h1, dex_chg_m5, dex_chg_h1, dex_last_ms`;
+    // img: the coin's launch image (pump.fun image_uri), pulled free from the
+    // stored birth JSON — makes cards recognizable at a glance.
+    const imgCol = (t: string) =>
+      `(SELECT json_extract(b.raw_birth_json,'$.image_uri') FROM births b WHERE b.token_address=${t}.token_address) AS img`;
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
-              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session
+              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${imgCol("candidates")}, ${dexCols}
          FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
     ).all();
     const recent = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, peak_mc,
-              outcome, outcome_ms
+              last_mc, outcome, outcome_ms, ${dexCols}
          FROM candidates WHERE outcome!='live' ORDER BY outcome_ms DESC LIMIT 40`
     ).all();
     const tally = await db.prepare(
       `SELECT outcome, COUNT(*) AS n FROM candidates GROUP BY outcome`
     ).all();
+    // MACRO — live BTC from our OWN Chainlink-on-Base oracle (regime_ticks,
+    // written every cron), with 15m/1h slope. The tide: entries into a falling
+    // BTC underperform (measured), so this is live enter/hold context for the
+    // human, not decoration.
+    const bnow = Date.now();
+    const btc = await db.prepare(
+      `SELECT
+         (SELECT btc_usd FROM regime_ticks ORDER BY ts_ms DESC LIMIT 1)                         AS now,
+         (SELECT MAX(ts_ms) FROM regime_ticks)                                                   AS at,
+         (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?1 ORDER BY ts_ms DESC LIMIT 1)        AS m15,
+         (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?2 ORDER BY ts_ms DESC LIMIT 1)        AS h1`
+    ).bind(bnow - 900_000, bnow - 3_600_000).first();
+    // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
+    // surface: which coins, never entry/exit prices or size.
+    const early = await db.prepare(
+      `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
+              peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
+              ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share,
+              graduated_ms, dex_mc, dex_peak_mc, dex_liq_usd, dex_vol_h1, dex_last_ms,
+              ${imgCol("earlies")}
+         FROM earlies WHERE status='watching'
+        ORDER BY first_hit_ms DESC LIMIT 40`
+    ).all();
+    // §0 EARLY PLAY paper tally: entry=$4k crossing, target=$8k, exit at age
+    // 2:00. avg_mult = paper multiple on resolved plays (exit/entry).
+    const earlyPlay = await db.prepare(
+      `SELECT play_outcome, COUNT(*) AS n,
+              ROUND(AVG(play_exit_mc / first_hit_mc), 2) AS avg_mult
+         FROM earlies WHERE play_outcome IS NOT NULL
+        GROUP BY play_outcome`
+    ).all();
+    // CONVICTION FORWARD SCORECARD (migration 0016): the radar grading its own
+    // entry hypothesis on coins the thresholds never saw. Only RESOLVED coins
+    // count — a concluded §0 play OR born >20min ago (past the run window) — so a
+    // still-cooking GO is not scored as a loss. peak = the realized max
+    // (post-grad dex_peak_mc if it ran on DEX, else the curve peak_mc).
+    const convResolvedBefore = Date.now() - 20 * 60_000;
+    const scorecard = await db.prepare(
+      `SELECT conv_tag AS tag, COUNT(*) AS n,
+              SUM(CASE WHEN COALESCE(dex_peak_mc, peak_mc, 0) >= 20000 THEN 1 ELSE 0 END) AS win20,
+              SUM(CASE WHEN conv_entry_mc > 0
+                        AND COALESCE(dex_peak_mc, peak_mc, 0) >= 2*conv_entry_mc THEN 1 ELSE 0 END) AS win2x
+         FROM earlies
+        WHERE conv_tag IS NOT NULL
+          AND (play_outcome IS NOT NULL OR first_hit_ms < ?1)
+        GROUP BY conv_tag`
+    ).bind(convResolvedBefore).all();
+    // The oscillation tape for everything currently on screen. 25min covers
+    // the longest possible early->qualify->track life; closed coins age out.
+    const ticksRaw = await db.prepare(
+      `SELECT token_address, ms, mc, sol_reserves, vol_m5 FROM mc_ticks
+        WHERE ms >= ?1 ORDER BY ms ASC`
+    ).bind(Date.now() - 25 * 60_000).all();
+    const ticks: Record<string, { ms: number; mc: number; sol: number | null; v5: number | null }[]> = {};
+    for (const t of ticksRaw.results as any[]) {
+      (ticks[t.token_address] ??= []).push({ ms: t.ms, mc: t.mc, sol: t.sol_reserves, v5: t.vol_m5 });
+    }
     return c.json({
       live: live.results,
       recent: recent.results,
+      early: early.results,
+      earlyPlay: earlyPlay.results,
+      scorecard: scorecard.results,
+      btc,
+      ticks,
       tally: tally.results,
       method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",
     });

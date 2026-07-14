@@ -1,0 +1,83 @@
+{
+  "_INTERNAL": "PRIVATE build/deploy tool — NEVER served on the console, never public. Users never see pools, optimizer settings, or the foundation. This file lives in deploy/, not public/.",
+  "_doc": "OPTIMIZER POOL + DEPLOY MODEL — source of truth for per-contract optimizer settings and codehashes for OUR OWN foundation deploys. Run deploy/sync_optimizer_pool.sh to fill init_codehash / deployed_codehash / runtime_bytes.",
+  "_business_model": "POSSESSIO owns ONE pool: PossessioPool — 'THE HEART', our reservoir. It is fed by exactly two inflows: the auto-launch fees (what customers pay us to auto-deploy) and x402Core. NOTHING ELSE feeds it — payments is NOT a pool source, and v2.6.3 is NOT connected to it. HISTORY: the pool idea came AFTER v2.6.3 was already fork-tested, which is precisely why v2.6.3 stands outside it. The console is a PAID auto-deploy gate: a user connects a wallet, pays our fee, and the factory auto-deploys their contract. v2.6.3 (STEEL + hook) is the CUSTOMER'S OWN product: someone who wants to profit from their own pool. They pay us to launch their token; THEY then pair THEIR OWN liquidity to THEIR OWN token, which creates THEIR OWN pool. We take the auto-launch fee (which feeds OUR PossessioPool); we never pair their liquidity and we have NO access to the deployed contract once it is live. That no-post-deploy-access reality is exactly why onboarding/education must happen at a physical (Apple-store-style) location. Optimizer settings are baked into the template bytecode the factory deploys; the user never sees or sets them.",
+  "_model": "THREE TIERS. (1) FOUNDATION — salt pool, protocol pool, factory: OUR private one-time manual deploys, in order, each proven before the next. Deploy once, work forever. NOT on the console. (2) AUTO-DEPLOY — payments, v2.6.3, x402Core: the paid product. Deployed FROM the foundation (factory + salt rail, deterministic) when a paying user triggers it. These three are what the console lists. (3) PREREQUISITE / LATER — the rest (whisky, Ethereum anchor): separate phases, prerequisites (grant, liquidity, Fundstrat) first. RULE: the factory pins a template's init_codehash IMMUTABLY at deploy — freeze the auto-deploy templates' optimizer runs BEFORE the factory goes live.",
+  "_optimizer": "HARDCODED PER CONTRACT. The optimizer_runs below are enforced by foundry.toml [[profile.default.compilation_restrictions]] — ONE `forge build` produces every contract at its fixed setting. Customers never choose it; we preset it as part of the service. Global default = runs=1 (size-safe, required for the v2.6.3 hook to fit under EIP-170). Only contracts that differ from 1 carry a compilation_restrictions entry; the runs shown here mirror that file exactly.",
+  "eip170_limit_bytes": 24576,
+  "contracts": [
+    {
+      "step": 1, "deploy": "once", "phase": "foundation · one-time (manual, in order)",
+      "name": "PossessioSaltPool", "file": "src/PossessioSaltPool.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "salt / CREATE3 rail",
+      "reason": "one-time. The deterministic-address rail the factory and the auto-deploy set deploy onto. First. runs=1 (default) — size-safe.",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 2, "deploy": "once", "phase": "foundation · one-time (manual, in order)",
+      "name": "PossessioPool", "file": "src/PossessioPool.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "protocol pool — OUR reservoir ('THE HEART')",
+      "reason": "one-time. Deployed after the salt rail, before the factory. THIS is the one pool POSSESSIO owns — fed by exactly two inflows: the auto-launch fees and x402Core. Payments does NOT feed it; the v2.6.3 hook is NOT connected to it (that's the customer's own product). The pool idea postdates v2.6.3's fork test. runs=1 (default).",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 3, "deploy": "once", "phase": "foundation · one-time (manual, in order)",
+      "name": "PossessioFactory", "file": "src/PossessioFactory.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "factory / auto-deployer (codehash pattern)",
+      "reason": "one-time — deploy once, works as designed forever. From its existence, tier 2 auto-deploys. Pins template init_codehash(es) IMMUTABLY at construction — so the auto-deploy templates' runs must be frozen BEFORE this deploys. runs=1 (default).",
+      "pins_template": "the auto-deploy set (v2.6.3 / payments / x402 as applicable)",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 4, "deploy": "auto", "phase": "auto-deploy · from the foundation",
+      "name": "PossessioPayments", "file": "src/PossessioPayments.sol",
+      "chain": "base", "optimizer_runs": 10000, "role": "payments rail (NOT a pool source)",
+      "reason": "auto-deployed from the foundation. NOT connected to PossessioPool — does not feed the reservoir. Hit on every payment — runs=10000 for cheap runtime. Its build must be frozen before the factory pins it. Hardcoded in foundry.toml.",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 5, "deploy": "auto", "phase": "auto-deploy · from the foundation",
+      "name": "STEEL", "file": "src/POSSESSIO_v2-6-3.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "the customer's own token (v2.6.3)",
+      "reason": "the paid product — auto-deployed for a paying customer, NOT connected to PossessioPool. Deployed with v2.6.3; must precede its hook. Shares the v2.6.3 compilation (runs=1, default).",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 6, "deploy": "auto", "phase": "auto-deploy · from the foundation",
+      "name": "PossessioHook", "file": "src/POSSESSIO_v2-6-3.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "the customer's own hook / pool (v2.6.3)",
+      "reason": "the paid product, NOT our reservoir and NOT connected to PossessioPool. Runs on the customer's OWN pool — they pair their own liquidity to their own token to create it; we have no access once deployed. Needs a MINED hook address (V4 permission bits). runs=1 REQUIRED to fit under 24KB — this is why the default is 1.",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 7, "deploy": "auto", "phase": "auto-deploy · from the foundation",
+      "name": "PossessioX402Core", "file": "src/PossessioX402Core.sol",
+      "chain": "base", "optimizer_runs": 10000, "role": "autonomous trader (x402Core)",
+      "reason": "auto-deployed from the foundation. Called per-trade — runs=10000. Frozen before the factory pins it. Hardcoded in foundry.toml.",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 8, "deploy": "prereq", "phase": "prerequisite / later phase",
+      "name": "PossessioWhiskyMarket", "file": "src/PossessioWhiskyMarket.sol",
+      "chain": "base", "optimizer_runs": 1, "role": "RWA whisky market (new)",
+      "reason": "not part of the core launch — a later phase once its prerequisites (§7 legal, B20 issuance) are met. runs=1 (default).",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 9, "deploy": "prereq", "phase": "prerequisite / later phase",
+      "name": "L1AnchorFactory", "file": "src/L1AnchorFactory.sol",
+      "chain": "ethereum", "optimizer_runs": 800, "role": "ethereum anchor factory (embeds L1Anchor)",
+      "reason": "separate chain, later — gated on the Base Builder grant / Fundstrat email + the anchor addresses. Deploys L1Anchor with it (embedded new). runs=800 balances expensive L1. Hardcoded in foundry.toml.",
+      "embeds": "L1Anchor",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    },
+    {
+      "step": 9, "deploy": "prereq", "phase": "prerequisite / later phase",
+      "name": "L1Anchor", "file": "src/L1Anchor.sol",
+      "chain": "ethereum", "optimizer_runs": 800, "role": "merchant anchor (deployed by the factory)",
+      "reason": "welded to L1AnchorFactory (embedded new) — shares its setting (runs=800, hardcoded); listed for the codehash record only.",
+      "welded_to": "L1AnchorFactory",
+      "init_codehash": null, "deployed_codehash": null, "runtime_bytes": null
+    }
+  ]
+}
