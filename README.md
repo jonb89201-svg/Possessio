@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. **765 passed / 0 failed / 2 skipped across 37 suites** (verified 2026-07-14; run `forge test` for the live tally). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. **778 passed / 0 failed / 2 skipped across 38 suites** (verified 2026-07-15; run `forge test` for the live tally). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,7 +35,7 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result: 765 passed / 0 failed / 2 skipped (767 total) across 37 suites** -- as of the 2026-07-14 audit-remediation merge (PR #15; arc across the build's history: 487 -> 585 -> 621 -> 690 -> 765). The suite is actively extended, so the live `forge test` output is the count of record when this line and the terminal disagree. The suite spans unit, adversarial/gauntlet, invariant, fuzz, ffi, and fork tests; the per-suite breakdown is printed by `forge test` itself. Fork suites skip cleanly when no fork RPC is configured (the 2 skips are intentional mock-mode-only paths).
+**Result: 778 passed / 0 failed / 2 skipped (780 total) across 38 suites** -- as of the 2026-07-15 PossessioPool cold-seat re-audit fresh run (`AUDIT_POOL_20260715.md`; arc across the build's history: 487 -> 585 -> 621 -> 690 -> 765 -> 778). The suite is actively extended, so the live `forge test` output is the count of record when this line and the terminal disagree. The suite spans unit, adversarial/gauntlet, invariant, fuzz, ffi, and fork tests; the per-suite breakdown is printed by `forge test` itself. Fork suites skip cleanly when no fork RPC is configured (the 2 skips are intentional mock-mode-only paths).
 
 The off-chain organs carry their own suites, all green same-day: radar **12/12**, solana-mcp **11/11**, xtrade constitution gates **22/22** (`node --test` in each directory).
 

@@ -129,6 +129,17 @@ contract DeployPossessioPool is Script {
         require(halflife != 0, "POOL_VELOCITY_HALFLIFE not set/zero - zero disables decay (floor never falls)");
         // ABSOLUTE_FLOOR / FLOOR_PER_UNIT may legitimately calibrate to small
         // values but never silently: envUint already reverts when unset.
+        // P-2 (cold-seat audit 2026-07-15): reject the silently-deployable
+        // self-bricking shape. floor >= cap is a dead pool - balance can never
+        // exceed CAP <= floor, so settleOperationalCosts reverts forever and
+        // 100% of over-cap inflow sweeps to treasury. Immutable once broadcast;
+        // the only fix would be redeploying the pool AND every organ that pins
+        // POOL at construction. Catch it here, cheaply, before the freeze.
+        require(floor < cap, "floor >= cap: dead-pool shape - operator could never draw (immutable, would need full redeploy)");
+        // P-2: sanity-band the velocity half-life so a fat-fingered seconds
+        // value (e.g. hours where weeks were meant) can't slip through - it
+        // changes P-1's steady-state floor math by orders of magnitude.
+        require(halflife >= 1 hours && halflife <= 90 days, "POOL_VELOCITY_HALFLIFE out of sane band [1 hours, 90 days] - check seconds units");
 
         // ---- assemble the immutable source set ----
         uint256 n = whisky == address(0) ? 2 : 3;
