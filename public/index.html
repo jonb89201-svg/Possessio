@@ -441,7 +441,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
     </div>
   </div>
 
-  <div class="tc-status" id="tc-status">Connect a wallet or paste an L1Anchor address to see live values.</div>
+  <div class="tc-status" id="tc-status">Connect a wallet or paste a PossessioPayments address to see live values.</div>
 </section>
 
 <nav class="tabs" id="tabs"></nav>
@@ -498,8 +498,6 @@ const STORAGE_KEY = "possessio_console_addresses_v0_4_3";
 //                               StakingDeployed/StakingRetained dual-emit events)
 //   PossessioPayments_v2-4-1.sol — V3 dual-acquisition (cbETH leg + Morpho USDC leg)
 //                                  with merchant-configurable cbEthBps split
-//   L1Anchor.sol              — includes resetDepeg() (Grok finding, Architect-ratified May 9 2026)
-//   L1AnchorFactory.sol
 //
 // PLATE v1 deliberately excluded — dormant, reference-only per Architect directive.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -974,125 +972,6 @@ const CONTRACTS = [
     ],
   },
 
-  // 4. L1Anchor — Tier 2 per-merchant treasury
-  {
-    key:"L1A", label:"L1Anchor", title:"L1Anchor (Tier 2 — per-merchant)",
-    chain:"Ethereum L1", chainId:1,
-    desc:"Per-merchant treasury anchor on Ethereum L1. Routes capital between Bitmine MAVAN (cbETH staking) and Bitwise-curated Morpho Blue (USDC lending). Caller of L1AnchorFactory.deployAnchor() becomes MERCHANT_OWNER. Stateful Symmetry Guard pattern preserves last-known state on oracle failures. Identity Primitive surface for institutional partner verification.",
-    access:"onlyMerchantOwner",
-    categories:[
-      { id:"routing", label:"Routing", blurb:"Move funds to MAVAN staking or Morpho yield",
-        names:["routeToMavan","routeToMorpho","liquidCbEth","liquidUsdc","mavanShares","morphoShares","morphoUsdcValue","treasurySnapshot"] },
-      { id:"withdraw", label:"Withdrawals", blurb:"Pull funds back from MAVAN or Morpho",
-        names:["withdrawFromMavan","withdrawFromMorpho"] },
-      { id:"recovery", label:"Safety & Recovery", blurb:"Depeg checks, reset, emergency unwind",
-        names:["checkSymmetry","getSymmetryStatus","resetDepeg","emergencyUnwind","rescue"] },
-      { id:"identity", label:"Identity", blurb:"Anchor provenance and attestation",
-        names:["attestIdentity","isPossessioAnchor","merchantOwner","factoryDeployer","deploymentTimestamp","anchorVersion"] },
-    ],
-    subsections:{
-      writes:[
-        { label:"Position routing", names:["routeToMavan","routeToMorpho","withdrawFromMavan","withdrawFromMorpho"] },
-        { label:"Symmetry Guard",   names:["checkSymmetry","resetDepeg"] },
-        { label:"Identity primitive", names:["attestIdentity"] },
-        { label:"Emergency / rescue", names:["emergencyUnwind","rescue"] },
-      ],
-      reads:[
-        { label:"Identity primitive", names:["isPossessioAnchor","merchantOwner","factoryDeployer","deploymentTimestamp","anchorVersion"] },
-        { label:"Liquid balances",    names:["liquidCbEth","liquidUsdc"] },
-        { label:"Partner-held positions", names:["mavanShares","morphoShares","morphoUsdcValue"] },
-        { label:"Symmetry Guard state", names:["getSymmetryStatus"] },
-        { label:"Aggregate snapshot", names:["treasurySnapshot"] },
-      ],
-    },
-    functions:[
-      { kind:"write", name:"routeToMavan", gated:["onlyMerchantOwner"],
-        desc:"Stake cbETH into MAVAN validator network for institutional yield. Pre-approve cbETH to this anchor.",
-        rationale:"Gated by Symmetry Guard — reverts DepegPaused if the latch is set. Use resetDepeg to attempt clear if oracle recovered.",
-        inputs:[{name:"cbEthAmount",type:"uint256",hint:"cbETH wei (18 decimals)"}], outputs:[] },
-      { kind:"write", name:"routeToMorpho", gated:["onlyMerchantOwner"],
-        desc:"Deposit USDC into Bitwise-curated Morpho Blue vault. Pre-approve USDC to this anchor.",
-        inputs:[{name:"usdcAmount",type:"uint256",hint:"USDC base units (6 decimals)"}], outputs:[] },
-      { kind:"write", name:"withdrawFromMavan", gated:["onlyMerchantOwner"],
-        desc:"Unstake MAVAN shares back to cbETH.",
-        rationale:"NOT gated by Symmetry Guard — merchant must always be able to exit positions, especially during depeg events.",
-        inputs:[{name:"sharesAmount",type:"uint256"}], outputs:[] },
-      { kind:"write", name:"withdrawFromMorpho", gated:["onlyMerchantOwner"],
-        desc:"Redeem Morpho vault shares back to USDC.",
-        inputs:[{name:"sharesAmount",type:"uint256"}], outputs:[] },
-
-      { kind:"write", name:"resetDepeg", gated:["onlyMerchantOwner"],
-        desc:"Sole clear path on the one-way Symmetry Guard latch. Performs its own oracle verification: try/catch on latestRoundData, with staleness, future-timestamp, round-mismatch, non-positive, and below-threshold checks. If oracle is now healthy, clears depegPaused and emits SymmetryGuardResumed. If oracle is still unhealthy, the call reverts and the latch remains set.",
-        rationale:"Closes the UX gap where merchant would otherwise need to attempt routeToMavan (with funds at risk) just to test latch state. Adversarial finding by Grok (Council seat 3); Architect-ratified May 9, 2026. Behavior corrected to match post-2026-05-17 ratified one-way latch semantics (own oracle verification, sole clear path).",
-        inputs:[], outputs:[] },
-
-      { kind:"write", name:"checkSymmetry", gated:["permissionless"],
-        desc:"Permissionless Symmetry Guard check. Runs oracle verification in its own transaction so the latch state persists across subsequent calls. No auth, no fund movement, no return value — anyone can request the contract evaluate its own oracle.",
-        rationale:"Guarded-wrapper / internal-core split: external entry calls internal _checkSymmetry(), allowing the latch to be set in a standalone transaction. Also gives offchain monitoring infrastructure a direct way to drive the latch on observed oracle health. Architect-ratified 2026-05-17.",
-        inputs:[], outputs:[] },
-
-      { kind:"write", name:"attestIdentity", gated:["permissionless"],
-        desc:"Emit a canonical IdentityAttested event recording msg.sender as a recognizer of this Anchor as legitimate POSSESSIO substrate. No state change beyond event emission.",
-        rationale:"Used by MAVAN, Bitwise, custody providers, or auditors to leave a non-spoofable on-chain recognition breadcrumb. Costs only event-emission gas.",
-        inputs:[], outputs:[] },
-
-      { kind:"write", name:"emergencyUnwind", gated:["onlyMerchantOwner"], danger:true,
-        desc:"Full unwind — pulls all positions back to merchant owner in cbETH and USDC. Amounts returned in event log (cbEthReturned, usdcReturned).",
-        rationale:"No timelock per Architect ratification: merchant is sole authority and should not be caged from saving their own capital.",
-        inputs:[], outputs:[] },
-      { kind:"write", name:"rescue", gated:["onlyMerchantOwner"],
-        desc:"Rescue an arbitrary ERC20 token from the anchor to the merchant.",
-        inputs:[{name:"token",type:"address"},{name:"amount",type:"uint256"}], outputs:[] },
-
-      // Reads — Identity primitive
-      { kind:"read", name:"isPossessioAnchor", gated:["read"],
-        desc:"Identity primitive. Always true on a genuine Anchor. Trivially forgeable in isolation — combine with factoryDeployer + canonical factory address check for real verification.",
-        inputs:[], outputs:[{type:"bool"}] },
-      { kind:"read", name:"merchantOwner", gated:["read"], desc:"The merchant who deployed this anchor (fixed at construction).",
-        inputs:[], outputs:[{type:"address"}] },
-      { kind:"read", name:"factoryDeployer", gated:["read"], desc:"The L1AnchorFactory address that deployed this anchor. Pair with isPossessioAnchorFactory check against canonical factory address.",
-        inputs:[], outputs:[{type:"address"}] },
-      { kind:"read", name:"deploymentTimestamp", gated:["read"], desc:"Block timestamp at construction.",
-        inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"anchorVersion", gated:["read"], desc:"Version string of this Anchor template.",
-        inputs:[], outputs:[{type:"string"}] },
-
-      // Reads — Liquid balances
-      { kind:"read", name:"liquidCbEth", gated:["read"], desc:"cbETH held directly by the anchor (not in MAVAN).",
-        inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"liquidUsdc", gated:["read"], desc:"USDC held directly by the anchor (not in Morpho).",
-        inputs:[], outputs:[{type:"uint256"}] },
-
-      // Reads — Partner-held positions
-      { kind:"read", name:"mavanShares", gated:["read"], desc:"MAVAN validator shares held by the anchor.",
-        inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"morphoShares", gated:["read"], desc:"Morpho vault shares held by the anchor.",
-        inputs:[], outputs:[{type:"uint256"}] },
-      { kind:"read", name:"morphoUsdcValue", gated:["read"], desc:"Current USDC value of morphoShares via Morpho convertToAssets().",
-        inputs:[], outputs:[{type:"uint256"}] },
-
-      // Reads — Symmetry Guard
-      { kind:"read", name:"getSymmetryStatus", gated:["read"], desc:"Depeg pause status + current cbETH/ETH deviation in bps.",
-        inputs:[], outputs:[
-          {name:"isPaused",type:"bool"},
-          {name:"currentBps",type:"uint256"},
-        ] },
-
-      // Reads — Aggregate snapshot
-      { kind:"read", name:"treasurySnapshot", gated:["read"], desc:"Full consolidated position snapshot for offchain UX.",
-        inputs:[], outputs:[
-          {name:"cbEthLiquid",type:"uint256"},
-          {name:"cbEthMavanShares",type:"uint256"},
-          {name:"cbEthMavanPrincipal",type:"uint256"},
-          {name:"usdcLiquid",type:"uint256"},
-          {name:"usdcMorphoShares",type:"uint256"},
-          {name:"usdcMorphoValue",type:"uint256"},
-          {name:"usdcMorphoPrincipal",type:"uint256"},
-          {name:"isDepegPaused",type:"bool"},
-        ] },
-    ],
-  },
-
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1110,9 +989,8 @@ const state = {
   addresses: {},
 };
 
-// Merchant-first tab order: PAY and L1A (the merchant's own contracts) lead;
-// STEEL / HOOK / L1F (protocol-level, mostly read/reference) follow.
-const TAB_ORDER = ["PAY", "L1A", "HOOK"];
+// Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
+const TAB_ORDER = ["PAY", "HOOK"];
 
 function loadAddresses() {
   try {
@@ -1497,7 +1375,7 @@ function renderPanels() {
   meta.querySelector("input.addr").addEventListener("input", e => {
     state.addresses[c.key] = e.target.value.trim();
     persistAddresses();
-    if (c.key === "L1A" || c.key === "PAY") scheduleTreasuryRefresh(800);
+    if (c.key === "PAY") scheduleTreasuryRefresh(800);
   });
   // Connect Contract: verify + read the contract at the entered address (read-only, no wallet needed)
   var __ccBtn = meta.querySelector(".connect-contract-btn");
@@ -1513,7 +1391,7 @@ function renderPanels() {
       var code = await prov.getCode(addr);
       if (!code || code === "0x") { setStatus("No contract at this address on chain " + c.chainId + ".", "#dc2626"); return; }
       setStatus("Contract connected ✓ — code verified on chain " + c.chainId + ". Reads enabled.", "#16a34a");
-      if (c.key === "L1A" || c.key === "PAY") scheduleTreasuryRefresh(200);
+      if (c.key === "PAY") scheduleTreasuryRefresh(200);
     } catch (err) {
       setStatus("Connect failed: " + (err && err.message ? err.message : String(err)), "#dc2626");
     }
@@ -1982,22 +1860,6 @@ const FEED_ABI = [{
   inputs:[], outputs:[{type:"uint8"}],
 }];
 
-// L1Anchor treasurySnapshot ABI fragment
-const SNAPSHOT_ABI = [{
-  type:"function", name:"treasurySnapshot", stateMutability:"view",
-  inputs:[],
-  outputs:[
-    {name:"cbEthLiquid",type:"uint256"},
-    {name:"cbEthMavanShares",type:"uint256"},
-    {name:"cbEthMavanPrincipal",type:"uint256"},
-    {name:"usdcLiquid",type:"uint256"},
-    {name:"usdcMorphoShares",type:"uint256"},
-    {name:"usdcMorphoValue",type:"uint256"},
-    {name:"usdcMorphoPrincipal",type:"uint256"},
-    {name:"isDepegPaused",type:"bool"},
-  ],
-}];
-
 // PossessioPayments balance ABI fragments
 const PAY_ABI = [
   { type:"function", name:"getUSDCBalance", stateMutability:"view", inputs:[], outputs:[{type:"uint256"}] },
@@ -2027,17 +1889,6 @@ async function fetchEthUsd(chainId) {
   const answer = decoded[1]; // bigint
   if (answer <= 0n) throw new Error("feed returned non-positive answer");
   return Number(answer) / Math.pow(10, decimals);
-}
-
-// Read treasurySnapshot from an L1Anchor address
-async function fetchAnchorSnapshot(anchorAddr) {
-  const provider = await getReadProvider(1); // L1Anchor is on Ethereum L1
-  const iface = new ethers.Interface(SNAPSHOT_ABI);
-  const raw = await provider.call({
-    to: anchorAddr,
-    data: iface.encodeFunctionData("treasurySnapshot", []),
-  });
-  return iface.decodeFunctionResult("treasurySnapshot", raw);
 }
 
 // Read PossessioPayments balances
@@ -2094,7 +1945,7 @@ function compute24hDelta(currentTotal, history) {
   return { pct, fromTs: reference.t };
 }
 
-// Main refresh — aggregates across all set L1Anchor addresses + Payments
+// Main refresh — reads PossessioPayments treasury balances
 async function refreshTreasury(opts) {
   const amountEl  = document.getElementById("tc-amount");
   const deltaEl   = document.getElementById("tc-delta");
@@ -2103,17 +1954,16 @@ async function refreshTreasury(opts) {
   const statusEl  = document.getElementById("tc-status");
   const refreshBtn= document.getElementById("tc-refresh");
 
-  const anchorAddr   = state.addresses["L1A"];
   const paymentsAddr = state.addresses["PAY"];
 
-  if ((!anchorAddr || !ethers.isAddress(anchorAddr)) && (!paymentsAddr || !ethers.isAddress(paymentsAddr))) {
+  if (!paymentsAddr || !ethers.isAddress(paymentsAddr)) {
     amountEl.textContent  = "$—";
     deltaEl.textContent   = "";
     deltaEl.className     = "tc-delta";
     liquidEl.textContent  = "$—";
     earningEl.textContent = "$—";
     statusEl.className    = "tc-status";
-    statusEl.textContent  = "Paste an L1Anchor or PossessioPayments address to see live values.";
+    statusEl.textContent  = "Paste a PossessioPayments address to see live values.";
     return;
   }
 
@@ -2127,25 +1977,6 @@ async function refreshTreasury(opts) {
   let priceUsed = null;
 
   try {
-    // Anchor on L1
-    if (anchorAddr && ethers.isAddress(anchorAddr)) {
-      try {
-        const [snap, ethUsd] = await Promise.all([
-          fetchAnchorSnapshot(anchorAddr),
-          fetchEthUsd(1),
-        ]);
-        priceUsed = ethUsd;
-        const cbEthLiquid = Number(ethers.formatUnits(snap[0], 18));
-        const cbEthMavan  = Number(ethers.formatUnits(snap[2], 18)); // principal — staked balance proxy
-        const usdcLiquid  = Number(ethers.formatUnits(snap[3], 6));
-        const morphoValue = Number(ethers.formatUnits(snap[5], 6));  // current USDC value of shares
-        liquidUsd  += cbEthLiquid * ethUsd + usdcLiquid;
-        earningUsd += cbEthMavan  * ethUsd + morphoValue;
-      } catch (e) {
-        errors.push("Anchor: " + (e.shortMessage || e.message || String(e)));
-      }
-    }
-
     // Payments on Base
     if (paymentsAddr && ethers.isAddress(paymentsAddr)) {
       try {
@@ -2214,7 +2045,6 @@ async function refreshTreasury(opts) {
   } else {
     statusEl.className = "tc-status";
     const parts = [];
-    if (anchorAddr   && ethers.isAddress(anchorAddr))   parts.push("Anchor");
     if (paymentsAddr && ethers.isAddress(paymentsAddr)) parts.push("Payments");
     statusEl.textContent = `Live · ${parts.join(" + ")} · ETH ≈ ${fmtUsd(priceUsed)}`;
   }
@@ -2424,7 +2254,6 @@ refreshTreasury();
   var C={
     v3:{name:"POSSESSIO V3",short:"V3",net:"base",desc:"Your own token, fee engine, and council vault — the full protocol in one contract.",config:"token"},
     pay:{name:"Payments",short:"PAY",net:"base",desc:"Inbound payment rails with a working reserve. Take payments, hold a stable buffer.",config:"payments"},
-    anchor:{name:"Anchor",short:"ANC",net:"eth",desc:"A per-merchant treasury that stakes and holds on Ethereum. Ready to run, nothing to set.",config:"none"}
   };
   var NET={ base:{main:"Base",test:"Base Sepolia",cls:"base"}, eth:{main:"Ethereum",test:"Ethereum Sepolia",cls:"eth"} };
   var STEPS=["Choose","Own","Set up","Deploy"], TITLES=["What do you want to launch?","How do you want to own it?","Set it up","Deploy"];
@@ -2444,7 +2273,7 @@ refreshTreasury();
     return '<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function sumF(i){ if(i===0){return esc(C[L.contract].name)+" \u00b7 "+nlabel(L.contract);}
     if(i===1)return L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
-    if(i===2){var c=C[L.contract]; if(c.config==="none")return "Ready to go"; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
+    if(i===2){var c=C[L.contract]; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
     return ""; }
   function tcls(){return L.env==="test"?"t":"";}
 
@@ -2463,8 +2292,6 @@ refreshTreasury();
   }
   function cSetup(){
     var c=C[L.contract],t=tcls();
-    if(c.config==="none")
-      return '<p class="lr-bs" style="margin-top:0">The Anchor deploys ready to run — its venues are fixed so you can\'t misconfigure it.</p><div class="lr-lk"><div class="lr-lkh">'+lockI()+' Set for you, locked</div><div class="lr-lkr"><span>Staking venue</span><b>MAVAN (cbETH)</b></div><div class="lr-lkr"><span>Reserve venue</span><b>Morpho (USDC)</b></div></div><button class="lr-go '+t+'" onclick="LaunchRail.next()">Looks good — continue</button>';
     if(c.config==="payments")
       return '<div class="lr-field"><label>Stable reserve ceiling (USD)</label><input inputmode="numeric" placeholder="e.g. 2280" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">Working capital the contract holds as a buffer.</div></div>'+lockedP([["Token / oracle / router","Set for you"],["Sweep slippage guard","Set for you"]],"lr-lp")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(L.cfg.supply.trim()?"":"disabled")+'>Continue</button>';
     var ok=L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim();
