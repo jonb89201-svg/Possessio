@@ -23,16 +23,18 @@ const { sessionGate } = require("./sessiongate");
 const { entryOk, exitTrigger } = require("./method");
 const ledger = require("./ledger");
 const jupiter = require("./adapters/jupiter");
+const factsLayer = require("./facts");
 
-// W-2 hard guard. The gate "facts" (mintRenounced, lpLockedOrBurned,
-// creatorHoldingPct, mc, vol...) arrive as TOOL ARGUMENTS - the caller's
-// word, not chain reads. scripts/deviceverify.js proves only the live
-// quote->build network path; it verifies NONE of these facts. RULEBOOK
-// Sec4 requires the server to verify them on-device (its own RPC reads)
-// before hot execution can exist. This constant stays false until that
-// verification layer is real code; flipping it without wiring chain
-// reads is a constitutional violation, not a config change.
-const FACTS_VERIFIED_ON_DEVICE = false;
+// W-2 CLOSED (AUDIT 2026-07-14): gate facts are no longer tool arguments.
+// facts.js gathers them SERVER-SIDE (Solana RPC / DexScreener / radar
+// tape), each tagged with source+basis+status. Caller-supplied facts are
+// UNTRUSTED HINTS kept for schema continuity; gates run on fetched facts
+// only, and any divergence is written to the ledger (factsDivergence).
+// The old FACTS_VERIFIED_ON_DEVICE constant is GONE: the hot-path facts
+// precondition is now computed PER CALL (facts.hotFactsGuard - true only
+// when every gate-critical fact was chain-read, source class 1/2, on that
+// call). There is no constant to flip; only a real chain-read source for
+// every fact can satisfy it.
 
 const rt = runtimeEnv();
 const nowIso = () => new Date().toISOString();
@@ -74,14 +76,21 @@ server.tool("get_ledger_stats",
 
 // --- build_trade: the full pipeline, in order. Returns UNSIGNED tx. ---
 server.tool("build_trade",
-  "Validate F-1 + all gates + caps, then return an UNSIGNED Solana swap tx. The Architect signs.",
+  "Validate F-1 + all gates + caps on SERVER-FETCHED facts (chain/API reads, W-2), " +
+  "then return an UNSIGNED Solana swap tx. Caller facts are untrusted hints; " +
+  "divergence from fetched facts is ledgered.",
   { tokenAddress: z.string(), notionalUsd: z.number(), slippageBps: z.number(),
     userPublicKey: z.string(),
     facts: z.object({
-      onDexScreener: z.boolean(), ageMin: z.number(), mc: z.number(),
-      mintRenounced: z.boolean(), lpLockedOrBurned: z.boolean(), creatorHoldingPct: z.number(),
-      trailingVol: z.number(), avg7d: z.number(),
+      // trade parameters (still required - they shape the quote, not the gates)
       inputMint: z.string(), amountAtomic: z.string(),
+      // UNTRUSTED HINTS, kept for schema continuity. The gates NEVER run
+      // on these; they are compared against the server-fetched facts and
+      // any divergence lands in the ledger row (factsDivergence).
+      onDexScreener: z.boolean().optional(), ageMin: z.number().optional(),
+      mc: z.number().optional(), mintRenounced: z.boolean().optional(),
+      lpLockedOrBurned: z.boolean().optional(), creatorHoldingPct: z.number().optional(),
+      trailingVol: z.number().optional(), avg7d: z.number().optional(),
     }) },
   async (a) => {
     const f = a.facts;
@@ -89,24 +98,42 @@ server.tool("build_trade",
       // 1. F-1 (absolute): contract address only, never a ticker.
       const mint = assertContractAddress(a.tokenAddress);
 
-      // 2. Sec0 session gate.
-      const sg = sessionGate(f, TUNE.sessionGateCutoff);
-      if (!sg.play) return skip("session-gate", sg.reason, a);
+      // 2. FACTS LAYER (W-2): gather every gate fact server-side.
+      //    Fail-closed - an unfetchable fact is a refusal, never a
+      //    silent downgrade to the caller's word.
+      const g = await factsLayer.gatherFacts(mint, { fetchImpl: fetch, env: process.env });
+      const factsDivergence = factsLayer.divergence(f, g);
+      const meta = {
+        factsSource: g.allFetched ? "chain-read" : "chain-read-incomplete",
+        factsDivergence,
+      };
 
-      // 3. Sec2 rug gate.
-      const rg = rugGate(f, TUNE);
-      if (!rg.ok) return skip("rug-gate", rg.fails.join("; "), a);
+      // 3. Sec0 session gate - live reading, or the documented
+      //    ARCHITECT-ONLY override; no reading -> REFUSE (fail-closed).
+      const sg = g.facts.sessionGate;
+      if (sg.status === "UNAVAILABLE")
+        return refuse("session-gate", sg.basis, a, { ...meta, sessionGate: sg });
+      if (sg.play !== true)
+        return skip("session-gate", sg.basis, a, { ...meta, sessionGate: sg });
 
-      // 4. Sec1 entry.
-      const en = entryOk(f, LAW, TUNE);
-      if (!en.ok) return skip("entry", en.fails.join("; "), a);
+      // 4. Fact completeness: every gate-critical fact must have fetched.
+      if (!g.allFetched)
+        return refuse("facts", factsLayer.refusalReason(g), a, { ...meta, sessionGate: sg });
 
-      // 5. Sec3 caps (server-enforced against the ledger).
+      // 5. Sec2 rug gate - on FETCHED facts only.
+      const rg = rugGate(g.gateFacts, TUNE);
+      if (!rg.ok) return skip("rug-gate", rg.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
+
+      // 6. Sec1 entry - on FETCHED facts only.
+      const en = entryOk(g.gateFacts, LAW, TUNE);
+      if (!en.ok) return skip("entry", en.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
+
+      // 7. Sec3 caps (server-enforced against the ledger).
       const st = ledger.todayStats(rt.ledgerPath, day());
       const cap = checkCaps({ notionalUsd: a.notionalUsd, slippageBps: a.slippageBps, ...st }, rt);
-      if (!cap.ok) return refuse("caps", cap.fails.join("; "), a);
+      if (!cap.ok) return refuse("caps", cap.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
 
-      // 6. Jupiter quote + unsigned build (DEVICE-VERIFY: network here).
+      // 8. Jupiter quote + unsigned build (DEVICE-VERIFY: network here).
       const q = await jupiter.quote(rt, {
         inputMint: f.inputMint, outputMint: mint,
         amountAtomic: f.amountAtomic, slippageBps: Math.min(a.slippageBps, rt.maxSlippageBps) });
@@ -115,10 +142,14 @@ server.tool("build_trade",
       // W-1: an unsigned build is NOT a fill. "built" consumes the daily
       // cap budget (conservative) but stays out of net-return truth.
       ledger.append(rt.ledgerPath, ledger.record({
-        ts: nowIso(), tokenAddress: mint, outcome: "built", entryMc: f.mc,
+        ts: nowIso(), tokenAddress: mint, outcome: "built", entryMc: g.gateFacts.mc,
+        factsSource: "chain-read", factsDivergence,
         sessionGate: sg, rugGate: rg, notionalUsd: a.notionalUsd, reason: "build payload issued" }));
       return text({ mode: "build", unsignedTx: built.unsignedTxBase64,
         note: "UNSIGNED. Sign in your wallet / dedicated trading wallet.",
+        factsSource: "chain-read",
+        factsVerifiedOnDevice: g.allChainRead, // per-call, never a constant
+        ...(factsDivergence.length ? { factsDivergence } : {}),
         quote: { outAmount: q.outAmount, priceImpactPct: q.priceImpactPct } });
     } catch (e) {
       if (e instanceof RefusalError) return refuse("F-1", e.message, a);
@@ -138,14 +169,24 @@ server.tool("execute_trade",
       return text({ refused: true, reason: m.reason,
         next: "Call build_trade for the unsigned payload." });
     }
-    // W-2 hard guard, checked BEFORE any signer question: hot execution
-    // on caller-asserted facts is forbidden regardless of key ceremony.
-    // Wiring a signer does not open this path - only a real on-device
-    // fact-verification layer (and flipping FACTS_VERIFIED_ON_DEVICE
-    // with it) can.
-    if (!FACTS_VERIFIED_ON_DEVICE) {
-      return text({ refused: true,
-        reason: "facts are caller-asserted, not device-verified: RULEBOOK Sec4 forbids hot execution until the server verifies mint/LP/creator%/MC via its own chain reads (FACTS_VERIFIED_ON_DEVICE).",
+    // W-2 hard guard, checked BEFORE any signer question - now COMPUTED
+    // PER CALL, not a constant. hotFactsGuard passes ONLY when every
+    // gate-critical fact was chain-read (source class 1/2: Solana RPC /
+    // DexScreener) on this very call. Caller assertions can never satisfy
+    // it, and neither can radar-tape enrichment (class 3). Today ageMin/mc
+    // have no class-1/2 source, so this refuses for every pre-DEX token -
+    // the same posture as the old hardcoded false, but honest arithmetic.
+    let g;
+    try {
+      const mint = assertContractAddress(a.tokenAddress);
+      g = await factsLayer.gatherFacts(mint, { fetchImpl: fetch, env: process.env });
+    } catch (e) {
+      return text({ refused: true, reason: String(e.message || e),
+        next: "Pass the exact mint address (F-1) and retry." });
+    }
+    const guard = factsLayer.hotFactsGuard(g);
+    if (!guard.ok) {
+      return text({ refused: true, reason: guard.reason,
         next: "Use build_trade; the Architect verifies facts and signs on device." });
     }
     // Hot execution is intentionally NOT implemented pre key-ceremony
@@ -157,15 +198,23 @@ server.tool("execute_trade",
       next: "Use build_trade until the key ceremony is done." });
   });
 
-function skip(gate, reason, a) {
+// extra: additional Sec5 ledger fields (factsSource, factsDivergence,
+// sessionGate, rugGate) so even skip/refuse rows carry the facts audit trail.
+function skip(gate, reason, a, extra = {}) {
   ledger.append(rt.ledgerPath, ledger.record({
-    ts: nowIso(), tokenAddress: safeAddr(a), outcome: "skipped", reason: gate + ": " + reason }));
-  return text({ decision: "skip", gate, reason });
+    ts: nowIso(), tokenAddress: safeAddr(a), outcome: "skipped",
+    reason: gate + ": " + reason, ...extra }));
+  return text({ decision: "skip", gate, reason,
+    ...(Array.isArray(extra.factsDivergence) && extra.factsDivergence.length
+      ? { factsDivergence: extra.factsDivergence } : {}) });
 }
-function refuse(gate, reason, a) {
+function refuse(gate, reason, a, extra = {}) {
   ledger.append(rt.ledgerPath, ledger.record({
-    ts: nowIso(), tokenAddress: safeAddr(a), outcome: "refused", reason: gate + ": " + reason }));
-  return text({ decision: "refuse", gate, reason });
+    ts: nowIso(), tokenAddress: safeAddr(a), outcome: "refused",
+    reason: gate + ": " + reason, ...extra }));
+  return text({ decision: "refuse", gate, reason,
+    ...(Array.isArray(extra.factsDivergence) && extra.factsDivergence.length
+      ? { factsDivergence: extra.factsDivergence } : {}) });
 }
 function safeAddr(a) { try { return typeof a.tokenAddress === "string" ? a.tokenAddress : null; } catch { return null; } }
 

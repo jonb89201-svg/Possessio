@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node --test test/",
     "start": "node server.js",
-    "check": "node --check server.js && node --check adapters/jupiter.js"
+    "check": "node --check server.js && node --check facts.js && node --check adapters/jupiter.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

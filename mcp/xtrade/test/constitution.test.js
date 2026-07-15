@@ -152,11 +152,17 @@ test("ledger: every row carries factsSource, honest default caller-asserted (W-2
     factsSource: "device-verified" }).factsSource, "device-verified");
 });
 
-// ---- W-2 tripwire: the hot path must stay hard-blocked on unverified facts.
+// ---- W-2 tripwire: the hot path must refuse when facts are not chain-read.
 // server.js opens a stdio transport on require, so this is a source-level
-// assertion: the constant exists, is false, and gates execute_trade.
-test("server: FACTS_VERIFIED_ON_DEVICE is false and guards hot execution", () => {
+// assertion; the guard's BEHAVIOR is unit-proven in test/facts.test.js.
+// Original intent preserved: hot execution on caller-asserted facts is
+// forbidden. The check is now computed per call (facts.hotFactsGuard) -
+// a hardcodable FACTS_VERIFIED_ON_DEVICE constant must never reappear,
+// because a constant is exactly the thing someone can flip.
+test("server: hot path is gated by per-call chain-read facts, no flippable constant", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-  assert.match(src, /const FACTS_VERIFIED_ON_DEVICE = false;/);
-  assert.match(src, /if \(!FACTS_VERIFIED_ON_DEVICE\)/);
+  assert.doesNotMatch(src, /FACTS_VERIFIED_ON_DEVICE\s*=/);           // constant is gone
+  assert.match(src, /factsLayer\.gatherFacts/);                       // facts fetched server-side
+  assert.match(src, /const guard = factsLayer\.hotFactsGuard\(g\);/); // hot consults the guard
+  assert.match(src, /if \(!guard\.ok\)/);                             // and refuses on failure
 });
