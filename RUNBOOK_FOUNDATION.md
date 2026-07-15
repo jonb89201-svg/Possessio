@@ -15,7 +15,7 @@ run until each is supplied — that refusal is the enforcement.
 |---|---|---|
 | 0.1 | **Pool source-set membership — whisky market.** ~~Conflict between optimizer_pool.json's former two-source wording and whisky spec §6.~~ **RATIFIED 2026-07-14 (Architect): whisky IS in the pool set** — "it is in the pool set. we already worked it out." (`optimizer_pool.json` `_business_model` now names the three-source set directly — P-8 doc-drift fix, 2026-07-15.) | Mine the market's CREATE3 salt (§II), export `WHISKY_MARKET_ADDR=0x…`. The XOR guard in `DeployPossessioPool.s.sol` stands as the mechanical enforcement; the exclusion path is retired by this ratification. |
 | 0.2 | **`OPERATOR_DEST_ADDR` / `TREASURY_DEST_ADDR`** — the pool's immutable operator + treasury. **Architect confirms 2026-07-14 the addresses exist** (held off-repo; deliberately never committed). | Architect exports both at broadcast time. (treasury == operator is an allowed shape per the contract's documented intentional omission; every SOURCE ≠ both is enforced.) |
-| 0.3 | **Pool floor params** (`POOL_OPERATIONAL_CAP`, `POOL_ABSOLUTE_FLOOR`, `POOL_FLOOR_PER_UNIT`, `POOL_VELOCITY_HALFLIFE`). Three gates before the immutable freeze: **(1) fork-prove on Base — DONE 2026-07-14**, `test/PossessioPoolFork.t.sol` 13/13 against live Base USDC via `mainnet.base.org` (real FiatTokenV2_2: valve guards, exact-unit sweep, floor holds, half-life decay to exact chord values, one-way draw, DoD #14 uncredited raw transfer); **(2) calibrate to real throughput/cost data — OPEN, now with a hard acceptance test (see §0.3-detail below, P-1)**; **(3) cold-seat re-audit — DONE 2026-07-15** (`AUDIT_POOL_20260715.md`, verdict: no fund-loss/theft path; calibration constraints only). | Clear gate (2) against the §0.3-detail acceptance test, then ratify the four numbers. **The pool must not broadcast before this line is signed off.** |
+| 0.3 | **Pool floor params** (`POOL_OPERATIONAL_CAP`, `POOL_ABSOLUTE_FLOOR`, `POOL_FLOOR_PER_UNIT`, `POOL_VELOCITY_HALFLIFE`). Three gates before the immutable freeze: **(1) fork-prove on Base — DONE 2026-07-14**, `test/PossessioPoolFork.t.sol` 13/13 against live Base USDC via `mainnet.base.org` (real FiatTokenV2_2: valve guards, exact-unit sweep, floor holds, half-life decay to exact chord values, one-way draw, DoD #14 uncredited raw transfer); **(2) calibrate — DONE 2026-07-15 (Architect-ratified conservative set, see §0.3-detail): CAP 10,000 / ABS_FLOOR 500 / PER_UNIT 5 USDC / HALFLIFE 7d — clears both inequalities with a ~136-events/day lock margin**; **(3) cold-seat re-audit — DONE 2026-07-15** (`AUDIT_POOL_20260715.md`, verdict: no fund-loss/theft path; calibration constraints only). | All three gates cleared 2026-07-15. Export the ratified four numbers (§0.3-detail) at broadcast; §III read-back confirms them on-chain. **Signed off — clear to broadcast.** |
 | 0.4 | **`FEE_SOURCE_ADDR`** (salt pool constructor's `_deploymentFeeSource`, used only for the keeper-separation check). Natural value = the predicted `FACTORY_ADDR` (the factory is what pushes deploy fees, mirroring x402Core's `deploymentFeeSource`). | Confirm the value to export. |
 | 0.5 | **Template choice + `TEMPLATE_CODEHASH`** for the $1 factory. The fee (1 USDC), payToken (Base USDC) and feeSink (live Payments) are already pinned in `script/DeployPossessioFactory.s.sol`; the template is not. The chosen template must satisfy the RATIFIED template convention (`constructor(address owner, bytes initArgs)` — PossessioFactory.sol header); verify the candidate actually has that shape before pinning. | Name the template. Its `init_codehash` comes from `deploy/optimizer_pool.json` (§I-4). |
 | 0.6 | **CreateX caller for the x402Core (and whisky) mainnet deploys** — factory+salt rail vs a manual EOA `deployCreate3`. The CREATE3 address is sender-locked to WHOEVER calls CreateX; a different caller = a different address = a dead pool source. | Name the caller per organ. Predictions in §II must use exactly that caller as `DEPLOYER`. |
@@ -43,6 +43,22 @@ Record these when ratifying `OPERATOR_DEST_ADDR` / `TREASURY_DEST_ADDR` (both ac
 **Now enforced deploy-side (P-2):** `script/DeployPossessioPool.s.sol` pre-checks `require(floor < cap)` (rejects the self-bricking `floor ≥ cap` shape) and sanity-bands the half-life to `[1 hours, 90 days]` (a fat-fingered seconds value changes n by orders of magnitude). These are cheap script guards; they do NOT replace the gate-(2) calibration above — they only reject the grossest miswires.
 
 **Option A — design decision (Architect-RATIFIED 2026-07-15):** ship `src/PossessioPool.sol` **as-is** — the amount-blind floor and the verbatim-lift of `_bumpVelocity`/`_decayedVelocity` from x402Core are PRESERVED, no contract change. The safety condition that makes this sound is a **binding constraint on how organs feed the pool**: **every organ MUST feed the pool by a BATCHED SWEEP — accrue inflows internally and sweep the surplus periodically (exactly like the factory fee and the pool's own cap-then-surplus mechanic), NEVER a per-event / per-toll push.** Batched sweeps keep the pool's inflow-EVENT rate low, which is precisely what keeps n_max small and stops P-1 from ever triggering. This constraint governs all future organ→pool wiring (see the x402Core wiring note below and TODO).
+
+**RATIFIED gate-(2) params (Architect, 2026-07-15) — conservative set. Export these verbatim at broadcast (§II/§III):**
+
+| Param | Value | Export (base units — USDC 6-dec / seconds) |
+|---|---|---|
+| `OPERATIONAL_CAP` | 10,000 USDC | `POOL_OPERATIONAL_CAP=10000000000` |
+| `ABSOLUTE_FLOOR` | 500 USDC | `POOL_ABSOLUTE_FLOOR=500000000` |
+| `FLOOR_PER_UNIT` | 5 USDC | `POOL_FLOOR_PER_UNIT=5000000` |
+| `VELOCITY_HALFLIFE` | 7 days | `POOL_VELOCITY_HALFLIFE=604800` |
+
+**Proof against the acceptance test (all pass):**
+- **P-2 `floor < cap`:** 500 < 10,000 ✓ (also enforced by the deploy-script `require`).
+- **Inequality 1 `FLOOR_PER_UNIT ≤ smallest sweep`:** 5 USDC ✓ — batched sweeps are ≥ $5 by construction (Option A).
+- **Inequality 2 `ABSOLUTE_FLOOR + 2·n_max·FLOOR_PER_UNIT < OPERATIONAL_CAP`:** lock threshold `n_max = (10,000 − 500) / (2·5) = 950 events/half-life = ~136/day`. Batched feeds run a handful/day → ~10× margin even at 30/day (steady floor $2,600, headroom $7,400). The stream is self-funding: API cost is call-based and every cost-bearing event brings its own fee, so real activity can never lock the operator — only fake/grief events could inflate the floor, and only uneconomically and temporarily (they decay in a few half-lives).
+
+**Rationale / economic meaning:** `ABSOLUTE_FLOOR` 500 = the hard baseline infra runway the operator can never draw below; `OPERATIONAL_CAP` 10,000 = the operating-reserve target the stream fills to before surplus streams one-way to treasury (~20 months at a ~$500/mo baseline); `FLOOR_PER_UNIT` 5 = dollars of held-buffer per unit of recent activity, kept small for the wide lock margin; `HALFLIFE` 7d = the held channel relaxes over a week when activity quiets (inside the [1h, 90d] sane band, P-2). These are **immutable once broadcast** — raise `ABSOLUTE_FLOOR` (and `OPERATIONAL_CAP` with it) in a *future* pool version if real monthly infrastructure cost exceeds ~$500.
 
 ---
 
@@ -161,10 +177,10 @@ X402CORE_ADDR=0x<§II-3> \
 WHISKY_MARKET_ADDR=0x<§II-3, if ratified IN — otherwise omit and set WHISKY_MARKET_EXCLUDED=true> \
 OPERATOR_DEST_ADDR=0x<§0.2> \
 TREASURY_DEST_ADDR=0x<§0.2> \
-POOL_OPERATIONAL_CAP=<§0.3> \
-POOL_ABSOLUTE_FLOOR=<§0.3> \
-POOL_FLOOR_PER_UNIT=<§0.3> \
-POOL_VELOCITY_HALFLIFE=<§0.3> \
+POOL_OPERATIONAL_CAP=10000000000 \
+POOL_ABSOLUTE_FLOOR=500000000 \
+POOL_FLOOR_PER_UNIT=5000000 \
+POOL_VELOCITY_HALFLIFE=604800 \
 forge script script/DeployPossessioPool.s.sol \
   --rpc-url $BASE_RPC_URL \
   --private-key $DEPLOYER_PK \
