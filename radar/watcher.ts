@@ -28,6 +28,8 @@ export type WatcherEnv = Env & {
   DISCOVERY_BATCH: string;
   EXPIRE_HOURS: string;
   YOUNG_WINDOW_MIN: string;
+  DEX_TRACK_HOURS?: string;   // post-graduation enrich window (default 1h — hour-by-hour ledger)
+  BIRTHS_KEEP_HOURS?: string; // retention for expired births before prune (default 48h)
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
   PUMPPORTAL_WS_URL?: string;
@@ -145,6 +147,19 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
     `UPDATE births SET status='expired', last_checked_ms=?1
       WHERE status='watching' AND pumpfun_first_seen_ms < ?2`
   ).bind(now, now - expireMs).run();
+
+  // PRUNE (2026-07-15, Architect: "hour-by-hour ledger — manage the bandwidth").
+  // The expire UPDATE above only re-tagged aged-out births; nothing ever DELETED
+  // them, so `births` grew unbounded (~1,277/hr -> 185k rows). Delete long-expired
+  // births past the retention horizon. Scope is deliberately narrow: only
+  // status='expired' rows — 'discovered' graduates (still enriched) and any
+  // young/watching row are untouched, so no live join loses its birth. Cheap
+  // indexed delete, self-cadenced every discovery tick. (mc_ticks self-prunes in
+  // screen.ts; this closes the last unbounded table.)
+  const birthsKeepMs = parseInt(env.BIRTHS_KEEP_HOURS || "48", 10) * 3600_000;
+  await env.RADAR_DB.prepare(
+    `DELETE FROM births WHERE status='expired' AND pumpfun_first_seen_ms < ?1`
+  ).bind(now - birthsKeepMs).run();
 
   // R-5: poll ONLY young watching tokens (within the pump/graduation window),
   // least-recently-checked first. The edge lives here - birth -> 8-13k -> peak,

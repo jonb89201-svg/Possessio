@@ -453,11 +453,14 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
 // (DAYNA $10.6k) is followed through its whole DEX run ($26k) instead of the
 // tape going blind at the bell. Display/intelligence only; the paper trade
 // already closed. dex_peak_mc is the number that quantifies the post-exit run.
-const DEX_TRACK_WINDOW_MS = 48 * 3600_000; // enrich for 48h after flagging
-
+// Enrich for 1h after flagging (was 48h). Re-scanning a 48h tail of graduated
+// coins every minute was the bandwidth drag behind the tape stalls; the pre-grad
+// edge (birth -> peak, first ~23-56min) is captured elsewhere, so a 1h post-grad
+// window is the "hour-by-hour ledger" break from previous coins (Architect
+// 2026-07-15). Tunable without a code change via the DEX_TRACK_HOURS var.
 export async function dexTrackScan(env: WatcherEnv): Promise<void> {
   const now = Date.now();
-  const since = now - DEX_TRACK_WINDOW_MS;
+  const since = now - parseInt(env.DEX_TRACK_HOURS || "1", 10) * 3600_000;
   // graduated coins we flagged, from BOTH tables (an early that later qualified
   // §1 is in both — track it in both).
   const { results: eRows } = await env.RADAR_DB.prepare(
