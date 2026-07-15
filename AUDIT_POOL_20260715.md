@@ -8,8 +8,9 @@ edge that touches the pool (whisky market, factory, x402Core, runbook, optimizer
 
 **Method:** line-by-line review of the contract and both suites; verbatim-lift
 verification against PossessioX402Core v0.6 by mechanical diff; full offline suite +
-Base-mainnet fork suite executed fresh in this session (Foundry built from source,
-v1.4.4); every claim in the contract's own "audit by grep" block re-run.
+Base-mainnet fork suite executed fresh in this session (Foundry v1.7.1 built from
+source); every claim in the contract's own "audit by grep" block re-run; finding P-1
+confirmed empirically with a throwaway forge PoC (transcript inline, file not kept).
 
 **Verdict up front:** the mechanism is sound and matches its claims. No fund-loss or
 fund-theft path was found. The pool cannot be drained, cannot be fed from its outflow
@@ -26,10 +27,11 @@ internalizes P-1/P-2.
 
 | Check | Result |
 |---|---|
-| `forge build` (fresh submodule checkout, Foundry v1.4.4 from source) | PENDING |
-| `forge test` full suite | PENDING |
-| `forge test --match-path test/PossessioPool.t.sol` (22 tests, DoD suite) | PENDING |
-| `BASE_RPC_URL=… forge test --match-path test/PossessioPoolFork.t.sol` (13 tests, live Base USDC) | PENDING |
+| `forge build` (fresh submodule checkout, Foundry v1.7.1 built from source) | **Compiles clean** (known-standing lint warnings only) |
+| `forge test` full suite | **778 passed / 0 failed / 2 skipped (780 total, 38 suites)** — the 2 skips are fork suites without RPC. (The "765" tally recorded 2026-07-14 is stale again; suites grew.) |
+| `forge test --match-path test/PossessioPool.t.sol` (DoD suite) | **22/22 passed** |
+| `BASE_RPC_URL=https://mainnet.base.org forge test --match-path test/PossessioPoolFork.t.sol` (live Base USDC, FiatTokenV2_2) | **13/13 passed** — gate (1) re-proven fresh this session |
+| P-1 PoC (see finding) | **Confirmed:** 200 × 1-unit dust inflows (0.0002 USDC total) → floor 5,500 USDC > 5,000 cap; pool then FULL at cap with `drawableSurplus() == 0` and the operator draw reverting; one quiet half-life later floor 3,000 and draws resume. |
 | Valve-by-omission grep (`payable\|msg.value\|receive()\|fallback\|.call{`) | **Zero code hits** — all matches are comment lines. Claim holds. |
 | `_decayedVelocity` verbatim-lift vs x402Core | **Byte-identical.** The x402 Python-oracle mirror (`test/PossessioX402CoreDecay.t.sol` ↔ `script/x402/oracle.py`) therefore covers the pool's decay math too. |
 | `_bumpVelocity` verbatim-lift vs x402Core | Identical except one comment word ("inflow event" vs "settlement"). |
@@ -76,7 +78,15 @@ while traffic persists** (balance is capped at CAP < floor): every over-cap unit
 to treasury and the operator — the address the pool exists to fund — can draw nothing
 until traffic stops for multiple half-lives. With the fork suite's illustrative params
 (CAP 5,000 / ABS 500 / PER_UNIT 25 / half-life 7d) that threshold is only **90 fee events
-per 7 days (~13/day)**. Note the griefing shape too: once the factory→pool wiring lands,
+per 7 days (~13/day)**.
+
+**Empirically confirmed this session** (throwaway forge PoC against a mock, same params):
+200 same-block inflows of 1 unit each — 0.0002 USDC total — raised
+`getRunningMinimumFloor()` to **5,500 USDC (> the 5,000 cap)**. The pool was then filled
+to its cap with real money: `drawableSurplus()` returned 0 and
+`settleOperationalCosts(1)` reverted `InsufficientOperationalFunds` — a full pool the
+operator cannot touch. One quiet half-life later the floor decayed to 3,000 and draws
+resumed. Note the griefing shape too: once the factory→pool wiring lands,
 anyone can mint a velocity unit for the 1 USDC deploy fee — if `FLOOR_PER_UNIT` is large
 relative to the fee, floor-inflation is cheaper than what it locks.
 
@@ -184,7 +194,7 @@ Small deltas, none load-bearing:
 
 | §0.3 gate | Status |
 |---|---|
-| (1) fork-prove on Base | DONE 2026-07-14 (13/13), **re-run green this session** |
+| (1) fork-prove on Base | DONE 2026-07-14 (13/13), **re-run green this session (13/13, Foundry 1.7.1, live Base RPC)** |
 | (2) calibrate the four params | **OPEN — now with two hard constraints from this audit:** `FLOOR_PER_UNIT ≤ min expected per-event inflow`; `ABSOLUTE_FLOOR + 2·n_max·FLOOR_PER_UNIT < OPERATIONAL_CAP` (P-1); plus the script-side `floor < cap` pre-check (P-2). |
 | (3) cold-seat re-audit | **THIS DOCUMENT.** No fund-safety defect found. Ratification of this audit is the Architect's call, per house law. |
 
