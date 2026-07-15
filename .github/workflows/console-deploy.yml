@@ -1,0 +1,46 @@
+name: console-deploy
+
+# Deploys the possessio console Worker (possessio.io — worker/index.ts +
+# public/ assets) via GitHub Actions, using the SAME repo Actions secret as
+# radar-refresh: one token, one deploy rail, both workers.
+#
+# This replaces the Cloudflare git-connected Worker Builds integration. That
+# integration held its own "build token", and because one API token was doing
+# two jobs, every roll of the Actions token orphaned the Builds copy (observed
+# live 2026-07-14, build #18daa07d: "build token ... deleted or rolled").
+# With this workflow, Worker Builds can be disconnected in the dashboard —
+# rolls of CLOUDFLARE_API_TOKEN propagate here automatically because the
+# workflow references the secret by NAME, never by value.
+#
+# REQUIRES: repo Actions secret CLOUDFLARE_API_TOKEN (already in place —
+# proven by radar-refresh run #10, 2026-07-15).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/**"
+      - "worker/**"
+      - "wrangler.jsonc"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/console-deploy.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # npm ci ONLY — the committed root package-lock.json is the reviewed
+      # supply chain (viem for worker/drip-endpoint.ts). Same discipline as
+      # radar-refresh: if ci fails, the deploy fails loudly.
+      - name: Install worker deps
+        run: npm ci
+      - name: Deploy console worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
