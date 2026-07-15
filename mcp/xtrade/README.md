@@ -16,7 +16,8 @@ source, basis, and fetch status:
 | `creatorHoldingPct` | Solana JSON-RPC (1) | creator wallet balance if the radar tape carries the creator address; else the **top-holder conservative proxy** (`getTokenLargestAccounts` / `getTokenSupply`) - the substitution is stated in the fact's `basis`, never silent. Pre-graduation the proxy includes the bonding curve, so it over-refuses (fail-closed). |
 | `onDexScreener` | DexScreener (2) | **R-1 semantics** (RADAR_FIX_R1R2): only NON-`pumpfun` dexId pairs count as discovery/graduation. The bonding-curve index entry (`dexId:"pumpfun"`, appears ~60s after birth) never trips the predicate. |
 | `lpLockedOrBurned` | derived from (2) | pre-graduation there is no external LP - liquidity is the program-owned curve (verified by absence of non-pumpfun pairs). Graduated tokens: UNAVAILABLE, fail-closed. |
-| `ageMin`, `mc` | radar tape (3), pump.fun frontend fallback (3), graduated MC from DexScreener (2) | advisory enrichment - good enough for build-mode gating, **not** chain-read for the hot precondition |
+| `mc` | Solana JSON-RPC (1) + DexScreener SOL/USD leg (2) | **pre-DEX, chain-read:** the pump.fun bonding-curve PDA is derived locally (program `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`, seed `"bonding-curve"`+mint; derivation cross-validated against `@solana/web3.js` and pinned in tests), `getAccountInfo(base64)` decodes the u64 LE reserves (anchor discriminator checked, owner checked), and `MC_sol = (vSol/vTok) x supply / 1e9` - the EXACT `radar/screen.ts curveMcUsd` formula (same field order, same clamps, same divide-first overflow ordering) - priced with a single class-2 SOL/USD read (deepest-liquidity DexScreener wSOL pair, fetched once per call). Curve missing or `complete` (graduated) falls through to the class-2 DexScreener pair MC. **The radar tape is demoted to a cross-check**: >25% tape-vs-chain disagreement is logged in `basis`; chain wins. Once a pre-grad curve decodes, a failed SOL/USD leg is `UNAVAILABLE` (fail-closed) - never a downgrade to advisory sources. Tape/frontend remain fallbacks ONLY when the chain read itself is unreachable (then the fact is class 3 and hot honestly refuses). |
+| `ageMin` | Solana JSON-RPC (1) | **chain-read:** `getSignaturesForAddress` walked oldest-ward (`before` pagination) to exhaustion; the oldest signature's `blockTime` is the token's first activity (null-blockTime entries skipped, counted). For the method's minutes-old targets this is one page. **Pagination bound:** capped at 5 pages x 1000 signatures - past the cap the fact carries the PROVEN LOWER BOUND on age ("older than N min"), which fails the 4-7min entry window in the fail-closed direction (a token with thousands of signatures is far past the pre-DEX window). Tape/frontend fallback only when the RPC read fails. |
 | `sessionGate` | none yet | `/radar/session-gate` is queried but returns NO_READING_YET (nothing writes sessions). Result: `UNAVAILABLE` -> the server **REFUSES fail-closed**. |
 
 **Fail-closed philosophy:** a fact that cannot be fetched is `UNAVAILABLE`
@@ -36,11 +37,21 @@ refusal.
 The old `FACTS_VERIFIED_ON_DEVICE = false` constant is gone. In its place
 `facts.hotFactsGuard` runs **per call**: it passes only when every
 gate-critical fact came from source class 1 or 2 (Solana RPC /
-DexScreener) on that very call. Today `ageMin`/`mc` have no class-1/2
-source (pump.fun first-seen lives only on the tape), so the guard refuses
-for every pre-DEX token - **hot stays refusing**, by arithmetic instead of
-by hardcode. The three Sec4 gates (`ALLOW_HOT=1` + signer + `confirm:true`)
-remain required and remain unwired.
+DexScreener) on that very call. With chain-read `ageMin`/`mc` (curve-PDA
+decode + signature walk, above) a live pre-DEX token **can** now satisfy
+the guard - live-verified 2026-07-15 (chain MC $8,438.28 vs tape $8,444.84
+for the same tape candidate, chain age 8.24min vs tape-derived 7.81min).
+Facts served by the class-3 fallback paths (RPC outage) still refuse, per
+fact, per call.
+
+**What still blocks hot** - the guard passing does NOT make anything hot:
+`sessionGate` remains the final refuser (nothing writes the radar
+`sessions` table, `/radar/session-gate` answers NO_READING_YET, so
+`build_trade`/`execute_trade` refuse at Sec0 - correct and intended until
+the radar grows a sessions writer), and Sec4 steps 3-5 (on-device verify,
+key ceremony/dedicated wallet, only then `ALLOW_HOT`) remain open. The
+three Sec4 gates (`ALLOW_HOT=1` + signer + `confirm:true`) remain required
+and remain unwired.
 
 ## Env vars (facts layer - no secrets in the repo, env only)
 
@@ -55,7 +66,7 @@ remain required and remain unwired.
 
 ## What is terminal-proven vs device-verify
 
-**Proven here** (`npm test` -> 40/40, no network, no keys - the facts
+**Proven here** (`npm test` -> 58/58, no network, no keys - the facts
 layer takes an injected fetch and is tested fully offline):
 - Sec4 execution model: `build` always on; `hot` downgrades/refuses
   unless all three gates fire AND per-call facts are chain-read.
@@ -67,6 +78,15 @@ layer takes an injected fetch and is tested fully offline):
   conservative creator proxy; fail-closed refusals naming the fact;
   divergence logging; session-gate UNAVAILABLE refusal + override path;
   bounded retries; direct-RPC and read-only-proxy sources.
+- Chain-read `ageMin`/`mc` (test/facts-chain.test.js): PDA derivation
+  pinned against `@solana/web3.js`; curve decode pinned against a REAL
+  mainnet account captured during the live verify; hand-computed MC math
+  mirroring `radar/screen.ts curveMcUsd`; graduated/missing-curve
+  fallthrough; single/multi-page signature walks, the 5-page pagination
+  bound (lower-bound age fails entry fail-closed), null blockTimes;
+  SOL/USD failure -> `mc` UNAVAILABLE; tape-vs-chain >25% divergence
+  logged; full-chain-read call passes `hotFactsGuard` while sessionGate
+  still refuses.
 - Sec0 session gate and Sec1 method (entry band + four exit triggers).
 - Sec5 ledger: append-only; caps count filled+built; truth counts filled.
 
@@ -95,11 +115,16 @@ Wire it via `mcp.json.example` (attaches on the NEXT session).
 4. Wave key ceremony creates the dedicated trading wallet - **pending**.
 5. Only then is `ALLOW_HOT=1` a discussable sentence.
 
-Also still gated before hot can ever pass the facts precondition:
-- a **chain-read source for `ageMin`/`mc`** (bonding-curve account decode
-  or signature-walk first-seen) - until then `hotFactsGuard` refuses;
+Also still gated before hot can ever run end-to-end:
+- ~~a chain-read source for `ageMin`/`mc`~~ - **DONE** (bonding-curve PDA
+  decode + signature walk, this change; `hotFactsGuard` can now pass on a
+  live pre-DEX token when every fact chain-reads on the call);
 - a **session-gate data source** (something must write the radar
-  `sessions` table; `/radar/session-gate` answers NO_READING_YET today);
+  `sessions` table; `/radar/session-gate` answers NO_READING_YET today) -
+  **sessionGate is now the final refuser**: `build_trade` refuses at Sec0
+  before the facts roll-up even matters, which is correct and intended;
+- Sec4 steps 3-5: on-device verify, the wave key ceremony / dedicated
+  trading wallet, and only then an `ALLOW_HOT` sentence;
 - creator address on the radar tape would upgrade `creatorHoldingPct`
   from the conservative top-holder proxy to the exact creator balance.
 

@@ -6,7 +6,7 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "start": "node server.js",
     "check": "node --check server.js && node --check facts.js && node --check adapters/jupiter.js"
   },
