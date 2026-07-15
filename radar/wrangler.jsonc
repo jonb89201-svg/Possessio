@@ -50,6 +50,8 @@
     "DISCOVERY_BATCH": "900", // R-5: young tokens swept per tick; batched 30/request = <=30 req/tick, well under DexScreener 300 req/min
     "EXPIRE_HOURS": "24", // birth older than this without discovery -> status 'expired' (bulk sweep)
     "YOUNG_WINDOW_MIN": "30", // R-8 (2026-07-08): tightened 120->30 per the Architect - trading only cares about <30min coins; tape's own data (median time-to-peak 8min) supports it. TRADEOFF: true graduations (measured median gap 41min) mostly happen AFTER 30min and will now go unrecorded (token ages out of the poll window, sits watching until 24h auto-expire). Population-level graduation-rate stats are DEGRADED from here forward; tonight's validated priors (1.59% grad rate) stand as the last clean measurement.
+    "DEX_TRACK_HOURS": "1", // hour-by-hour ledger (2026-07-15): post-graduation DEX enrich window. Was 48h hard-coded — re-scanning 2 days of graduates every minute was the bandwidth drag behind the tape stalls. 1h gives the worker a break from previous coins; raise if longer post-grad tracking is wanted.
+    "BIRTHS_KEEP_HOURS": "48", // retention for status='expired' births before the prune sweep deletes them (discoveryScan). Bounds the previously-unbounded births table (~1,277/hr). 'discovered' graduates and watching rows are never pruned.
     // §0 SESSION GATE (sessiongate.ts). The proxy is births/hour (pump.fun launch
     // rate) vs its own trailing 7d average — a RELATIVE gate (§0). Every value
     // below is a STARTING POINT, not frozen (§0/§7): the threshold gets tuned by
