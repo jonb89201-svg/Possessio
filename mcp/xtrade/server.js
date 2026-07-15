@@ -173,9 +173,13 @@ server.tool("execute_trade",
     // PER CALL, not a constant. hotFactsGuard passes ONLY when every
     // gate-critical fact was chain-read (source class 1/2: Solana RPC /
     // DexScreener) on this very call. Caller assertions can never satisfy
-    // it, and neither can radar-tape enrichment (class 3). Today ageMin/mc
-    // have no class-1/2 source, so this refuses for every pre-DEX token -
-    // the same posture as the old hardcoded false, but honest arithmetic.
+    // it, and neither can radar-tape enrichment (class 3). ageMin/mc are
+    // now chain-read too (bonding-curve PDA decode + signature-walk in
+    // facts.js), so a live pre-DEX token CAN satisfy this guard - but
+    // sessionGate (Sec0) still refuses upstream until the radar grows a
+    // sessions writer, and Sec4 steps 3-5 (device verify, key ceremony,
+    // ALLOW_HOT) remain open. Correct and intended: this guard passing
+    // does NOT make anything hot by itself.
     let g;
     try {
       const mint = assertContractAddress(a.tokenAddress);
