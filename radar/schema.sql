@@ -5,8 +5,10 @@
 -- REGENERATED FROM MIGRATIONS 2026-07-14 (AUDIT R-3): the mirror had drifted —
 -- it reflected only base + 0003-0005 and was missing everything 0002 and
 -- 0006-0017 added (spends, regime_ticks, candidates, earlies, mc_ticks,
--- early_cycles + the later ALTERs). This file is now the TRUE cumulative
--- schema as of migration 0017, verified by applying base + every migration in
+-- early_cycles + the later ALTERs). 0018 (2026-07-15) then extended `sessions`
+-- with threshold_used + basis for the §0 session-gate writer. This file is the
+-- TRUE cumulative schema as of migration 0018, verified by applying base + every
+-- migration in
 -- order to a scratch SQLite DB and diffing table_info/index sets against this
 -- file's output. Convention (unchanged from the 0003-0005 fold): ALTER-added
 -- columns are inlined into their CREATE TABLE with a "migration NNNN" note, so
@@ -44,15 +46,22 @@ CREATE TABLE births (
 CREATE INDEX idx_births_status ON births(status);
 CREATE INDEX idx_births_pf_seen ON births(pumpfun_first_seen_ms);
 
--- §0 Session Gate daily readings.
+-- §0 Session Gate daily readings. One row per UTC day (session_date PK),
+-- recomputed each cadence tick (sessiongate.ts) so today's row is the freshest
+-- reading. trailing_vol = the window metric (births/hour, the intrinsic
+-- launch-rate volume proxy — see sessiongate.ts + SPEC §5a); avg_7d_vol = its
+-- trailing baseline rate; ratio = window/baseline; gate_pass = ratio >=
+-- threshold_used. threshold_used + basis added by migration 0018.
 CREATE TABLE sessions (
   session_date TEXT PRIMARY KEY,          -- YYYY-MM-DD UTC
-  trailing_vol REAL,
-  avg_7d_vol REAL,
-  ratio REAL,
+  trailing_vol REAL,                      -- window metric: births/hour over the trailing window
+  avg_7d_vol REAL,                        -- baseline: births/hour over the trailing 7d
+  ratio REAL,                             -- trailing_vol / avg_7d_vol
   gate_pass INTEGER NOT NULL CHECK (gate_pass IN (0,1)),
   notes TEXT,
-  recorded_ms INTEGER NOT NULL
+  recorded_ms INTEGER NOT NULL,           -- our clock at the reading (measured_at)
+  threshold_used REAL,                    -- migration 0018: §0 cutoff this reading was judged at (default 0.65, §7-adjustable)
+  basis TEXT                              -- migration 0018: what was measured (proxy + window/baseline spans + sample counts)
 );
 
 -- §5 The Ledger — every attempt, filled or skipped. Net judges; gross flatters.

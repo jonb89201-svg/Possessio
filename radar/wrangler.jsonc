@@ -49,6 +49,15 @@
     "PUMPPORTAL_WS_URL": "wss://pumpportal.fun/api/data",
     "DISCOVERY_BATCH": "900", // R-5: young tokens swept per tick; batched 30/request = <=30 req/tick, well under DexScreener 300 req/min
     "EXPIRE_HOURS": "24", // birth older than this without discovery -> status 'expired' (bulk sweep)
-    "YOUNG_WINDOW_MIN": "30" // R-8 (2026-07-08): tightened 120->30 per the Architect - trading only cares about <30min coins; tape's own data (median time-to-peak 8min) supports it. TRADEOFF: true graduations (measured median gap 41min) mostly happen AFTER 30min and will now go unrecorded (token ages out of the poll window, sits watching until 24h auto-expire). Population-level graduation-rate stats are DEGRADED from here forward; tonight's validated priors (1.59% grad rate) stand as the last clean measurement.
+    "YOUNG_WINDOW_MIN": "30", // R-8 (2026-07-08): tightened 120->30 per the Architect - trading only cares about <30min coins; tape's own data (median time-to-peak 8min) supports it. TRADEOFF: true graduations (measured median gap 41min) mostly happen AFTER 30min and will now go unrecorded (token ages out of the poll window, sits watching until 24h auto-expire). Population-level graduation-rate stats are DEGRADED from here forward; tonight's validated priors (1.59% grad rate) stand as the last clean measurement.
+    // §0 SESSION GATE (sessiongate.ts). The proxy is births/hour (pump.fun launch
+    // rate) vs its own trailing 7d average — a RELATIVE gate (§0). Every value
+    // below is a STARTING POINT, not frozen (§0/§7): the threshold gets tuned by
+    // ledger correlation once real gate-reading-vs-outcome data exists. Overridable
+    // here (or via `wrangler secret`/deploy var) with no code change.
+    "SESSION_GATE_THRESHOLD": "0.65", // §0 "~60–70%" — sit out if window < 65% of the 7d avg rate
+    "SESSION_WINDOW_HOURS": "24",     // §0 "last 1–24h" trailing window
+    "SESSION_BASELINE_DAYS": "7",     // §0 "trailing 7-day average"
+    "SESSION_RECOMPUTE_MS": "3600000" // cadence: recompute hourly (a 7d baseline barely moves in 60s)
   }
 }
