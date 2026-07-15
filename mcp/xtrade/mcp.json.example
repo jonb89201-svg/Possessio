@@ -11,6 +11,18 @@
         "MAX_TRADES_PER_DAY": "10",
         "MAX_DAILY_EXPOSURE_USD": "20",
         "JUPITER_BASE": "https://public.jupiterapi.com",
+
+        "//facts": "FACTS LAYER (W-2): the server reads gate facts itself. Set ONE Solana RPC source: SOLANA_RPC_URL (direct, key stays in env) OR SOLANA_MCP_URL+SOLANA_MCP_KEY (read-only Cloudflare proxy, mcp/solana-mcp).",
+        "SOLANA_RPC_URL": "",
+        "SOLANA_MCP_URL": "",
+        "SOLANA_MCP_KEY": "",
+        "RADAR_URL": "https://possessio-radar.jonb89201.workers.dev",
+        "DEXSCREENER_BASE": "https://api.dexscreener.com",
+        "PUMPFUN_API_BASE": "https://frontend-api.pump.fun",
+
+        "//sessiongate": "ARCHITECT-ONLY, supervised runs: SESSION_GATE_OVERRIDE=pass lets Sec0 pass while no live session-gate source exists. Leave empty otherwise - the server refuses fail-closed.",
+        "SESSION_GATE_OVERRIDE": "",
+
         "SOLANA_RPC": "",
         "LEDGER_PATH": "mcp/xtrade/ledger.jsonl"
       }

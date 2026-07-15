@@ -12,10 +12,17 @@ function record(fields) {
     tokenAddress: fields.tokenAddress || null,
     chain: fields.chain || "solana",
     outcome: fields.outcome,               // "filled" | "built" | "skipped" | "refused"
-    // W-2: where the gate inputs came from. Until the server reads
-    // mint/LP/creator% from the chain itself, every row is honest about
-    // running on the caller's word - never claim device-verified facts.
+    // W-2: where the gate inputs came from. facts.js now gathers them
+    // server-side: "chain-read" = every gate-critical fact fetched this
+    // call; "chain-read-incomplete" = a fetch failed (the call is refused
+    // fail-closed). The default stays "caller-asserted" so any row written
+    // WITHOUT the facts layer remains honest about running on the
+    // caller's word - never claim device-verified facts by default.
     factsSource: fields.factsSource ?? "caller-asserted",
+    // W-2 audit trail: [{fact, asserted, fetched, source}] wherever the
+    // caller's hint disagreed with the server's own read. null = no hints
+    // or no disagreement.
+    factsDivergence: fields.factsDivergence ?? null,
     pumpFirstSeen: fields.pumpFirstSeen ?? null,
     dexFirstSeen: fields.dexFirstSeen ?? null,   // gap vs pumpFirstSeen = the edge proxy
     sessionGate: fields.sessionGate ?? null,     // { ratio, cutoff, play }

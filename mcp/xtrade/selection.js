@@ -26,11 +26,11 @@ function assertContractAddress(id) {
 }
 
 // RULEBOOK Sec2 rug gate. Pure evaluator - it checks whatever facts it
-// is HANDED. In the shipped server those facts are caller-supplied tool
-// args (ledgered as factsSource:"caller-asserted"); no chain read
-// verifies them yet, which is why server.js hard-blocks hot execution
-// (FACTS_VERIFIED_ON_DEVICE). scripts/deviceverify.js proves the
-// quote->build network path only, NOT these facts.
+// is HANDED. In the shipped server those facts come from facts.js
+// (gatherFacts: server-side Solana RPC / DexScreener / radar reads,
+// ledgered as factsSource:"chain-read"); caller-supplied facts are only
+// untrusted hints compared for divergence. The hot path additionally
+// requires facts.hotFactsGuard (every fact chain-read, per call).
 // Any sub-check false -> skip the token. No override.
 function rugGate({ mintRenounced, lpLockedOrBurned, creatorHoldingPct }, tune) {
   const fails = [];
