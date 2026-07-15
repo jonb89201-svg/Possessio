@@ -55,8 +55,8 @@ total_supply / 1e9`, priced by a market-wide `solUsd` derived from
 
 ## 4. The per-minute pipeline (`index.ts` → `scheduled()`)
 
-Six independent jobs fire each tick; each is wrapped so one failing never stops
-the others:
+Seven independent jobs fire each tick; each is wrapped so one failing never
+stops the others:
 
 1. **`birthScan`** (`watcher.ts`) — pull the feed, upsert new coins into
    `births` (newest 500, `ON CONFLICT DO NOTHING`). The bedrock; it never stalls.
@@ -72,7 +72,11 @@ the others:
    recording a running `dex_peak_mc` — so post-exit runners (DAYNA $10.6k→$26k)
    are captured, not just witnessed.
 5. **`btcScan`** (`watcher.ts`) — one Chainlink read → `regime_ticks`.
-6. **`pumptape /ensure`** — poke the Durable Object so the WS engine (re)connects.
+6. **`sessionGateScan`** (`sessiongate.ts`) — the **§0 session gate** (detailed
+   §5a). Self-cadenced (hourly by default — a cheap freshest-reading read
+   no-ops the other ~59 ticks/hr) and fail-soft; computes the regime reading
+   and upserts it into `sessions`.
+7. **`pumptape /ensure`** — poke the Durable Object so the WS engine (re)connects.
 
 ---
 
@@ -102,6 +106,57 @@ MC source of record for tracking is **DexScreener** (`fetchDexMc`, the same
 pattern discoveryScan proved), with the pump.fun window as fallback — because
 the pump.fun newest-N window does not reliably contain a coin past ~5min of age
 regardless of `limit` (empirically the server clamps it).
+
+---
+
+## 5a. The §0 session gate (`sessionGateScan`, `sessiongate.ts`)
+
+RULEBOOK §0 asks one question before *any* trade: **is right now a day worth
+playing at all?** Its signal is trailing volume (last 1–24h of Solana meme/DEX
+activity) vs its own **trailing 7-day average** — a *relative* threshold: sit
+out if trailing < ~60–70% of the 7d avg. The cutoff is a research-based
+starting point, **not frozen** — it is tuned by ledger correlation once real
+gate-reading-vs-outcome data exists (§0/§7).
+
+**The volume proxy — chosen: (A) intrinsic, `births/hour`.** The window metric
+is the pump.fun **launch rate** — a count of births the radar observed per hour
+— derived entirely from the `births` table the radar already writes every tick.
+No new external dependency. Why launch-rate and not a dollar figure: §0's own
+reasoning is *"a rational creator launches into attention, not silence… creators
+are choosing to launch right now, into a crowd that will show up."* The launch
+rate measures exactly that, and §0 gates on the **relative** figure (window vs
+its own 7d avg), which a relative launch-rate self-corrects the same way a
+relative dollar-volume would. `births` is also the radar's longest-lived signal
+(rows are never deleted — status flips to `expired`), so a true 7-day baseline
+exists where the ~48h-pruned `mc_ticks` tape can't provide one.
+
+**Honest limits** (also written into every reading's `basis` string):
+- It is a **launch-count** proxy, not a dollar-volume measure — a sample of
+  *pump.fun* creations the radar observed, itself a proxy for the broader Solana
+  meme regime. Honest about being pump.fun-scoped.
+- **Observation-gap bias:** window and baseline draw from the same source, so a
+  persistent sampling ceiling largely cancels in the ratio; a gap concentrated
+  in the trailing window would bias it (the fail-soft + insufficient-history
+  guards refuse to fabricate through the worst of these).
+- **Feed-cap bias:** `birthScan` caps its page/slice, so extreme burst minutes
+  undercount — a *conservative* bias (understates a hot session, never overstates
+  a dead one).
+
+If a keyless, stable public Solana DEX **dollar-volume** source is later adopted
+(option B), only the one read query and the `basis`/source label change; the
+schema, route, cadence, and threshold plumbing are source-agnostic by design.
+
+**Computation.** One read over `births` returns the window count, the baseline
+count, and the oldest birth in the 7d lookback. Rates use **span-capped**
+denominators (average over time actually observed, not hours we didn't), so a
+cold-start ratio is ≈ 1 (neutral) and converges to the true signal as history
+accumulates. `ratio = window_rate / baseline_rate`; `pass = ratio ≥ threshold`
+(default **0.65**, env `SESSION_GATE_THRESHOLD`). Window (`SESSION_WINDOW_HOURS`,
+24), baseline (`SESSION_BASELINE_DAYS`, 7), and cadence (`SESSION_RECOMPUTE_MS`,
+hourly) are all env-overridable — **none frozen**. Insufficient history (no
+births, or a tape < 1h old) is *refused*, not fabricated: the last good reading
+stands. The reading is upserted one row per UTC day (`sessions`), recomputed
+intra-day, giving the §5 ledger a daily history to correlate against outcomes.
 
 ---
 
@@ -160,13 +215,17 @@ entry existed).
 - **`early_cycles`** — cycle ledger: one row per level event
   (entry|ladder|bell|window), `entry_mc`, `exit_value`, `rungs_filled`.
 - **`regime_ticks`** — `ts_ms`, `btc_usd`, `feed_updated_at`.
-- **`sessions`** — daily session-gate readings (`session_date`, `ratio`,
-  `gate_pass`).
+- **`sessions`** (§0) — one row per UTC day: `session_date`, `trailing_vol`
+  (the window metric — births/hour), `avg_7d_vol` (baseline rate), `ratio`,
+  `gate_pass`, `threshold_used` (the §7-adjustable cutoff this reading was judged
+  at), `basis` (what was measured), `recorded_ms`. Written by `sessionGateScan`
+  (§5a). `threshold_used`/`basis` added by migration `0018`.
 
-Migrations `0007`–`0017` (candidates, DEX cols, earlies, ticks, early-play,
+Migrations `0007`–`0018` (candidates, DEX cols, earlies, ticks, early-play,
 WS flow, ladder, cycles, post-grad, conviction; `0017` was a no-op — see its
-corrected header) — all applied live. `schema.sql` is the cumulative mirror,
-regenerated from the migrations as of `0017`.
+corrected header; `0018` extended `sessions` for the §0 gate writer) — all
+applied live. `schema.sql` is the cumulative mirror, regenerated from the
+migrations as of `0018`.
 
 ---
 
@@ -184,9 +243,16 @@ an honest `TOLL_NOT_ARMED` header.
   - `GET /radar/ws-status` — the Durable Object's connection/parse state +
     raw samples (the VERIFY-FIRST surface).
 - **Paid (when armed)** — aggregate/discovered-only, never live `watching` rows:
-  `/radar/gap-stats`, `/radar/tape`. (`/radar/session-gate` serves free until a
-  session writer exists — today it can only answer `NO_READING_YET`, and a paid
-  permanent error is a no-op nobody should be sold; AUDIT R-8.)
+  `/radar/gap-stats`, `/radar/tape`, and `/radar/session-gate`. The session-gate
+  route serves the latest real §0 reading —
+  `{ pass, ratio, window_metric, baseline_7d, threshold, measured_at, basis,
+  session_date, gate_pass }` — and was **re-armed** to charge once a writer
+  landed (`sessiongate.ts`), reversing the AUDIT R-8 unpriced stopgap (which
+  refused to sell a *permanent* `NO_READING_YET`). The native `ratio` /
+  `gate_pass` / `session_date` keys are the exact contract the xtrade Sec0 reader
+  (`mcp/xtrade/facts.js`) consumes; the friendly aliases are additive. A brief
+  cold-start `NO_READING_YET` (before the first reading) is transient, not the
+  permanent no-op R-8 refused.
 
 **Product boundary:** the paid routes never leak the pre-graduation `watching`
 set. The public candidate feed is the one ratified exception (Amendment IV,
@@ -219,7 +285,11 @@ against the ledger, which kills or confirms it.
 **Roadmap.** Trade-resolution flow (buyer-count / whale-share entry filter) ·
 score the *cycle* against `dex_peak_mc` · unused free signals in `raw_birth_json`
 (trade recency, `reply_count` hype, ATH pump-dump guard) · Twitter/CT narrative
-detection · the Session-Gate regime score (is-the-game-on).
+detection. The **§0 session-gate regime score** (is-the-game-on) is now LIVE
+(§5a) — `sessionGateScan` writes it and `/radar/session-gate` serves it;
+remaining work there is ledger-correlation tuning of the threshold (§7), and
+optionally swapping the intrinsic births/hour proxy for a keyless Solana DEX
+dollar-volume source if a stable one is found.
 
 ---
 

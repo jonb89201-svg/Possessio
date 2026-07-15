@@ -26,6 +26,7 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { FEED_HTML } from "./feed";
+import { sessionGateResponse } from "./sessiongate";
 
 export type Env = {
   RADAR_DB: D1Database;
@@ -35,6 +36,13 @@ export type Env = {
   PRICE_GAP_STATS: string;   // OPEN — Architect prices after the tape has data
   PRICE_SESSION_GATE: string;
   PRICE_TAPE: string;
+  // §0 SESSION GATE (sessiongate.ts). All optional, all defaulted in code —
+  // NONE frozen (§7): the threshold is a research-based starting point tuned
+  // later by ledger correlation, so it must stay adjustable without a redeploy.
+  SESSION_GATE_THRESHOLD?: string;  // gate cutoff, default 0.65 (§0 "~60–70%")
+  SESSION_WINDOW_HOURS?: string;    // trailing window, default 24 (§0 "1–24h")
+  SESSION_BASELINE_DAYS?: string;   // baseline span, default 7 (§0 "7-day average")
+  SESSION_RECOMPUTE_MS?: string;    // cadence gate, default 3600000 (hourly)
   // Farcaster Mini App (the radar, launchable inside Warpcast/Base App).
   CONSOLE_URL?: string;             // where icon/splash/og assets live (default possessio.io)
   FC_ACCOUNT_ASSOCIATION?: string;  // signed JFS (JSON) proving the domain -> your FID; set via `wrangler secret put`
@@ -135,13 +143,16 @@ export function buildTolledApp(env: Env) {
         {
           "GET /radar/gap-stats": accepts(env.PRICE_GAP_STATS,
             "Rolling pump.fun->DexScreener gap distribution (aggregates only)"),
-          // /radar/session-gate is deliberately UNPRICED (AUDIT 2026-07-14,
-          // R-8): nothing writes the sessions table yet, so the route can only
-          // answer NO_READING_YET — charging PRICE_SESSION_GATE for a permanent
-          // error would be selling a paid no-op. The route itself stays live
-          // (free) below; re-add the line here the day a session writer lands:
-          //   "GET /radar/session-gate": accepts(env.PRICE_SESSION_GATE,
-          //     "Today's Sec0 regime reading: pass/fail + ratio"),
+          // RE-ARMED (2026-07-15): the R-8 UNPRICED note is now spent — a session
+          // writer landed (sessiongate.ts, wired into index.ts), so this route
+          // serves a REAL §0 regime reading (pass/fail + ratio + basis), not a
+          // permanent NO_READING_YET. It is a product now; price it like the
+          // other data routes. (Cold-start caveat: like gap-stats before its
+          // first tape, it may answer NO_READING_YET for the brief window before
+          // the first reading lands — a TRANSIENT gap, not the permanent no-op
+          // R-8 refused to sell.)
+          "GET /radar/session-gate": accepts(env.PRICE_SESSION_GATE,
+            "§0 regime reading: pass/fail + ratio (births/hr vs its own 7d avg)"),
           "GET /radar/tape": accepts(env.PRICE_TAPE,
             "Discovered-only historical tape, last 100"),
         },
@@ -388,14 +399,18 @@ export function buildTolledApp(env: Env) {
     });
   });
 
-  // Unpriced until a session writer exists (R-8, see the middleware note above):
-  // today this can only say NO_READING_YET, so it serves free, honestly.
+  // §0 SESSION GATE — the latest real regime reading (sessiongate.ts writes it
+  // on a cadence; R-8 re-armed above now that it does). Serves the friendly
+  // task-spec shape AND the native keys xtrade's Sec0 reader consumes verbatim
+  // (see sessionGateResponse's contract note). Latest row = today's (daily key,
+  // recomputed intra-day), lexicographic DESC on the YYYY-MM-DD date.
   app.get("/radar/session-gate", async (c) => {
     const row = await c.env.RADAR_DB.prepare(
-      `SELECT session_date, ratio, gate_pass FROM sessions
-        ORDER BY session_date DESC LIMIT 1`
+      `SELECT session_date, trailing_vol, avg_7d_vol, ratio, gate_pass,
+              threshold_used, basis, recorded_ms
+         FROM sessions ORDER BY session_date DESC LIMIT 1`
     ).first();
-    return c.json(row ?? { error: "NO_READING_YET" });
+    return c.json(sessionGateResponse(row));
   });
 
   app.get("/radar/tape", async (c) => {

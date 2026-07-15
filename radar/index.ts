@@ -6,6 +6,7 @@
 import { buildTolledApp } from "./x402-toll";
 import { birthScan, discoveryScan, btcScan, type WatcherEnv } from "./watcher";
 import { screenScan, dexTrackScan } from "./screen";
+import { sessionGateScan } from "./sessiongate";
 export { PumpTape } from "./pumptape";
 
 // R-7 (AUDIT 2026-07-14): staleness watchdog. The DO-era monitor left with the
@@ -45,6 +46,12 @@ export default {
     ctx.waitUntil(discoveryScan(env).catch((e) => console.error("discoveryScan", e)));
     ctx.waitUntil(dexTrackScan(env).catch((e) => console.error("dexTrackScan", e)));
     ctx.waitUntil(btcScan(env).catch((e) => console.error("btcScan", e)));
+    // §0 SESSION GATE: compute the regime reading (births/hr vs its 7d avg) and
+    // write it to `sessions`. Self-cadenced (hourly by default — it no-ops the
+    // other ~59 ticks/hr via a cheap freshest-reading read) and fail-soft, so
+    // it's cheap to fire every tick. This is what lifts xtrade's §0 refusal:
+    // /radar/session-gate now serves a real reading instead of NO_READING_YET.
+    ctx.waitUntil(sessionGateScan(env).catch((e) => console.error("sessionGateScan", e)));
     // Tape scan: SINGLE-PASS per cron. One screenScan per minute uses ~1/4 the
     // CPU the old 4×15s sub-tick loop did, staying well under the 30s cron CPU
     // ceiling that was killing it. No Durable Object — the DO alarm approach
