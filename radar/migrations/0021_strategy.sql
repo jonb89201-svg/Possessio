@@ -1,0 +1,27 @@
+-- migration 0021: the validated go-to paper strategy (2026-07-16 research arc).
+--
+-- Replaces the old §1 rule (qualify any $8-13k coin -> fixed $20k take-profit).
+-- The research (candidates paper base + mc_ticks paths) established:
+--   * entry MC: the early $8-13k band is optimal; higher entry is WORSE (buys the
+--     top of the spike). Not the lever.
+--   * momentum: climb velocity into entry = (entry_mc - birth_mc)/age. Moderate-
+--     fast (vel 7-20) wins +10% ~60% vs ~37% at the extremes (slow fade /
+--     parabolic top). The strongest win-rate lever.
+--   * combination: momentum + fresh dev lifts win@+10% 47% -> 65% (NO hindsight).
+--   * rugs are the only profit switch: every no-hindsight combo is negative until
+--     the rug gate removes the collapses; then the stack goes positive.
+--   * exit: expectancy RISES with target size (rug-filtered ceiling +1.9% @ +10%
+--     -> +19.6% @ +50%). Let winners run; do NOT cap at a small gain.
+--
+-- entry_vel : climb velocity into the band, recorded on every candidate.
+-- strat_take: 1 if the candidate passes the FULL validated entry filter —
+--   momentum in [STRAT_VEL_LO, STRAT_VEL_HI] AND fresh dev (gate_dev=1) AND rug
+--   not failed (gate_rug != 0; NULL/pending counts as not-failed until the
+--   on-chain read lands). This marks the strategy's picks WITHOUT dropping the
+--   rest, so taken-vs-rejected stays measurable.
+--
+-- Exit rule also changes in code: fixed TARGET_MC/STOP_MC -> entry-relative
+-- (1+STRAT_TARGET_PCT) target / (1-STRAT_STOP_PCT) stop.
+-- PAPER: records picks + outcomes for forward measurement; nothing is traded.
+ALTER TABLE candidates ADD COLUMN entry_vel REAL;
+ALTER TABLE candidates ADD COLUMN strat_take INTEGER;

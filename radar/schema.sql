@@ -143,6 +143,9 @@ CREATE TABLE candidates (
   -- migration 0020: on-chain rug signal (forward-measured). getTokenLargestAccounts.
   top_holder_share REAL,                   -- largest non-curve holder's share of circulating float [0,1]
   -- gate_rug (above) now populated: 1=pass (top<=RUG_MAX_TOP_HOLDER_PCT), 0=whale, NULL=RPC unavailable
+  -- migration 0021: validated go-to strategy.
+  entry_vel       REAL,                    -- climb velocity into entry = (entry_mc - birth_mc)/age_sec
+  strat_take      INTEGER,                 -- 1 = passes full entry filter (momentum band + fresh dev + rug!=fail)
   -- outcome tracking (§1 exit ladder), paper-only
   peak_mc         REAL,
   peak_ms         INTEGER,
