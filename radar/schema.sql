@@ -140,6 +140,9 @@ CREATE TABLE candidates (
   -- migration 0019: dev-reputation paper gate (point-in-time, no lookahead).
   dev_prior_launches INTEGER,              -- same creator's launches BEFORE this coin's birth
   gate_dev        INTEGER,                 -- 1=fresh (prior<=DEV_REP_MAX_PRIOR), 0=serial, NULL=no creator
+  -- migration 0020: on-chain rug signal (forward-measured). getTokenLargestAccounts.
+  top_holder_share REAL,                   -- largest non-curve holder's share of circulating float [0,1]
+  -- gate_rug (above) now populated: 1=pass (top<=RUG_MAX_TOP_HOLDER_PCT), 0=whale, NULL=RPC unavailable
   -- outcome tracking (§1 exit ladder), paper-only
   peak_mc         REAL,
   peak_ms         INTEGER,

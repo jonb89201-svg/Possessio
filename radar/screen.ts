@@ -149,6 +149,45 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
 // Cadence drops to 60s but the eye NEVER goes blind. The reliable path back to
 // sub-minute resolution is the Durable-Object alarm (Layer 3, pumptape.ts) —
 // alarms DO survive across invocations; that's the correct 15s mechanism.
+// RUG SIGNAL (migration 0020). Solana getTokenLargestAccounts(mint) → the
+// largest REAL holder's share of the circulating float [0,1]. Excludes the
+// bonding-curve token account (its reserve is not a holder). Returns null if the
+// RPC is unset/unreachable or the payload is unusable, so the gate stays NULL
+// (not evaluated) and the qualify path is never blocked. Forward-measured.
+async function topHolderShare(
+  env: WatcherEnv, mint: string, curveTokenAccount: string | null, totalSupply: number,
+): Promise<number | null> {
+  const url = env.SOLANA_RPC_URL;
+  if (!url || !mint || !(totalSupply > 0)) return null;
+  let res: Response;
+  try {
+    res = await tfetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "getTokenLargestAccounts",
+        params: [mint, { commitment: "confirmed" }],
+      }),
+    });
+  } catch { return null; }
+  if (!res.ok) return null;
+  let j: any;
+  try { j = await res.json(); } catch { return null; }
+  const list = j?.result?.value;
+  if (!Array.isArray(list) || !list.length) return null;
+  const curve = (curveTokenAccount || "").toLowerCase();
+  let curveAmt = 0, maxAmt = 0;
+  for (const a of list) {
+    const amt = Number(a?.amount ?? 0);
+    if (!Number.isFinite(amt)) continue;
+    if ((a?.address || "").toLowerCase() === curve) { curveAmt = amt; continue; }
+    if (amt > maxAmt) maxAmt = amt;
+  }
+  const circulating = totalSupply - curveAmt;
+  if (!(circulating > 0)) return null;           // all supply still in the curve
+  return maxAmt / circulating;
+}
+
 export async function screenScan(env: WatcherEnv): Promise<void> {
   if (!env.PUMPFUN_FEED_URL) {
     console.warn("PUMPFUN_FEED_URL unset — screenScan idle");
@@ -390,7 +429,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.
   const { results: young } = await env.RADAR_DB.prepare(
-    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms
+    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms, raw_birth_json
        FROM births
       WHERE status='watching'
         AND pumpfun_first_seen_ms <= ?1
@@ -400,6 +439,8 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
 
   // DEV-REPUTATION paper gate (migration 0019). "Fresh" threshold is tunable.
   const devRepMaxPrior = parseInt(env.DEV_REP_MAX_PRIOR || "20", 10);
+  // RUG gate (migration 0020). Whale-on-the-float threshold, tunable.
+  const rugMaxTop = parseFloat(env.RUG_MAX_TOP_HOLDER_PCT || "0.20");
   for (const r of young as any[]) {
     const mc = mcNow.get(r.token_address as string);
     if (mc === undefined || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
@@ -419,15 +460,27 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
       devPrior = Number(priorRow?.n ?? 0);
       gateDev = devPrior <= devRepMaxPrior ? 1 : 0;
     }
+    // RUG gate (migration 0020): live top-holder concentration. Parse the curve
+    // token account + total supply from the stored birth JSON, then one Solana
+    // RPC read. Fail-soft: any gap leaves share/gate_rug NULL. Forward-measured.
+    let topShare: number | null = null;
+    let gateRug: number | null = null;
+    try {
+      const bj = r.raw_birth_json ? JSON.parse(r.raw_birth_json as string) : null;
+      const totalSupply = Number(bj?.total_supply ?? 0);
+      const curveAcct = (bj?.associated_bonding_curve as string) ?? null;
+      topShare = await topHolderShare(env, r.token_address as string, curveAcct, totalSupply);
+      if (topShare !== null) gateRug = topShare <= rugMaxTop ? 1 : 0;
+    } catch { /* leave NULL — not evaluated */ }
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO candidates
          (token_address, symbol, name, creator, qualified_ms, entry_age_sec,
           entry_mc, gate_age, gate_mc, gate_predex, gate_rug, gate_session,
-          dev_prior_launches, gate_dev,
+          dev_prior_launches, gate_dev, top_holder_share,
           peak_mc, peak_ms, last_mc, last_tracked_ms, outcome)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,NULL,NULL,?8,?9,?7,?5,?7,?5,'live')
+       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,?10,NULL,?8,?9,?11,?7,?5,?7,?5,'live')
        ON CONFLICT(token_address) DO NOTHING`
-    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc, devPrior, gateDev));
+    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc, devPrior, gateDev, gateRug, topShare));
   }
 
   // (2) TRACK live candidates against the §1 exit ladder. First trigger wins.
