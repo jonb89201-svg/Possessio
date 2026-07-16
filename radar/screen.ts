@@ -435,7 +435,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.
   const { results: young } = await env.RADAR_DB.prepare(
-    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms, raw_birth_json
+    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms, raw_birth_json, mc_at_birth_usd
        FROM births
       WHERE status='watching'
         AND pumpfun_first_seen_ms <= ?1
@@ -447,6 +447,9 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const devRepMaxPrior = parseInt(env.DEV_REP_MAX_PRIOR || "20", 10);
   // RUG gate (migration 0020). Whale-on-the-float threshold, tunable.
   const rugMaxTop = parseFloat(env.RUG_MAX_TOP_HOLDER_PCT || "0.20");
+  // GO-TO STRATEGY (migration 0021). Momentum band for the composite take flag.
+  const stratVelLo = parseFloat(env.STRAT_VEL_LO || "7");
+  const stratVelHi = parseFloat(env.STRAT_VEL_HI || "20");
   for (const r of young as any[]) {
     const mc = mcNow.get(r.token_address as string);
     if (mc === undefined || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
@@ -477,20 +480,34 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
       topShare = await topHolderShare(env, r.token_address as string, curveAcct);
       if (topShare !== null) gateRug = topShare <= rugMaxTop ? 1 : 0;
     } catch { /* leave NULL — not evaluated */ }
+    // MOMENTUM + composite take (migration 0021). entry_vel = climb rate into the
+    // band = (entry_mc - birth_mc)/age. strat_take = the full validated entry
+    // filter: momentum in band AND fresh dev AND rug not failed (pending/NULL
+    // counts as not-failed until the on-chain read lands). Paper — records the
+    // strategy's picks; the rest are still recorded for taken-vs-rejected compare.
+    const mcAtBirth = Number(r.mc_at_birth_usd ?? 0);
+    const entryVel = (mcAtBirth > 0 && ageSec > 0) ? (mc - mcAtBirth) / ageSec : null;
+    const stratTake = (entryVel !== null && entryVel >= stratVelLo && entryVel <= stratVelHi
+      && gateDev === 1 && gateRug !== 0) ? 1 : 0;
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO candidates
          (token_address, symbol, name, creator, qualified_ms, entry_age_sec,
           entry_mc, gate_age, gate_mc, gate_predex, gate_rug, gate_session,
-          dev_prior_launches, gate_dev, top_holder_share,
+          dev_prior_launches, gate_dev, top_holder_share, entry_vel, strat_take,
           peak_mc, peak_ms, last_mc, last_tracked_ms, outcome)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,?10,NULL,?8,?9,?11,?7,?5,?7,?5,'live')
+       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,?10,NULL,?8,?9,?11,?12,?13,?7,?5,?7,?5,'live')
        ON CONFLICT(token_address) DO NOTHING`
-    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc, devPrior, gateDev, gateRug, topShare));
+    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc, devPrior, gateDev, gateRug, topShare, entryVel, stratTake));
   }
 
-  // (2) TRACK live candidates against the §1 exit ladder. First trigger wins.
+  // (2) TRACK live candidates against the exit rule. First trigger wins.
+  // GO-TO STRATEGY (migration 0021): entry-RELATIVE take/stop (let winners run)
+  // replaces the old fixed $20k/$6k MC levels — expectancy rises with target
+  // size, so the target is (1+STRAT_TARGET_PCT)x entry, the stop (1-STRAT_STOP_PCT)x.
+  const stratTargetPct = parseFloat(env.STRAT_TARGET_PCT || "0.50");
+  const stratStopPct = parseFloat(env.STRAT_STOP_PCT || "0.40");
   const { results: liveC } = await env.RADAR_DB.prepare(
-    `SELECT c.token_address, c.peak_mc, b.status AS bstatus, b.pumpfun_first_seen_ms AS born
+    `SELECT c.token_address, c.peak_mc, c.entry_mc, b.status AS bstatus, b.pumpfun_first_seen_ms AS born
        FROM candidates c JOIN births b ON b.token_address=c.token_address
       WHERE c.outcome='live'`
   ).all();
@@ -499,14 +516,18 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     const addr = c.token_address as string;
     const mc = mcOf(addr);
     const age = now - Number(c.born);
+    // Entry-relative levels; fall back to the legacy fixed MC if entry is missing.
+    const entryMc = Number(c.entry_mc ?? 0);
+    const targetMc = entryMc > 0 ? entryMc * (1 + stratTargetPct) : TARGET_MC;
+    const stopMc = entryMc > 0 ? entryMc * (1 - stratStopPct) : STOP_MC;
 
-    if (c.bstatus === "discovered") {               // §1 #3 edge-loss: graduated
+    if (c.bstatus === "discovered") {               // #3 edge-loss: graduated
       stmts.push(setOutcome(env, addr, "graduated", now, mc));
-    } else if (mc !== null && mc >= TARGET_MC) {    // §1 #1 take-profit
+    } else if (mc !== null && mc >= targetMc) {     // #1 take-profit (+STRAT_TARGET_PCT)
       stmts.push(setOutcome(env, addr, "target", now, mc));
-    } else if (mc !== null && mc <= STOP_MC) {      // §1 #2 stop-loss
+    } else if (mc !== null && mc <= stopMc) {       // #2 stop-loss (-STRAT_STOP_PCT)
       stmts.push(setOutcome(env, addr, "stop", now, mc));
-    } else if (age >= TIMESTOP_MS) {                // §1 #4 time-stop
+    } else if (age >= TIMESTOP_MS) {                // #4 time-stop
       stmts.push(setOutcome(env, addr, "timestop", now, mc));
     } else if (mc !== null) {                       // still live — update trackers
       stmts.push(env.RADAR_DB.prepare(
