@@ -398,18 +398,36 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
         AND token_address NOT IN (SELECT token_address FROM candidates)`
   ).bind(now - AGE_MIN_MS, now - AGE_MAX_MS).all();
 
+  // DEV-REPUTATION paper gate (migration 0019). "Fresh" threshold is tunable.
+  const devRepMaxPrior = parseInt(env.DEV_REP_MAX_PRIOR || "20", 10);
   for (const r of young as any[]) {
     const mc = mcNow.get(r.token_address as string);
     if (mc === undefined || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
     const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
+    // Point-in-time creator history: the same wallet's launches STRICTLY BEFORE
+    // this coin was born (< its own birth ms) — no lookahead. Few coins qualify
+    // per tick, so one indexed count each is cheap. gate_dev: fresh(1)/serial(0),
+    // NULL when the creator is unknown. Backtest 2026-07-16: fresh devs hit +20%
+    // 49.5% vs 21.9% for serials. Paper signal only — it records, it skips nothing.
+    let devPrior: number | null = null;
+    let gateDev: number | null = null;
+    if (r.creator != null) {
+      const priorRow = await env.RADAR_DB.prepare(
+        `SELECT COUNT(*) AS n FROM births
+          WHERE creator=?1 AND pumpfun_first_seen_ms < ?2`
+      ).bind(r.creator, Number(r.pumpfun_first_seen_ms)).first<any>();
+      devPrior = Number(priorRow?.n ?? 0);
+      gateDev = devPrior <= devRepMaxPrior ? 1 : 0;
+    }
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO candidates
          (token_address, symbol, name, creator, qualified_ms, entry_age_sec,
           entry_mc, gate_age, gate_mc, gate_predex, gate_rug, gate_session,
+          dev_prior_launches, gate_dev,
           peak_mc, peak_ms, last_mc, last_tracked_ms, outcome)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,NULL,NULL,?7,?5,?7,?5,'live')
+       VALUES (?1,?2,?3,?4,?5,?6,?7,1,1,1,NULL,NULL,?8,?9,?7,?5,?7,?5,'live')
        ON CONFLICT(token_address) DO NOTHING`
-    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc));
+    ).bind(r.token_address, r.symbol ?? null, r.name ?? null, r.creator ?? null, now, ageSec, mc, devPrior, gateDev));
   }
 
   // (2) TRACK live candidates against the §1 exit ladder. First trigger wins.
