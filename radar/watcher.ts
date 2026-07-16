@@ -30,6 +30,7 @@ export type WatcherEnv = Env & {
   YOUNG_WINDOW_MIN: string;
   DEX_TRACK_HOURS?: string;   // post-graduation enrich window (default 1h — hour-by-hour ledger)
   BIRTHS_KEEP_HOURS?: string; // retention for expired births before prune (default 48h)
+  RAW_JSON_KEEP_MIN?: string; // minutes to keep raw_birth_json before nulling it (default 30) — caps DB size
   DEV_REP_MAX_PRIOR?: string; // dev-rep paper gate: max prior launches to still count as "fresh" (default 20)
   SOLANA_RPC_URL?: string;    // secret: Solana JSON-RPC for the rug gate (getTokenLargestAccounts); gate no-ops if unset
   RUG_MAX_TOP_HOLDER_PCT?: string; // rug gate: max top-holder share of float to pass (default 0.20)
@@ -167,6 +168,20 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
   await env.RADAR_DB.prepare(
     `DELETE FROM births WHERE status='expired' AND pumpfun_first_seen_ms < ?1`
   ).bind(now - birthsKeepMs).run();
+
+  // SPACE CAP (2026-07-16 incident): raw_birth_json (up to 4KB/row) is the DB's
+  // space hog and is ONLY read during the qualify window (~4-7min: the rug gate
+  // pulls associated_bonding_curve from it). Retained over 48-72h of births it
+  // filled the D1 file to its size ceiling and HALTED every write (all scans
+  // stopped). NULL it once past RAW_JSON_KEEP_MIN: the row (creator, birth MC,
+  // etc.) stays for dev-rep, but the blob's pages return to the freelist and are
+  // reused by new births — so the file stops growing toward the cap. This is the
+  // structural fix; the manual free-up that revived the radar is a one-time patch.
+  const rawJsonKeepMs = parseInt(env.RAW_JSON_KEEP_MIN || "30", 10) * 60_000;
+  await env.RADAR_DB.prepare(
+    `UPDATE births SET raw_birth_json=NULL
+      WHERE raw_birth_json IS NOT NULL AND pumpfun_first_seen_ms < ?1`
+  ).bind(now - rawJsonKeepMs).run();
 
   // R-5: poll ONLY young watching tokens (within the pump/graduation window),
   // least-recently-checked first. The edge lives here - birth -> 8-13k -> peak,
