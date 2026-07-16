@@ -155,10 +155,10 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
 // RPC is unset/unreachable or the payload is unusable, so the gate stays NULL
 // (not evaluated) and the qualify path is never blocked. Forward-measured.
 async function topHolderShare(
-  env: WatcherEnv, mint: string, curveTokenAccount: string | null, totalSupply: number,
+  env: WatcherEnv, mint: string, curveTokenAccount: string | null,
 ): Promise<number | null> {
   const url = env.SOLANA_RPC_URL;
-  if (!url || !mint || !(totalSupply > 0)) return null;
+  if (!url || !mint) return null;
   let res: Response;
   try {
     res = await tfetch(url, {
@@ -176,16 +176,22 @@ async function topHolderShare(
   const list = j?.result?.value;
   if (!Array.isArray(list) || !list.length) return null;
   const curve = (curveTokenAccount || "").toLowerCase();
-  let curveAmt = 0, maxAmt = 0;
+  let curveAmt = 0, maxNonCurve = 0, sumAll = 0;
   for (const a of list) {
     const amt = Number(a?.amount ?? 0);
-    if (!Number.isFinite(amt)) continue;
+    if (!Number.isFinite(amt) || amt <= 0) continue;
+    sumAll += amt;
     if ((a?.address || "").toLowerCase() === curve) { curveAmt = amt; continue; }
-    if (amt > maxAmt) maxAmt = amt;
+    if (amt > maxNonCurve) maxNonCurve = amt;
   }
-  const circulating = totalSupply - curveAmt;
-  if (!(circulating > 0)) return null;           // all supply still in the curve
-  return maxAmt / circulating;
+  // Denominator = the non-curve float ACTUALLY on-chain (sum of holders in the
+  // top set minus the curve), NOT the birth-JSON total_supply. A coin can hold
+  // more than its nominal supply on-chain (mint inflation — a rug in itself),
+  // which made the nominal denominator yield absurd >1 ratios. Sum-based float
+  // keeps the share a clean [0,1] and flags an over-concentrated float correctly.
+  const floatAmt = sumAll - curveAmt;
+  if (!(floatAmt > 0)) return null;              // only the curve holds anything
+  return maxNonCurve / floatAmt;                 // largest holder's share of float [0,1]
 }
 
 export async function screenScan(env: WatcherEnv): Promise<void> {
@@ -467,9 +473,8 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     let gateRug: number | null = null;
     try {
       const bj = r.raw_birth_json ? JSON.parse(r.raw_birth_json as string) : null;
-      const totalSupply = Number(bj?.total_supply ?? 0);
       const curveAcct = (bj?.associated_bonding_curve as string) ?? null;
-      topShare = await topHolderShare(env, r.token_address as string, curveAcct, totalSupply);
+      topShare = await topHolderShare(env, r.token_address as string, curveAcct);
       if (topShare !== null) gateRug = topShare <= rugMaxTop ? 1 : 0;
     } catch { /* leave NULL — not evaluated */ }
     stmts.push(env.RADAR_DB.prepare(
