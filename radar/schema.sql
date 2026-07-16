@@ -64,6 +64,14 @@ CREATE TABLE sessions (
   basis TEXT                              -- migration 0018: what was measured (proxy + window/baseline spans + sample counts)
 );
 
+-- migration 0022: market-volume regime series (DEX $-volume, "time to trade vs not").
+-- One row per screenScan tick: summed DexScreener m5 volume across on-screen coins.
+CREATE TABLE market_vol (
+  ts_ms     INTEGER PRIMARY KEY,          -- screenScan tick clock
+  vol_m5    REAL NOT NULL,                -- summed DexScreener m5 $-volume across on-screen coins
+  n_tracked INTEGER NOT NULL              -- coins on screen this tick (context for the sum)
+);
+
 -- §5 The Ledger — every attempt, filled or skipped. Net judges; gross flatters.
 -- exit_trigger: 1=TAKE-PROFIT $20K  2=STOP-LOSS $6K  3=EDGE-LOSS (DexScreener appeared)  4=BACKSTOP 45min
 CREATE TABLE trades (
