@@ -53,6 +53,7 @@
     "DEX_TRACK_HOURS": "1", // hour-by-hour ledger (2026-07-15): post-graduation DEX enrich window. Was 48h hard-coded — re-scanning 2 days of graduates every minute was the bandwidth drag behind the tape stalls. 1h gives the worker a break from previous coins; raise if longer post-grad tracking is wanted.
     "BIRTHS_KEEP_HOURS": "48", // retention for status='expired' births before the prune sweep deletes them (discoveryScan). Bounds the previously-unbounded births table (~1,277/hr). 'discovered' graduates and watching rows are never pruned.
     "DEV_REP_MAX_PRIOR": "20", // dev-reputation paper gate (migration 0019): a qualifying coin's creator counts as "fresh" (gate_dev=1) if it launched <= this many coins before this one; above it = serial (gate_dev=0). Backtest 2026-07-16: fresh devs hit +20% 49.5% vs 21.9% for 21+ serials. Paper signal only — nothing is skipped or traded.
+    "RUG_MAX_TOP_HOLDER_PCT": "0.20", // rug gate (migration 0020): a qualifying coin passes (gate_rug=1) if its largest non-curve holder holds <= this share of the circulating float; above = whale-on-float (gate_rug=0). Forward-measured; needs the SOLANA_RPC_URL secret to activate (gate stays NULL until then). Paper signal only.
     // §0 SESSION GATE (sessiongate.ts). The proxy is births/hour (pump.fun launch
     // rate) vs its own trailing 7d average — a RELATIVE gate (§0). Every value
     // below is a STARTING POINT, not frozen (§0/§7): the threshold gets tuned by

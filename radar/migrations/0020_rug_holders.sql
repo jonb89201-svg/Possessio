@@ -1,0 +1,18 @@
+-- migration 0020: on-chain rug signal — top-holder concentration.
+--
+-- The research verdict (2026-07-16): every FREE/metadata signal (dev reputation,
+-- birth-snipe fraction, socials) predicts a coin's ACTIVITY, not its safety —
+-- rugs sit ~29-32% uniformly across every "hot" bucket. To separate rugs you
+-- need live on-chain state: WHO holds the circulating float and can dump it.
+--
+-- At qualify-time the worker calls Solana getTokenLargestAccounts(mint), excludes
+-- the bonding-curve token account (associated_bonding_curve, from the birth JSON),
+-- and records the largest real holder's share of the circulating float [0,1].
+-- gate_rug (existing column): 1 = pass (top holder <= RUG_MAX_TOP_HOLDER_PCT),
+-- 0 = fail (whale on the float), NULL = not evaluated (RPC unset/unreachable).
+--
+-- FORWARD-MEASURED ONLY: on-chain holder state is live; there is no historical
+-- snapshot for the past 432 candidates, so this cannot be backtested — it is
+-- instrumented now and measured as data accumulates. PAPER SIGNAL: recorded on
+-- each candidate; nothing is skipped or traded.
+ALTER TABLE candidates ADD COLUMN top_holder_share REAL;

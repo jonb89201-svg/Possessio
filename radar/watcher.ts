@@ -31,6 +31,8 @@ export type WatcherEnv = Env & {
   DEX_TRACK_HOURS?: string;   // post-graduation enrich window (default 1h — hour-by-hour ledger)
   BIRTHS_KEEP_HOURS?: string; // retention for expired births before prune (default 48h)
   DEV_REP_MAX_PRIOR?: string; // dev-rep paper gate: max prior launches to still count as "fresh" (default 20)
+  SOLANA_RPC_URL?: string;    // secret: Solana JSON-RPC for the rug gate (getTokenLargestAccounts); gate no-ops if unset
+  RUG_MAX_TOP_HOLDER_PCT?: string; // rug gate: max top-holder share of float to pass (default 0.20)
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
   PUMPPORTAL_WS_URL?: string;
