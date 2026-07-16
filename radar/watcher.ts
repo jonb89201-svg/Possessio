@@ -30,6 +30,7 @@ export type WatcherEnv = Env & {
   YOUNG_WINDOW_MIN: string;
   DEX_TRACK_HOURS?: string;   // post-graduation enrich window (default 1h — hour-by-hour ledger)
   BIRTHS_KEEP_HOURS?: string; // retention for expired births before prune (default 48h)
+  DEV_REP_MAX_PRIOR?: string; // dev-rep paper gate: max prior launches to still count as "fresh" (default 20)
   BASE_RPC_URL?: string;
   CHAINLINK_BTC_USD?: string;
   PUMPPORTAL_WS_URL?: string;

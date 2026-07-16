@@ -137,6 +137,9 @@ CREATE TABLE candidates (
   gate_predex     INTEGER,
   gate_rug        INTEGER,                 -- §2 rug: NULL until on-chain data wired
   gate_session    INTEGER,                 -- §0 session: NULL until vol data wired
+  -- migration 0019: dev-reputation paper gate (point-in-time, no lookahead).
+  dev_prior_launches INTEGER,              -- same creator's launches BEFORE this coin's birth
+  gate_dev        INTEGER,                 -- 1=fresh (prior<=DEV_REP_MAX_PRIOR), 0=serial, NULL=no creator
   -- outcome tracking (§1 exit ladder), paper-only
   peak_mc         REAL,
   peak_ms         INTEGER,
