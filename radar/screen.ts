@@ -325,6 +325,21 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     : { mc: new Map<string, number>(), volM5: new Map<string, number>() };
   const mcOf = (a: string): number | null => dex.mc.get(a) ?? mcNow.get(a) ?? null;
 
+  // MARKET-VOLUME REGIME (migration 0022). Sum the m5 dollar-volume we already
+  // fetched for the on-screen set — a zero-extra-call proxy for market heat (the
+  // "time to trade vs not" gate). Dead market -> tiny on-screen set -> near-zero;
+  // it rises as coins pump into the band. n_tracked carries the context. Prune
+  // keeps ~30 days. Trailing-average regime is derived from this series later.
+  let mktVolM5 = 0;
+  for (const v of dex.volM5.values()) if (Number.isFinite(v)) mktVolM5 += v;
+  stmts.push(env.RADAR_DB.prepare(
+    `INSERT INTO market_vol (ts_ms, vol_m5, n_tracked) VALUES (?1,?2,?3)
+     ON CONFLICT(ts_ms) DO NOTHING`
+  ).bind(now, mktVolM5, trackAddrs.length));
+  stmts.push(env.RADAR_DB.prepare(
+    `DELETE FROM market_vol WHERE ts_ms < ?1`
+  ).bind(now - 30 * 24 * 3600_000));
+
   for (const r of tapeSet as any[]) {
     const addr = r.token_address as string;
     const mc = mcOf(addr);
