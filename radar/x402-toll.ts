@@ -17,6 +17,24 @@
 //     the mainnet choice at cutover (FACILITATOR_URL var — flip with the wave, like
 //     every chain check).
 //
+// VERIFY-FIRST EXECUTED (Claude Code, 2026-07-17, for the x402 V2 Bazaar Discovery
+// endpoint — SPEC_BusinessModel.md R1 authorizes exactly this one worker-layer build):
+//   - Discovery is NOT a hand-rolled route. It is `@x402/extensions` v2.18.0 (installed
+//     transitively; now a direct dep) wired as CONFIGURATION on the same official
+//     middleware — no new money path, so the audit law above still holds verbatim.
+//   - API confirmed from the package's own dist/*.d.mts (not memory):
+//       · `declareDiscoveryExtension(config): Record<string,DiscoveryExtension>` —
+//         config is DistributiveOmit<...,"method"> (the HTTP method is set by the
+//         server extension's enrichDeclaration, NOT declared here). For our GET routes
+//         the query shape is `{ input?, inputSchema?, output?: { example?, schema? } }`.
+//       · `bazaarResourceServerExtension: ResourceServerExtension`, installed via
+//         `x402ResourceServer#registerExtension(ext): this`.
+//       · Per-route carrier is `RouteConfig.extensions?: Record<string,unknown>`, plus
+//         `serviceName? / tags? / iconUrl?` for the sanitized catalog metadata.
+//   - Effect: a facilitator that indexes the Bazaar (GET /discovery/resources, /search)
+//     now sees these three paid routes with their price, description, and an OUTPUT
+//     EXAMPLE — so an AI agent can find and price the radar's data API before it pays.
+//
 // Behavior: while TOLL_SINK is the zero address, routes serve FREE with an honest
 // "TOLL_NOT_ARMED" header — same placeholder pattern as the fuel pool's POOL_NOT_DEPLOYED.
 // The moment the wave writes the sink, the same routes start charging. No code change.
@@ -25,6 +43,8 @@ import { Hono } from "hono";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
+import { bazaarResourceServerExtension } from "@x402/extensions";
+import { tollRoutes } from "./toll-routes";
 import { FEED_HTML } from "./feed";
 import { sessionGateResponse } from "./sessiongate";
 
@@ -133,32 +153,21 @@ export function buildTolledApp(env: Env) {
     const facilitator = new HTTPFacilitatorClient({
       url: env.FACILITATOR_URL || "https://facilitator.x402.org",
     });
-    const server = new x402ResourceServer(facilitator).register(network, new ExactEvmScheme());
-    const accepts = (price: string, description: string) => ({
-      accepts: { scheme: "exact", price, network, payTo: env.TOLL_SINK as `0x${string}` },
-      description,
+    // Bazaar Discovery (x402 V2): registering the extension makes each route's
+    // per-route `extensions` (built in tollRoutes) enrichable and echoed to a
+    // facilitator that catalogs the Bazaar — how an AI agent finds this paid data
+    // API. It is pure config on the official middleware; the audit law (never
+    // hand-roll verification) is untouched.
+    const server = new x402ResourceServer(facilitator)
+      .register(network, new ExactEvmScheme())
+      .registerExtension(bazaarResourceServerExtension);
+    const routes = tollRoutes({
+      network,
+      payTo: env.TOLL_SINK as `0x${string}`,
+      prices: { gapStats: env.PRICE_GAP_STATS, sessionGate: env.PRICE_SESSION_GATE, tape: env.PRICE_TAPE },
+      iconUrl: ((env as any).CONSOLE_URL || "https://possessio.io") + "/icon-1024.png",
     });
-    app.use(
-      paymentMiddleware(
-        {
-          "GET /radar/gap-stats": accepts(env.PRICE_GAP_STATS,
-            "Rolling pump.fun->DexScreener gap distribution (aggregates only)"),
-          // RE-ARMED (2026-07-15): the R-8 UNPRICED note is now spent — a session
-          // writer landed (sessiongate.ts, wired into index.ts), so this route
-          // serves a REAL §0 regime reading (pass/fail + ratio + basis), not a
-          // permanent NO_READING_YET. It is a product now; price it like the
-          // other data routes. (Cold-start caveat: like gap-stats before its
-          // first tape, it may answer NO_READING_YET for the brief window before
-          // the first reading lands — a TRANSIENT gap, not the permanent no-op
-          // R-8 refused to sell.)
-          "GET /radar/session-gate": accepts(env.PRICE_SESSION_GATE,
-            "§0 regime reading: pass/fail + ratio (births/hr vs its own 7d avg)"),
-          "GET /radar/tape": accepts(env.PRICE_TAPE,
-            "Discovered-only historical tape, last 100"),
-        },
-        server,
-      ),
-    );
+    app.use(paymentMiddleware(routes, server));
   } else {
     app.use("*", async (c, next) => {
       c.header("x-possessio-toll", "TOLL_NOT_ARMED"); // honest free mode pre-wave
