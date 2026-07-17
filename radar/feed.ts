@@ -149,7 +149,7 @@ export const FEED_HTML = `<!doctype html>
   <h2>Early radar &middot; §0 ladder (paper): in $3.5k &middot; out 50%@6k 25%@8k 12.5%@10k 12.5%@12k &middot; dip re-buy &#8594; next ladder up</h2>
   <div id="epstats" class="sub"></div>
   <div class="gatebar">
-    <span><b>FLOW GATE</b> — net-buy screen (proven: <span class="pct up">FLOW IN &rarr; 1.37x, 84% green</span> vs <span class="pct down">SKIP &rarr; 0.74x</span>)</span>
+    <span><b>STRATEGY GATE</b> — live net-buy flow (a momentum read); the §1 gate adds <span class="pct up">fresh-dev + rug filter</span> and lets winners run to <span class="pct up">+50%</span>. Forward-measured, not proven. Regime &middot; <span id="newbornrate">newborn rate …</span></span>
     <label><input type="checkbox" id="hideSkip"> hide SKIPs</label>
     <span id="gatecount"></span>
   </div>
@@ -176,9 +176,10 @@ export const FEED_HTML = `<!doctype html>
   <div id="news"><div class="empty">loading news…</div></div>
 
   <p class="foot" id="foot">
-    Pre-DEX only — the edge is buying before DexScreener lists it. Rug &amp; session
-    gates are not yet wired (shown as pending, never faked). Numbers are the ratified
-    §1 method; the ledger will kill or confirm it. Not financial advice.
+    Pre-DEX only — the edge is buying before DexScreener lists it. The rug gate is now
+    live (on-chain top-holder concentration); the regime read is the live newborn rate.
+    Numbers are forward-measured, not proven — the ledger kills or confirms it.
+    Not financial advice.
   </p>
 </div>
 <script>
@@ -408,6 +409,13 @@ export const FEED_HTML = `<!doctype html>
     document.getElementById("gatecount").innerHTML=
       '<span class="pct up">'+gc.in+' IN</span> &middot; <span class="pct" style="color:var(--gold)">'+gc.weak+' weak</span> &middot; '+
       '<span class="pct down">'+gc.skip+' skip</span> &middot; <span style="color:var(--dim)">'+gc.wait+' reading</span>';
+    // REGIME — the newborn rate (Architect: "watch the newborn rate"). High =
+    // attention/liquidity present; low = the sit-out regime. The strategy only
+    // gets at-bats when coins reach the band, which needs a live newborn feed.
+    var nb=document.getElementById("newbornrate");
+    if(nb){ var nr=d.newborn_rate;
+      nb.innerHTML = (nr==null)? "newborn rate …"
+        : '<span class="pct '+(nr>=800?"up":"down")+'">'+nr+' newborns/hr</span> &middot; '+(nr>=800?"active":"quiet \\u2014 sit-out"); }
     var E=document.getElementById("early");
     E.innerHTML=shown.length? shown.map(function(c){ return earlyRow(c,tk[c.token_address]); }).join("") : '<div class="empty">scanning newborns…</div>';
     var L=document.getElementById("live");
