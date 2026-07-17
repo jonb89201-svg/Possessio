@@ -244,7 +244,8 @@ export function buildTolledApp(env: Env) {
           FROM births b WHERE b.token_address=${t}.token_address) AS img`;
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
-              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session, ${imgCol("candidates")}, ${dexCols}
+              peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session,
+              strat_take, entry_vel, gate_dev, top_holder_share, ${imgCol("candidates")}, ${dexCols}
          FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
     ).all();
     const recent = await db.prepare(
@@ -267,6 +268,14 @@ export function buildTolledApp(env: Env) {
          (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?1 ORDER BY ts_ms DESC LIMIT 1)        AS m15,
          (SELECT btc_usd FROM regime_ticks WHERE ts_ms <= ?2 ORDER BY ts_ms DESC LIMIT 1)        AS h1`
     ).bind(bnow - 900_000, bnow - 3_600_000).first();
+    // NEWBORN RATE — the regime read (Architect 2026-07-16: "watch the newborn
+    // rate and confirm it works with our strategy"). pump.fun launches in the
+    // last hour: high = attention/liquidity present (a time to trade), low = the
+    // sit-out regime that the market bottomed into today. The strategy's edge
+    // needs coins actually reaching the band, which needs newborns.
+    const newborn = await db.prepare(
+      `SELECT COUNT(*) AS n60 FROM births WHERE pumpfun_first_seen_ms > ?1`
+    ).bind(bnow - 3_600_000).first();
     // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
@@ -321,7 +330,8 @@ export function buildTolledApp(env: Env) {
       btc,
       ticks,
       tally: tally.results,
-      method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry / $20k target / $6k stop / 10min time-stop (paper-only)",
+      newborn_rate: newborn?.n60 ?? 0,
+      method: "RULEBOOK §1 — pre-DEX, 4-7min, ~$10k entry · gate: momentum + fresh-dev + rug (top-holder) · winners run to +50% / stop -40% / 10min time-stop (paper-only)",
     });
   });
 
