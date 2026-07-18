@@ -179,6 +179,33 @@ contract PossessioAutoTargetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotOpen.selector, id));
         desk.resolveIntent(id, 1.2e18);
     }
+
+    /*//////////////////////////////////////////////////////////////
+        DoD #7 - EXECUTION CLOSE: opened -> authorized -> executed
+    //////////////////////////////////////////////////////////////*/
+
+    function test_mark_executed_closes_lifecycle() public {
+        uint256 id = _open(2500, 1e18, keccak256("n1"));
+        vm.prank(keeper);
+        desk.resolveIntent(id, 1.30e18); // target authorized
+
+        vm.prank(keeper);
+        desk.markExecuted(id, 1_250_000); // keeper reports the off-chain swap proceeds
+
+        PossessioAutoTarget.Intent memory it = desk.getIntent(id);
+        assertEq(uint256(it.status), uint256(PossessioAutoTarget.Status.Executed), "executed terminal");
+        assertEq(it.usdcReturned, 1_250_000, "proceeds recorded on-chain (receipt)");
+        assertEq(uint256(it.exitKind), uint256(PossessioAutoTarget.ExitKind.Target), "exit kind preserved");
+        // still non-custodial: the close moved no funds.
+        assertEq(usdc.balanceOf(address(desk)), 0, "desk holds no USDC");
+    }
+
+    function test_mark_executed_requires_resolved_first() public {
+        uint256 id = _open(2500, 1e18, keccak256("n1")); // still Open
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotResolved.selector, id));
+        desk.markExecuted(id, 1_250_000);
+    }
 }
 
 /// @notice Minimal Heart stand-in: an authorized-source pull door that credits

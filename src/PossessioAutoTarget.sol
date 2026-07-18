@@ -38,14 +38,18 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
        exit) but has NO authority over funds here. Worst case a rogue keeper
        emits a premature/late trigger, which the on-chain target/stop math
        price-gates (NotTriggered); the swap rail applies its own slippage bound.
-    6. ONE RESOLUTION. Resolved/Cancelled are terminal - no re-fire.
+    6. LINEAR LIFECYCLE. An Open intent goes to exactly one of Resolved (then
+       Executed) or Cancelled. Executed/Cancelled are terminal - no re-fire,
+       no double-exit. resolveIntent needs Open; markExecuted needs Resolved.
 
-  The token->USDC SWAP is NOT in this contract. It runs on the user's rail (a
-  bounded Base-Account spend permission, or user co-sign via xtrade), driven by
-  the ExitAuthorized event. This keeps the contract non-custodial and
-  chain-agnostic. The -10% stop is a THRESHOLD, not a fill guarantee: on a rug
-  the rail fills worse. This contract enforces discipline; it cannot beat
-  gapping liquidity (SPEC_AutoTarget.md §6).
+  The token->USDC SWAP is NOT in this contract. It runs KEEPER-SIDE via the
+  user's bounded, revocable Base-Account spend permission + a DEX (Option A,
+  keeper-side - SPEC_AutoTarget.md §3), driven by the ExitAuthorized trigger;
+  the keeper then calls markExecuted to record the proceeds on-chain. This keeps
+  the contract non-custodial (it never touches the traded token) and free of
+  DEX/MEV surface. The -10% stop is a THRESHOLD, not a fill guarantee: on a rug
+  the rail fills worse. This contract enforces discipline and speed of trigger;
+  it cannot beat gapping liquidity (SPEC_AutoTarget.md §6).
 
   NON-PROVEN until forge says so - see PossessioAutoTarget.t.sol (DoD),
   PossessioAutoTargetAdversarial.t.sol, PossessioAutoTargetFork.t.sol.
@@ -88,6 +92,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
     error NotKeeper(address caller);
     error NotIntentOwner(address caller);
     error IntentNotOpen(uint256 id);
+    error IntentNotResolved(uint256 id);
     error NotTriggered(uint256 observedPrice, uint256 targetPrice, uint256 stopPrice);
     error UnknownIntent(uint256 id);
 
@@ -150,6 +155,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
         None,
         Open,
         Resolved,
+        Executed,
         Cancelled
     }
 
@@ -167,6 +173,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
         uint16 stopBps;
         Status status;
         ExitKind exitKind;
+        uint256 usdcReturned; // set at markExecuted — the on-chain proceeds receipt
     }
 
     /// @notice Intent registry. id 0 is never used (ids start at 1).
@@ -184,6 +191,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
     );
     event FeeRouted(uint256 indexed id, uint256 amount);
     event ExitAuthorized(uint256 indexed id, ExitKind kind, uint256 observedPrice);
+    event ExitExecuted(uint256 indexed id, ExitKind kind, uint256 usdcReturnedToUser);
     event IntentCancelled(uint256 indexed id);
 
     /*//////////////////////////////////////////////////////////////
@@ -269,7 +277,8 @@ contract PossessioAutoTarget is ReentrancyGuard {
             targetBps: targetBps,
             stopBps: STOP_BPS,
             status: Status.Open,
-            exitKind: ExitKind.None
+            exitKind: ExitKind.None,
+            usdcReturned: 0
         });
 
         emit IntentOpened(id, msg.sender, token, entryPrice, targetBps);
@@ -305,6 +314,36 @@ contract PossessioAutoTarget is ReentrancyGuard {
         it.status = Status.Resolved;
         it.exitKind = kind;
         emit ExitAuthorized(id, kind, observedPrice);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+              EXECUTION CLOSE (the on-chain receipt of the swap)
+
+      The token->USDC swap itself runs KEEPER-SIDE, off this contract, via
+      the user's bounded Base-Account spend permission + a DEX (Option A,
+      keeper-side — SPEC_AutoTarget.md §3). That keeps the money-path
+      non-custodial and free of DEX/MEV surface. After the keeper executes
+      the swap it calls markExecuted to close the lifecycle on-chain:
+      IntentOpened -> ExitAuthorized -> ExitExecuted(proceeds). This makes
+      every managed trade a provable public receipt (the business model's
+      proof-of-operation) WITHOUT this contract ever touching the funds.
+
+      The keeper cannot fabricate a profit for itself here: it moves no funds
+      in this call; usdcReturnedToUser is a recorded figure, and the swap it
+      references was bounded by the user's revocable spend permission and its
+      proceeds hardcoded to the user's own wallet by the swap rail.
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Keeper closes an executed exit on-chain after the off-chain swap.
+    /// @param id                  a Resolved intent (its exit already authorized).
+    /// @param usdcReturnedToUser  the USDC the swap returned to the user (receipt).
+    function markExecuted(uint256 id, uint256 usdcReturnedToUser) external onlyKeeper nonReentrant {
+        Intent storage it = intents[id];
+        if (it.status != Status.Resolved) revert IntentNotResolved(id);
+
+        it.status = Status.Executed;
+        it.usdcReturned = usdcReturnedToUser;
+        emit ExitExecuted(id, it.exitKind, usdcReturnedToUser);
     }
 
     /*//////////////////////////////////////////////////////////////

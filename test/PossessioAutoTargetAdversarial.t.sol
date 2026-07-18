@@ -195,6 +195,57 @@ contract PossessioAutoTargetAdversarialTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+        EXECUTION-CLOSE AUTHORITY + LIFECYCLE
+    //////////////////////////////////////////////////////////////*/
+
+    function test_non_keeper_cannot_mark_executed() public {
+        uint256 id = _open(2500, keccak256("n1"));
+        vm.prank(keeper);
+        desk.resolveIntent(id, 2e18);
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.NotKeeper.selector, attacker));
+        desk.markExecuted(id, 999);
+    }
+
+    function test_cannot_mark_open_intent() public {
+        uint256 id = _open(2500, keccak256("n1")); // Open, not Resolved
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotResolved.selector, id));
+        desk.markExecuted(id, 999);
+    }
+
+    function test_double_mark_executed_reverts() public {
+        uint256 id = _open(2500, keccak256("n1"));
+        vm.prank(keeper);
+        desk.resolveIntent(id, 2e18);
+        vm.prank(keeper);
+        desk.markExecuted(id, 999);
+        vm.prank(keeper); // Executed is terminal
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotResolved.selector, id));
+        desk.markExecuted(id, 999);
+    }
+
+    function test_cannot_mark_cancelled_intent() public {
+        uint256 id = _open(2500, keccak256("n1"));
+        vm.prank(user);
+        desk.cancelIntent(id);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotResolved.selector, id));
+        desk.markExecuted(id, 999);
+    }
+
+    function test_cannot_cancel_after_executed() public {
+        uint256 id = _open(2500, keccak256("n1"));
+        vm.prank(keeper);
+        desk.resolveIntent(id, 2e18);
+        vm.prank(keeper);
+        desk.markExecuted(id, 999);
+        vm.prank(user); // Executed is terminal - the human can no longer cancel
+        vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.IntentNotOpen.selector, id));
+        desk.cancelIntent(id);
+    }
+
+    /*//////////////////////////////////////////////////////////////
         CONSTRUCTOR GUARDS
     //////////////////////////////////////////////////////////////*/
 

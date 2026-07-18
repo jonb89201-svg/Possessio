@@ -89,15 +89,33 @@ for the Architect explicitly.
    through protocol code; the user's wallet/aggregator does, with its own
    slippage bound.
 
-**Exit-execution sub-decision (OPEN — Architect confirms):**
-- **(A) bounded Base-Account spend permission** → the keeper fires the swap
-  without the user re-signing each exit. Fully mechanical, EVM-only, needs the
-  Spend-Permission grant on `openIntent`. *Recommended for the mechanical feel.*
-- **(B) user co-signs each exit** (build/sign posture) → chain-agnostic, works
-  today via xtrade, but the exit is not unattended.
-- The contract is identical for both; the difference is who submits the swap
-  after `ExitAuthorized`. v1 ships the trigger+fee; the execution adapter is a
-  documented, swappable add-on so we do not freeze the wrong custody model.
+**Exit-execution sub-decision — RESOLVED: (A) keeper-side, fully mechanical.**
+Ratified 2026-07-18: *"fully mechanical, it's the only way to win these trades
+is by being quick."* A human-speed exit on these tokens is a losing exit, so the
+exit fires with no per-trade human signature.
+
+- **Locus: keeper-side via Base's `SpendPermissionManager`** (NOT a DEX inside
+  this contract — chosen over an on-chain executor to keep the money-path
+  non-custodial and free of DEX/MEV surface, and to inherit Base's audited
+  spend-permission bounds).
+- **Grant flow (console, one UX click, two authorizations at open):**
+  1. the user signs the **EIP-3009 fee auth** (USDC, `to == desk`) → `openIntent`.
+  2. the user signs a **Base-Account spend permission** on the *picked token*,
+     bounded to the position size and expiring at the intent horizon, with the
+     keeper as spender. Revocable anytime from the wallet.
+- **Exit (keeper, on trigger):** the keeper watches price; the moment it crosses
+  target/stop it (a) calls `resolveIntent` — the authoritative on-chain trigger
+  (instant, this is the "quick") — and (b) executes the token→USDC swap in one
+  tx via `SpendPermissionManager` + a DEX, proceeds hardcoded to the user's own
+  wallet by the swap rail, then (c) calls `markExecuted(id, usdcReturned)` to
+  record the receipt on-chain.
+- **Why this stays safe without on-chain swap code:** the keeper moves funds
+  only within the user's *revocable, size-capped* spend permission; the swap's
+  proceeds go to the user's wallet (not the keeper); and the full lifecycle
+  (`IntentOpened → ExitAuthorized → ExitExecuted`) is a public on-chain receipt,
+  so any bad execution is provable. The keeper's residual power — choosing a bad
+  slippage on the off-chain swap — is bounded by the permission cap + the user's
+  ability to revoke, and is the §6.3 hardening item (keeper is our own infra).
 
 ---
 
@@ -126,12 +144,20 @@ authority, compute-only, like the salt keeper), `PER_TX_FEE` (USDC 6-dec).
     elif `observedPrice <= stopPrice` → `kind = STOP`
     else revert `NotTriggered` (keeper called too early)
   - set `status = Resolved`; emit `ExitAuthorized(id, kind, observedPrice)`
+- `markExecuted(uint256 id, uint256 usdcReturnedToUser)` — `onlyKeeper`
+  - require `status == Resolved` (its exit already authorized)
+  - set `status = Executed`; record `usdcReturned`; emit
+    `ExitExecuted(id, kind, usdcReturnedToUser)` — the on-chain receipt closing
+    the off-chain swap. Moves no funds (non-custodial).
 - `cancelIntent(uint256 id)` — `onlyIntentOwner`, only if `Open`
   - the human can always bail manually; emit `IntentCancelled(id)`
 - views: `getIntent(id)`, `targetPrice(id)`, `stopPrice(id)`
 
+**Lifecycle:** `Open → Resolved → Executed`, or `Open → Cancelled`.
+Executed/Cancelled are terminal.
+
 **Events (the on-chain receipts — the business model's proof):**
-`IntentOpened`, `ExitAuthorized`, `IntentCancelled`, `FeeRouted(id, amount)`.
+`IntentOpened`, `FeeRouted`, `ExitAuthorized`, `ExitExecuted`, `IntentCancelled`.
 
 ---
 
@@ -188,7 +214,9 @@ authority, compute-only, like the salt keeper), `PER_TX_FEE` (USDC 6-dec).
 
 ## 7. Open decisions (Architect ratifies; NOT frozen here)
 
-1. **Exit-execution model A vs B** (§3) — the custody sub-decision.
+1. ~~Exit-execution model A vs B~~ — **RESOLVED (§3): A, keeper-side, fully
+   mechanical.** Remaining sub-item: which `SpendPermissionManager` deployment +
+   DEX the keeper uses per chain (deploy/keeper config, not a contract freeze).
 2. **`PER_TX_FEE`** — flat USDC per open? (interim: mirror the R1 toll scale,
    e.g. $0.02–0.10) or a bps of notional? Immutable per deploy either way.
 3. **Fee destination** — the Heart (Option A, self-funding, recommended) vs an
@@ -205,14 +233,17 @@ authority, compute-only, like the salt keeper), `PER_TX_FEE` (USDC 6-dec).
 
 ## 8. Definition of Done (the suites this spec authorizes)
 
-- **`PossessioAutoTarget.t.sol`** — DoD: open at each target button; stop always
-  1000; fee settles + routes to a Heart mock (`received == PER_TX_FEE`);
+- **`PossessioAutoTarget.t.sol`** (14 DoD) — open at each target button; stop
+  always 1000; fee settles + routes to a Heart mock (`received == PER_TX_FEE`);
   `balanceOf(this)==0` post-open; resolve fires TARGET above / STOP below /
-  `NotTriggered` between; cancel by owner only; terminal-state re-entry reverts.
-- **`PossessioAutoTargetAdversarial.t.sol`** — non-owner cancel; non-keeper
-  resolve; resolve after resolve/cancel; a +50% intent still stops at −10%;
-  fee-route revert unwinds the open (user not charged); front-run of the EIP-3009
-  auth fails (`to` mismatch); rogue keeper cannot touch funds.
+  `NotTriggered` between; **markExecuted closes Resolved→Executed and records
+  proceeds; markExecuted before resolve reverts**; cancel by owner only;
+  terminal-state re-entry reverts.
+- **`PossessioAutoTargetAdversarial.t.sol`** (19) — non-owner cancel; non-keeper
+  resolve/**markExecuted**; resolve/**mark** after resolve/cancel/execute; a
+  +50% intent still stops at −10%; fee-route revert unwinds the open (user not
+  charged); front-run of the EIP-3009 auth fails (`to` mismatch); nonce replay
+  burns; rogue keeper cannot touch funds; **Executed/Cancelled are terminal**.
 - **`PossessioAutoTargetFork.t.sol`** — Base fork: real USDC (EIP-3009 EIP-712
   signed with a `deal`-funded key) → `openIntent` → fee lands in a real-code
   Heart (deployed on the fork) → `poolBalance` credited, `balanceOf(this)==0`.
