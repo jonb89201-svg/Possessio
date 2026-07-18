@@ -23,11 +23,23 @@ interface ICreateX {
 /// payee can submit). ERC20 transfer/balanceOf for the sink forward.
 contract MockUSDC {
     mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
 
     function mint(address to, uint256 a) external { balanceOf[to] += a; }
 
     function transfer(address to, uint256 a) external returns (bool) {
         balanceOf[msg.sender] -= a;
+        balanceOf[to] += a;
+        return true;
+    }
+
+    // approve + transferFrom: needed once the factory routes the fee via the pool's
+    // receiveInfraFunds pull door (option A) instead of a raw safeTransfer push.
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+
+    function transferFrom(address f, address to, uint256 a) external returns (bool) {
+        allowance[f][msg.sender] -= a;
+        balanceOf[f] -= a;
         balanceOf[to] += a;
         return true;
     }
@@ -39,6 +51,19 @@ contract MockUSDC {
         require(msg.sender == to, "3009: only payee may submit");
         balanceOf[from] -= value;
         balanceOf[to] += value;
+    }
+}
+
+/// Minimal pool standing in for the feeSink: mirrors the real receiveInfraFunds
+/// pull door (transferFrom), so the factory's option-A fee route is exercised.
+/// (Permissive — the authorizedSources enforcement is the real pool's DoD.)
+contract MockPool {
+    MockUSDC internal immutable usdc;
+    uint256 public received;
+    constructor(MockUSDC u) { usdc = u; }
+    function receiveInfraFunds(uint256 amount) external {
+        usdc.transferFrom(msg.sender, address(this), amount);
+        received += amount;
     }
 }
 
@@ -86,7 +111,7 @@ contract PossessioFactoryTest is Test {
         assertEq(CREATEX_ADDR.codehash, CANONICAL_RUNTIME_CODEHASH, "etched CreateX not canonical");
 
         usdc = new MockUSDC();
-        sink = makeAddr("sink");
+        sink = address(new MockPool(usdc)); // feeSink is now a pull-door pool (option A)
         templateCodehash = keccak256(type(MockTemplate).creationCode);
 
         // Salt pool is sender-locked to the factory, whose address must be known
@@ -235,6 +260,9 @@ contract PossessioFactoryTest is Test {
         factory.deployTemplate(makeAddr("o"), "", type(MockTemplate).creationCode, _auth());
 
         assertEq(usdc.balanceOf(sink), sinkBefore + FEE, "sink credited exactly the fee");
+        // option A: the fee was ROUTED through receiveInfraFunds (accounted), not
+        // pushed to a passive address — proves the pull door fired, not a strand.
+        assertEq(MockPool(sink).received(), FEE, "fee credited via receiveInfraFunds (A)");
         assertEq(usdc.balanceOf(address(factory)), 0, "factory holds no USDC after settle");
         assertEq(usdc.balanceOf(buyer), 0, "buyer charged exactly the fee, no more");
         assertEq(factory.DEPLOYMENT_FEE(), FEE, "immutable fee is the tier price");

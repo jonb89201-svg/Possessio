@@ -18,9 +18,14 @@ interface ICreateX {
 
 contract MockUSDC {
     mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
     function mint(address to, uint256 a) external { balanceOf[to] += a; }
     function transfer(address to, uint256 a) external returns (bool) {
         balanceOf[msg.sender] -= a; balanceOf[to] += a; return true;
+    }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function transferFrom(address f, address to, uint256 a) external returns (bool) {
+        allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[to] += a; return true;
     }
     function receiveWithAuthorization(
         address from, address to, uint256 value,
@@ -28,6 +33,17 @@ contract MockUSDC {
     ) external {
         require(msg.sender == to, "3009: only payee may submit");
         balanceOf[from] -= value; balanceOf[to] += value;
+    }
+}
+
+/// feeSink stand-in: the option-A pull door (receiveInfraFunds -> transferFrom).
+contract MockPool {
+    MockUSDC internal immutable usdc;
+    uint256 public received;
+    constructor(MockUSDC u) { usdc = u; }
+    function receiveInfraFunds(uint256 amount) external {
+        usdc.transferFrom(msg.sender, address(this), amount);
+        received += amount;
     }
 }
 
@@ -91,7 +107,7 @@ contract PossessioFactoryAdversarialTest is Test {
         vm.etch(CREATEX_ADDR, vm.parseBytes(vm.readFile("test/fixtures/createx.runtime.hex")));
         assertEq(CREATEX_ADDR.codehash, CANONICAL_RUNTIME_CODEHASH, "etched CreateX not canonical");
         usdc = new MockUSDC();
-        sink = makeAddr("sink");
+        sink = address(new MockPool(usdc)); // feeSink is now the option-A pull door
     }
 
     // ---- harness --------------------------------------------------------

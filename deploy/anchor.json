@@ -1,0 +1,108 @@
+{
+  "$comment": "POSSESSIO constellation anchor. Recomputable from `phrase` alone via `derivation`. Salts are PUBLIC sender-locked params (NOT secret); the anchor EOA key is the only secret. Base mainnet only. byte-20=0x00 reserves the same addresses on every EVM chain at zero cost.",
+  "network": "base-mainnet-8453",
+  "anchorEOA": "0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC",
+  "phrase": "TREGUNA_MEKOIDES_TRECORUM_SATIS_DEE",
+  "derivation": {
+    "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+    "proxyInitcodeHash": "0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f",
+    "organEntropy": "low 88 bits of keccak256(utf8(phrase + '/' + tag))",
+    "hookEntropy": "low 88 bits of keccak256(utf8(phrase + '/hook/' + i)), i=0,1,2… kept where (addr & 0x3FFF)==0x08C8",
+    "saltLayout": "[deployer 20 bytes][0x00][entropy 11 bytes]",
+    "guardedSalt": "keccak256(leftpad32(deployer) ++ salt) — CreateX MsgSender/RedeployProtection.False, packed, no chainid",
+    "create3": "CREATE(CREATE2(createX, guardedSalt, proxyInitcode), nonce=1)",
+    "hookFlags": "0x08C8 = beforeAddLiquidity + beforeSwap + afterSwap + beforeSwapReturnsDelta (low 14 bits)"
+  },
+  "organs": {
+    "factory": {
+      "deployer": "0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC",
+      "salt": "0xed5c1f69e9778a2243f9e5af663c9a18e03261ec008c46fdc1e030e05940087c",
+      "address": "0x0DD06656cb9a38730a7177792C357E48cEdb49Bd"
+    },
+    "saltpool": {
+      "deployer": "0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC",
+      "salt": "0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00e5f3f7bbb10c509f42c757",
+      "address": "0x7181a6Dac7582f4544c5dFC5e1C512258F4A61B6"
+    },
+    "x402core": {
+      "deployer": "0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC",
+      "salt": "0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00ef0925278b81d5e6aa477d",
+      "address": "0x60d867AfA7c6f4b0822413fA51D0EE9edE786c05"
+    },
+    "pool": {
+      "deployer": "0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC",
+      "salt": "0xed5c1f69e9778a2243f9e5af663c9a18e03261ec0008105d4bea8a7e08ed2743",
+      "address": "0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce"
+    }
+  },
+  "hookSalts": [
+    {
+      "i": 1950,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00c125a5299247d51307ce89",
+      "address": "0x8744Fb2966Fb92e28e7504C8309C50b0bA0508C8"
+    },
+    {
+      "i": 3995,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00e6663a28f2a6571f42e907",
+      "address": "0x54c1b126131B70d9b510D4B2B063FD63f3Af48C8"
+    },
+    {
+      "i": 46133,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00e3455adab624bf71590dc5",
+      "address": "0x7804e95CC6C1eb927CB789ebA1Dc155D67C948c8"
+    },
+    {
+      "i": 55271,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00907d6a1cebe385eb297b5f",
+      "address": "0xA8D6ACDC5381f3e950a5D725bEA01aAA9F6c08C8"
+    },
+    {
+      "i": 76286,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00ab75f4795f45a676e1d894",
+      "address": "0x0a35Bdc6d80aB294D02B7b285B0fE2a42ab148c8"
+    },
+    {
+      "i": 100440,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd001fc193311f80c9e81a0a76",
+      "address": "0xA3c9D406088bc1e36AA9515EC63Ec6207902c8c8"
+    },
+    {
+      "i": 102994,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00480300d389b1bdd4e90615",
+      "address": "0x41d9E6eD2A4e7e4642188bbcD3F91D644B0748C8"
+    },
+    {
+      "i": 115589,
+      "salt": "0x0dd06656cb9a38730a7177792c357e48cedb49bd00ea6383897f446c547947c7",
+      "address": "0xA5BDEbe145d72041F7AD2A7972a33e766Cc088c8"
+    }
+  ],
+  "deployOrder": [
+    "1. factory  (CREATE3, EOA-keyed)  -> extcodehash gate == expected(factory)",
+    "2. saltpool (CREATE3, EOA-keyed)  -> extcodehash gate",
+    "3. x402core (CREATE3, EOA-keyed)  -> extcodehash gate",
+    "4. pool     (CREATE3, EOA-keyed; authorizedSources=[factory,x402core]) -> extcodehash gate",
+    "5. keeper refills saltpool with hookSalts (0x8C8, factory-keyed)",
+    "NOTE: extcodehash 'expected' values are recorded at fork-test time from the compiled runtime code."
+  ],
+  "wiring_feeSink_A": {
+    "decision": "A — factory routes deployment fees INTO the pool (self-funding day one)",
+    "Factory._feeSink": "0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce  (the pool)",
+    "Factory._saltPool": "0x7181a6Dac7582f4544c5dFC5e1C512258F4A61B6",
+    "Factory.line211_EDIT": "safeTransfer(feeSink) -> forceApprove(pool) + pool.receiveInfraFunds(DEPLOYMENT_FEE)",
+    "SaltPool._factory": "0x0DD06656cb9a38730a7177792C357E48cEdb49Bd",
+    "SaltPool._deploymentFeeSource": "0x0DD06656cb9a38730a7177792C357E48cEdb49Bd  (keeper-separation CHECK ONLY — not a money route)",
+    "Pool.authorizedSources": [
+      "0x0DD06656cb9a38730a7177792C357E48cEdb49Bd",
+      "0x60d867AfA7c6f4b0822413fA51D0EE9edE786c05"
+    ]
+  },
+  "owed": [
+    "keeper wallet (fresh, compute-only, != any money destination)",
+    "TEMPLATE_CODEHASH (pin from post-audit build, then freeze source)",
+    "operator/treasury destinations — recommended Base Account 0x6cfe30ce…9203 (passkey-bound)",
+    "DEPLOYMENT_FEE (Architect's price)",
+    "BASE_RPC_URL (QuickNode) — gates the constellation fork test",
+    "CONFIRM anchor EOA is funded on Base mainnet (council saw balance 0)"
+  ]
+}
