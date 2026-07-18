@@ -69,6 +69,13 @@ interface ICreateX {
     function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address);
 }
 
+/// @notice The pool's accounted inflow door (option A). The factory approves and
+///         the pool PULLS the fee, crediting poolBalance. A raw push would strand
+///         it — the pool has no sync door (SPEC_Factory_FeeSink_A.md, DoD #14).
+interface IPossessioPool {
+    function receiveInfraFunds(uint256 amount) external;
+}
+
 contract PossessioFactory is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -126,7 +133,9 @@ contract PossessioFactory is ReentrancyGuard {
     IERC3009 public immutable payToken;
     IERC20 public immutable payTokenERC20;
 
-    /// @notice The single shared USDC treasury sink (Payments contract).
+    /// @notice The pool the deployment fee is routed INTO via receiveInfraFunds
+    ///         (option A — self-funding day one). Immutable; must be in the pool's
+    ///         authorizedSources or every deploy reverts.
     address public immutable feeSink;
 
     /*//////////////////////////////////////////////////////////////
@@ -207,8 +216,14 @@ contract PossessioFactory is ReentrancyGuard {
             feeAuth.s
         );
 
-        // 4. Forward the fee to the single shared USDC sink.
-        payTokenERC20.safeTransfer(feeSink, DEPLOYMENT_FEE);
+        // 4. Route the fee INTO the pool via its accounted pull door (option A,
+        //    SPEC_Factory_FeeSink_A.md). forceApprove exact, then the pool pulls it
+        //    and credits poolBalance. A raw safeTransfer would strand the fee (the
+        //    pool has no sync door). If this factory is not in the pool's
+        //    authorizedSources the call reverts — unwinding the whole deploy, fee
+        //    included (Invariant 2 preserved: the caller is never charged on failure).
+        payTokenERC20.forceApprove(feeSink, DEPLOYMENT_FEE);
+        IPossessioPool(feeSink).receiveInfraFunds(DEPLOYMENT_FEE);
 
         // 5. Pull one pre-mined salt (factory-only; sender-locked here).
         bytes32 salt = saltPool.pullSalt();
