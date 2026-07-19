@@ -85,7 +85,8 @@ contract PossessioAutoTarget is ReentrancyGuard {
 
     error ZeroAddress();
     error ZeroFee();
-    error ZeroToken();
+    error ZeroTokenRef();
+    error ZeroChainTag();
     error ZeroEntryPrice();
     error ZeroPrice();
     error BadTarget(uint16 got);
@@ -127,6 +128,14 @@ contract PossessioAutoTarget is ReentrancyGuard {
     uint16 private constant TARGET_MID = 2500; // +25%
     uint16 private constant TARGET_HIGH = 5000; // +50%
 
+    /// @notice Chain tags for `Intent.chainTag`. This contract does NOT interpret
+    ///         them — it records them as opaque routing metadata the keeper reads
+    ///         to pick the right rail (EVM Base-Account spend permission, or a
+    ///         Solana SPL delegate). EVM chains use their chainId; Solana uses the
+    ///         SPL cluster id. One Base ledger, many chains (SPEC_AutoTarget §3).
+    uint32 public constant CHAIN_BASE = 8453; // Base mainnet (EVM rail)
+    uint32 public constant CHAIN_SOLANA = 101; // Solana mainnet-beta (SPL cluster id)
+
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
@@ -167,7 +176,8 @@ contract PossessioAutoTarget is ReentrancyGuard {
 
     struct Intent {
         address user;
-        address token;
+        bytes32 tokenRef; // the picked token: a padded EVM address OR a Solana mint pubkey
+        uint32 chainTag; // which chain the token lives on (keeper routes on this)
         uint256 entryPrice;
         uint16 targetBps;
         uint16 stopBps;
@@ -187,7 +197,12 @@ contract PossessioAutoTarget is ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     event IntentOpened(
-        uint256 indexed id, address indexed user, address indexed token, uint256 entryPrice, uint16 targetBps
+        uint256 indexed id,
+        address indexed user,
+        bytes32 indexed tokenRef,
+        uint32 chainTag,
+        uint256 entryPrice,
+        uint16 targetBps
     );
     event FeeRouted(uint256 indexed id, uint256 amount);
     event ExitAuthorized(uint256 indexed id, ExitKind kind, uint256 observedPrice);
@@ -227,20 +242,28 @@ contract PossessioAutoTarget is ReentrancyGuard {
     /// @notice Open a managed target intent for the caller's picked token. One
     ///         signature, one transaction: fee settle -> route fee into the
     ///         Heart -> record the intent with an un-removable -10% stop.
-    /// @param token       the ERC20 the user picked from the AI board.
+    /// @param tokenRef    the picked token, chain-agnostic: a padded EVM address
+    ///                    (`bytes32(uint256(uint160(addr)))`) OR a Solana mint's
+    ///                    32-byte pubkey. This Base ledger records it; the keeper
+    ///                    routes on (tokenRef, chainTag). SPEC_AutoTarget §3.
+    /// @param chainTag    which chain the token lives on — CHAIN_BASE, CHAIN_SOLANA,
+    ///                    or any EVM chainId. Opaque to this contract; keeper reads it.
     /// @param entryPrice  the reference entry price (caller-supplied units; the
     ///                    keeper's observedPrice must be in the SAME units). Only
     ///                    the ratio matters - target/stop are bps of this.
     /// @param targetBps   one of {1000, 2500, 5000} (the +10/+25/+50 buttons).
     /// @param feeAuth     EIP-3009 authorization for PER_TX_FEE, to == this.
     /// @return id         the new intent id (>= 1).
-    function openIntent(address token, uint256 entryPrice, uint16 targetBps, FeeAuth calldata feeAuth)
-        external
-        nonReentrant
-        returns (uint256 id)
-    {
+    function openIntent(
+        bytes32 tokenRef,
+        uint32 chainTag,
+        uint256 entryPrice,
+        uint16 targetBps,
+        FeeAuth calldata feeAuth
+    ) external nonReentrant returns (uint256 id) {
         // 1. Validate the pick + the button. A wrong target reverts cost-free.
-        if (token == address(0)) revert ZeroToken();
+        if (tokenRef == bytes32(0)) revert ZeroTokenRef();
+        if (chainTag == 0) revert ZeroChainTag();
         if (entryPrice == 0) revert ZeroEntryPrice();
         if (targetBps != TARGET_SCALP && targetBps != TARGET_MID && targetBps != TARGET_HIGH) {
             revert BadTarget(targetBps);
@@ -272,7 +295,8 @@ contract PossessioAutoTarget is ReentrancyGuard {
         id = ++intentCount;
         intents[id] = Intent({
             user: msg.sender,
-            token: token,
+            tokenRef: tokenRef,
+            chainTag: chainTag,
             entryPrice: entryPrice,
             targetBps: targetBps,
             stopBps: STOP_BPS,
@@ -281,7 +305,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
             usdcReturned: 0
         });
 
-        emit IntentOpened(id, msg.sender, token, entryPrice, targetBps);
+        emit IntentOpened(id, msg.sender, tokenRef, chainTag, entryPrice, targetBps);
         emit FeeRouted(id, PER_TX_FEE);
     }
 

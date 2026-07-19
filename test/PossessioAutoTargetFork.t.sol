@@ -32,7 +32,8 @@ contract PossessioAutoTargetForkTest is Test {
     PossessioAutoTarget internal desk;
     PossessioPool internal heart;
     address internal keeper;
-    address internal token;
+    uint32 internal constant CHAIN = 8453; // Base (EVM rail)
+    bytes32 internal tokenRef;
 
     uint256 internal userPk;
     address internal user;
@@ -49,7 +50,7 @@ contract PossessioAutoTargetForkTest is Test {
         // gives a clean externally-owned signer.
         (user, userPk) = makeAddrAndKey("autotarget-user");
         keeper = makeAddr("keeper");
-        token = makeAddr("pickedToken");
+        tokenRef = bytes32(uint256(uint160(makeAddr("pickedToken"))));
         address operator = makeAddr("operator");
         address treasury = makeAddr("treasury");
 
@@ -95,7 +96,7 @@ contract PossessioAutoTargetForkTest is Test {
 
         PossessioAutoTarget.FeeAuth memory a = _signReal(userPk, address(desk), FEE, keccak256("fork-n1"));
         vm.prank(user);
-        uint256 id = desk.openIntent(token, 1e18, 2500, a);
+        uint256 id = desk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
 
         // Fee landed in the real Heart and credited poolBalance (Option A).
         assertEq(IUSDCLike(USDC).balanceOf(address(heart)) - heartBefore, FEE, "real USDC reached the Heart");
@@ -115,7 +116,7 @@ contract PossessioAutoTargetForkTest is Test {
 
         PossessioAutoTarget.FeeAuth memory a = _signReal(userPk, address(desk), FEE, keccak256("fork-n2"));
         vm.prank(user);
-        uint256 id = desk.openIntent(token, 1e18, 5000, a); // +50% target, -10% stop
+        uint256 id = desk.openIntent(tokenRef, CHAIN, 1e18, 5000, a); // +50% target, -10% stop
 
         vm.prank(keeper);
         desk.resolveIntent(id, 0.80e18); // crater -> stop

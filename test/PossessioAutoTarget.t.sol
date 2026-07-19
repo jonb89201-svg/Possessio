@@ -14,8 +14,9 @@ contract PossessioAutoTargetTest is Test {
     MockHeart internal heart;
 
     uint256 internal constant FEE = 20_000; // $0.02 in 6-dec USDC
+    uint32 internal constant CHAIN = 8453; // Base (EVM rail) for these unit tests
     address internal keeper;
-    address internal token; // the picked memecoin (never touched by this contract)
+    bytes32 internal tokenRef; // the picked token, chain-agnostic (padded EVM addr here)
 
     uint256 internal userPk = 0xA11CE;
     address internal user;
@@ -23,7 +24,7 @@ contract PossessioAutoTargetTest is Test {
     function setUp() public {
         user = vm.addr(userPk);
         keeper = makeAddr("keeper");
-        token = makeAddr("pickedToken");
+        tokenRef = bytes32(uint256(uint160(makeAddr("pickedToken"))));
         usdc = new MockEIP3009USDC();
         heart = new MockHeart(address(usdc));
         desk = new PossessioAutoTarget(address(usdc), address(heart), keeper, FEE);
@@ -60,7 +61,7 @@ contract PossessioAutoTargetTest is Test {
     function _open(uint16 targetBps, uint256 entryPrice, bytes32 nonce) internal returns (uint256 id) {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, nonce);
         vm.prank(user);
-        id = desk.openIntent(token, entryPrice, targetBps, a);
+        id = desk.openIntent(tokenRef, CHAIN, entryPrice, targetBps, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -82,7 +83,38 @@ contract PossessioAutoTargetTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("bad"));
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.BadTarget.selector, uint16(3000)));
-        desk.openIntent(token, 1e18, 3000, a);
+        desk.openIntent(tokenRef, CHAIN, 1e18, 3000, a);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        MULTI-CHAIN: one Base ledger records tokens from any chain
+    //////////////////////////////////////////////////////////////*/
+
+    function test_records_tokenref_and_chaintag() public {
+        // a Solana mint (32-byte pubkey) tagged as Solana — recorded verbatim.
+        bytes32 solMint = keccak256("So11111111111111111111111111111111111111112");
+        uint32 solChain = desk.CHAIN_SOLANA(); // cache BEFORE prank (arg-eval consumes it)
+        PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("sol"));
+        vm.prank(user);
+        uint256 id = desk.openIntent(solMint, solChain, 1e18, 2500, a);
+
+        PossessioAutoTarget.Intent memory it = desk.getIntent(id);
+        assertEq(it.tokenRef, solMint, "solana mint recorded verbatim");
+        assertEq(uint256(it.chainTag), uint256(solChain), "chain tag = Solana");
+    }
+
+    function test_open_rejects_zero_tokenref() public {
+        PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("z1"));
+        vm.prank(user);
+        vm.expectRevert(PossessioAutoTarget.ZeroTokenRef.selector);
+        desk.openIntent(bytes32(0), CHAIN, 1e18, 2500, a);
+    }
+
+    function test_open_rejects_zero_chaintag() public {
+        PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("z2"));
+        vm.prank(user);
+        vm.expectRevert(PossessioAutoTarget.ZeroChainTag.selector);
+        desk.openIntent(tokenRef, 0, 1e18, 2500, a);
     }
 
     /*//////////////////////////////////////////////////////////////

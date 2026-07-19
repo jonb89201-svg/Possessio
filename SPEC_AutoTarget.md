@@ -54,6 +54,19 @@ every intent. The target is the only choice.
 
 ## 3. Architecture — the load-bearing decision
 
+**One Base ledger, many chains (a + b, both).** The contract is a single Base
+deployment that records intents whose token is identified by `bytes32 tokenRef`
++ `uint32 chainTag` — a padded EVM address *or* a 32-byte Solana mint. It does
+NOT interpret the chain; the keeper routes on `(tokenRef, chainTag)` to the right
+execution rail:
+- **EVM rail (b):** Base-Account spend permission → DEX (Base, Robinhood Chain).
+  Proven end-to-end (fork test, live Base).
+- **Solana rail (a):** SPL-token delegate/session → Jupiter (pump.fun). Separate
+  build (not Solidity); the delegate security model is its own design pass.
+`chainTag` convention: EVM chains use their chainId (`CHAIN_BASE = 8453`); Solana
+uses the SPL cluster id (`CHAIN_SOLANA = 101`). The desk shows both feeds in one
+list; the user picks any coin and the keeper handles the chain.
+
 **The contract is the paid TRIGGER + DISCIPLINE + FEE layer. It is NOT a
 custody or swap engine.** This is the decision that shapes everything; flagged
 for the Architect explicitly.
@@ -223,9 +236,10 @@ Executed/Cancelled are terminal.
    operator `TOLL_SINK` batched sweep (R1's pattern). Spec builds Option A;
    swappable at deploy.
 4. **Keeper price hardening** (§6.3) — v1 trusts + price-gates; TWAP later.
-5. **Chain scope** — Base first; Robinhood Chain (EVM, memecoin-heavy) as the
-   second target *iff* CreateX is live there; Solana via a sibling program
-   (not this contract).
+5. **Chain scope** — RESOLVED: both (§3). One Base ledger via `bytes32 tokenRef`
+   + `chainTag`; EVM rail ships first (proven), Solana rail (SPL delegate +
+   Jupiter) is the next build. Robinhood Chain joins the EVM rail iff CreateX
+   is live there.
 6. **Multi-target / partial exits** — v1 is single target + single stop, full
    position. Scale-outs (sell half at +25%, ride the rest) are a later version.
 

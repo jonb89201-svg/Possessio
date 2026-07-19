@@ -15,7 +15,8 @@ contract PossessioAutoTargetAdversarialTest is Test {
 
     uint256 internal constant FEE = 20_000;
     address internal keeper;
-    address internal token;
+    uint32 internal constant CHAIN = 8453; // Base (EVM rail)
+    bytes32 internal tokenRef;
     address internal attacker;
 
     uint256 internal userPk = 0xA11CE;
@@ -24,7 +25,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
     function setUp() public {
         user = vm.addr(userPk);
         keeper = makeAddr("keeper");
-        token = makeAddr("pickedToken");
+        tokenRef = bytes32(uint256(uint160(makeAddr("pickedToken"))));
         attacker = makeAddr("attacker");
         usdc = new MockEIP3009USDC();
         heart = new GoodHeart(address(usdc));
@@ -50,7 +51,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
     function _open(uint16 targetBps, bytes32 nonce) internal returns (uint256 id) {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, nonce);
         vm.prank(user);
-        id = desk.openIntent(token, 1e18, targetBps, a);
+        id = desk.openIntent(tokenRef, CHAIN, 1e18, targetBps, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -120,7 +121,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(badDesk), FEE, keccak256("n1"));
         vm.prank(user);
         vm.expectRevert(bytes("Heart down"));
-        badDesk.openIntent(token, 1e18, 2500, a);
+        badDesk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
 
         // Fee unwound: the whole tx reverted, so the EIP-3009 settle rolled back.
         assertEq(usdc.balanceOf(user), balBefore, "user not charged on failed open");
@@ -139,7 +140,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("n1"));
         vm.prank(attacker);
         vm.expectRevert(bytes("FiatTokenV2: invalid signature"));
-        attackerDesk.openIntent(token, 1e18, 2500, a); // to would be attackerDesk, sig was for desk
+        attackerDesk.openIntent(tokenRef, CHAIN, 1e18, 2500, a); // to would be attackerDesk, sig was for desk
     }
 
     function test_nonce_replay_burns() public {
@@ -148,7 +149,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("dup"));
         vm.prank(user);
         vm.expectRevert(bytes("FiatTokenV2: authorization is used or canceled"));
-        desk.openIntent(token, 1e18, 2500, a);
+        desk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
     }
 
     /*//////////////////////////////////////////////////////////////
