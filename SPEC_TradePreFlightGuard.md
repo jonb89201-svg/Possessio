@@ -1,175 +1,259 @@
 # SPEC — Trade Pre-Flight Guard (PFG) for the AI trader
 
-**Type:** Build spec (draft → **cold-seat (Grok) review** → Architect ratify →
-build → adversary + fork/sim test)
-**Date:** 2026-07-20 · **Seat:** Code Integrity (repo council seat)
-**Status:** DRAFT FOR REVIEW — do NOT build until the cold seat has read it.
+**Type:** Build spec (invented primitive) → **FULL COUNCIL review** → Architect
+ratify → build → adversary + forward-ledger proof
+**Date:** 2026-07-20 (v2 — reframed) · **Seat:** Code Integrity (repo council seat)
+**Status:** DRAFT FOR FULL-COUNCIL REVIEW. This is an *invented primitive*, so
+it goes through the whole council, not a single cold seat, before any build.
 Referenced dependency of `SPEC_FundingVault.md` (§6a) and `SPEC_AutoTarget.md`.
 
 ---
 
 ## 0. Provenance (so the record is honest)
 
-This is **not** a Grok recommendation — Grok's x402Core audit was clean and
-scoped to x402Core, and he has no priors on the trader. The call to apply a
-pre-flight guard to *trading* came from a **different council seat (Gemini)**.
-It stands on four independent legs:
-1. **The Gemini seat — two independent instances converged.** The *warm* seat
-   (which **authored `sal_pfg` itself**, leg 4) flagged that the same pre-flight
-   discipline SAV runs before a hook deploy belongs before every trade buy/sell.
-   Separately, a **cold Gemini seat with no priors** on this repo reached the
-   same conclusion unprompted. That matters: the recommendation is not just the
-   original designer attached to their own instrument — a blind seat converged
-   on it too. (What neither validated is the load-bearing KDA question below;
-   that is still open for the cold seat to attack.)
-2. **The forward strat verdict** (n=50, avg −10%, rug 40%, worst −82%): the
-   losses are *post-entry rugs and gapping fills* the entry gate never saw. The
-   verdict's own remedy: *"a post-entry rug re-check to cut the −82% tails
-   without clipping the +75% runners."*
-3. **The Architect's read** — apply the same idea before every buy/sell.
-4. **`sal_pfg` precedent** — the SAV Pre-Flight Guard (`script/sal_pfg`,
-   README §PFG): five sequenced gates that already protect the council's own
-   allocation from executing into manipulated/hollow pool state.
-
-The PFG generalizes that proven instrument from "before hook deploy" to "before
-every trade."
+- **The primitive originates with the Gemini seat**, which authored the SAV
+  Pre-Flight Guard (`sal_pfg`) and proposed generalizing it to trading. Two
+  Gemini instances (warm author + a cold no-priors seat) converged on doing it.
+- **The Gemini cold-seat review was run and folded in.** It correctly proved the
+  KDA dust-swap gate is *empty* on a pump.fun constant-product bonding curve (a
+  dust quote is a pure function of virtual reserves — identical for a +98%
+  runner and an −82% rug at the same curve progression). That finding is
+  accepted. Its proposed replacement gates (holder-concentration, velocity) are
+  **downgraded to provisional filter-checks**, not vetoes — see §5.
+- **The scope was reframed in council discussion (Architect + this seat).** The
+  first draft mis-modeled ours as a near-copy of SAV's PFG that *vetoes the buy*.
+  That is wrong for a latency-critical trader (§1). This v2 is the corrected
+  scope.
+- Because it is an **invented primitive**, it takes the full-council path — the
+  same discipline the deployed primitives (`PossessioPayments`, the feeSink
+  brick-guard) went through — before it earns an immutable place.
 
 ---
 
-## 1. Goal
+## 1. What changed from the first draft (recorded, not buried)
 
-Cut the −82% tail without clipping the +75% runners, by refusing to *buy into*
-(and honestly recording *selling into*) hollow or manipulated liquidity. Every
-trade carries a **gate-result attestation** rendered on the transactions page —
-so *"did the keeper fire on the right tick, and was the fill honest"* is
-something you can look at, not trust.
+The v1 draft treated ours as SAV's PFG ported onto the trader: five pool-state
+gates that **veto the buy**. Council discussion killed that framing on two hard
+facts:
+
+1. **Latency is the product.** The trades are AI-assisted *because speed makes
+   money and delay loses it on timing*. When the human presses the 10% / 25% /
+   50% upside button, the fill must be fast. **Nothing may sit between the button
+   and the fill.** A buy-time veto is therefore disqualified by construction.
+2. **No point-in-time gate discriminates at slot T.** KDA is empty on the curve
+   (proven); holder-concentration is ~100% for *every* fresh token because only
+   a handful of buyers exist yet. Runners and rugs are statistically identical at
+   entry, so a synchronous "is-this-safe" gate cannot be both fast and truthful.
+
+The reframe: the PFG is **not a gate on the trade**. It is a **fast
+certification applied at the *filter* stage**, and its real product is
+**transaction data** — a receipt you can look at and, eventually, a certified
+subset you can measure.
 
 ---
 
-## 2. The gates (sal_pfg's five, adapted to a memecoin trade)
+## 2. What the PFG IS and IS NOT
 
-Read keeper-side against **live pool state** at the trade block/slot. Critical
-gates **fail closed**; soft gates **warn + accumulate**.
+**IS:**
+- A set of **fast checks run at the candidate-filter stage** (where the radar
+  qualifies coins the human later picks from). Fast because there the clock is
+  browse-speed, not slot-speed.
+- A **certification flag** on the candidate pipeline — the "middle section" of
+  coins that *actually ran through a PFG*, marked distinctly from those that
+  didn't.
+- A **transaction-data capture layer** — every trade records the coin's PFG
+  status + the check snapshot, rendered on the transactions page.
+- A **different kind of certification than SAV's**: SAV's PFG asserts *safety*
+  (pass ⇒ protected). Ours asserts *provenance* (pass ⇒ "cleared our fast
+  filter"). Its worth is **measured, not claimed**.
 
-| gate | reads | BUY action | why |
+**IS NOT:**
+- **Not a buy-time veto.** It never blocks or delays the 10/25/50 execution.
+- **Not in the execution path.** Zero added latency between button and fill.
+- **Not a safety guarantee.** Until the forward ledger proves it, the badge
+  means nothing (§8).
+- **Not the council-vote PFG.** That is a separate, long-horizon mode (§9).
+
+---
+
+## 3. Scope difference from SAV (what our PFG must visibly reflect)
+
+| axis | SAV's PFG | our trader PFG |
+|---|---|---|
+| guarded action | one rare, deliberate, high-value deploy | many high-frequency, low-value buys/sells |
+| adversary | measurable pool manipulation | bundle rug + post-entry dump — no numeric tell at T |
+| where the tell lives | in readable pool numbers | not present at entry; only provable in hindsight |
+| posture | **veto** (fail-closed on a deliberate act) | **certify + record** (never blocks the fast act) |
+| KDA | load-bearing gate | demoted: EVM-only filter-check; empty on Solana curve |
+| meaning of a PASS | safety, asserted | provenance, provisional until measured |
+
+---
+
+## 4. Where it runs — the filter, never the execution path
+
+```
+  radar ingests births ─▶ candidate qualification ─▶ [PFG fast checks] ─▶ certified?
+                                                              │
+                                          shortlist the human browses (certified flagged)
+                                                              │
+                    human presses 10/25/50 ─▶ TRADE FIRES FAST ─▶ record PFG status as tx data
+                                                              │
+                              always-on: hard −10% stop + FundingVault caps (§7)
+```
+
+- PFG runs **upstream** of the human's choice, as an enrichment on the
+  `candidates` pipeline. It has a latency budget (browse cadence), not a slot
+  budget.
+- At **fire-time**, the trade does not call the PFG. It *reads* the already-
+  computed certification and **records it** with the trade. Recording is not
+  gating.
+
+---
+
+## 5. The fast checks (candidates — latency-flagged, all provisional)
+
+Run at filter cadence. Each is a *candidate* check; which ones earn a place is
+decided by the §8 forward test, not asserted here.
+
+| check | reads | fits filter clock? | note |
 |---|---|---|---|
-| **Heartbeat** | guard-logic integrity (ratified hash) | veto on drift | the guard can't be silently swapped |
-| **Sequencer** | chain liveness — Base block time / Solana slot time | warn; veto on severe congestion | congested chain → bad fills |
-| **Liquidity Integrity (JIT)** | reserves now + Δ over N blocks/slots | **veto** if below floor or collapsing | a rug draining *in progress* |
-| **Kinetic Depth Anchor (KDA)** | simulate a **dust swap** (quote) and read actual out | **veto** on zero/hollow out | THE memecoin gate — hollow/fake liquidity reveals itself regardless of tick concentration |
-| **Price Discovery** | price now vs N-ago; cross-ref a reference if one exists | **veto** on extreme spike | don't buy the top of a manipulation |
+| **Chain / sequencer live** | Base block time / Solana slot time | ✅ fast | trivially cheap |
+| **Token real / curve intact** | mint exists, curve not already collapsed | ✅ fast | rejects dead-on-arrival |
+| **Deployer reputation** | indexed lookup vs known-rugger table the radar builds over time | ✅ fast (precomputed) | cold-start weak; grows with data |
+| **Holder count / growth pattern** | from the feed we already ingest | ✅ fast | pattern over time, not a snapshot |
+| **KDA dust-quote** | EVM Quoter staticcall | ✅ on EVM only | **empty on Solana pre-DEX curve — excluded there (Gemini finding)** |
+| **Holder-concentration** | top-N vs circulating (curve-adjusted) | ⚠ flagged | ~100% at birth for all tokens → near-non-discriminating early; provisional |
+| **Curve-progression velocity** | ΔR over N slots | ⚠ flagged (WARN-only) | catches a lone whale, not a multi-wallet bundle; color, not filter |
+| **Bundle / funding-graph forensics** | common funding source across top wallets | ⚠ likely too many RPC calls for filter cadence | if so → slower *background* enrichment, not a fast check |
 
-**KDA is the load-bearing gate.** The −82% fills come from *apparent* liquidity
-that isn't real; a tiny simulated swap that returns ~nothing is the tell no
-market-cap number shows.
-
----
-
-## 3. BUY vs SELL — different postures
-
-- **BEFORE A BUY → VETO (fail-closed).** Any critical gate veto ⇒ the keeper
-  does **not** call `FundingVault.drawForTrade`; the position never opens. Honest
-  refusal, like `PoolEmpty()` — never a degraded path. This is the buy
-  pre-flight the FundingVault (§6a) and the metered-feed council statement
-  require.
-- **BEFORE A SELL → ATTEST (mostly).** A **stop always exits** — you want out of
-  a rug even into bad liquidity; the PFG's job here is to *record why the fill
-  was what it was* (attestation), not to trap you in. **Veto only** the narrow
-  case of a **target-sell into a manipulated spike** (don't hand your +50% to a
-  wash-trade that evaporates on your sell).
+**Honest note carried from council:** the checks that plausibly *discriminate*
+(bundle forensics, deployer reputation) are the slow/cold-start ones; the fast
+ones (curve/chain sanity) mostly reject the obviously-dead. Whether any of this
+separates runners from rugs is the §8 empirical question — not a claim of this
+spec.
 
 ---
 
-## 4. The attestation (the receipt surface)
+## 6. The certification + transaction-data capture (the real product)
 
-A compact, per-gate result the keeper produces and records with the trade:
-
-```
-PFG {
-  side: BUY | SELL_TARGET | SELL_STOP,
-  verdict: PASS | WARN | VETO,
-  gates: { heartbeat, sequencer, jit, kda, price } → each PASS|WARN|VETO,
-  kda_quote: dust-in / actual-out,
-  depth_usd, price, blockOrSlot, ts
-}
-```
-
-- **On BUY:** the PASS attestation's hash is passed into
-  `FundingVault.drawForTrade(intentId, amount, pfgHash)` and recorded with the
-  trade. No PASS → no draw.
-- **On SELL:** the exit attestation is recorded at the desk's `markExecuted`
-  (and/or the vault's `returnProceeds`).
-- **On the transactions page:** each trade row shows `PFG buy ✓ 5/5` or
-  `⚠ KDA veto — hollow`, and the exit-side depth/price — the honesty product.
+- **Certification flag** on the candidate row: `pfg_certified ∈ {0,1}` plus a
+  compact check-result snapshot. This is the "middle section."
+- **At trade time**, the desk / vault records the coin's PFG status and snapshot
+  with the trade (recorded, never gating).
+- **On-chain footprint (Gemini's sound call, accepted):** hash-only. A single
+  `bytes32 pfgRef` recorded with the trade; the rich per-check breakdown lives in
+  an off-chain indexer event rendered on the transactions page via the existing
+  Cloudflare/D1 edge stack. The hash must commit to the *full* snapshot, or the
+  "auditable" claim is hollow.
+- **Transactions page:** each row shows the coin's PFG status and the captured
+  check snapshot — the honesty product. Certified and uncertified trades sit side
+  by side so the difference is *visible*, which is also what makes §8 measurable.
 
 ---
 
-## 5. Where it runs, per chain
+## 7. The always-on structural disciplines (NOT the PFG — the real damage-bound)
 
-Keeper-side (it needs live pool reads); the *attestation* is what touches chain.
+The PFG shifts odds at best. What actually bounds a loss is structural and
+latency-free:
 
-- **EVM (Base / Robinhood):** V4 QuoterV2 staticcall (KDA), StateView (reserves,
-  sqrtPrice), block time (sequencer). Exactly `sal_pfg`'s instruments.
-- **Solana pre-DEX (pump.fun):** the bonding-curve **virtual reserves** (from the
-  PumpPortal per-trade feed / birth JSON) give JIT + KDA (a curve quote is a
-  pure function of reserves); slot time for sequencer. **This is the live edge —
-  the Solana adapter is on the critical path.**
-- **Solana post-DEX / EVM price cross-ref:** DexPaprika (post-DEX, free) for the
-  price-discovery gate where a reference exists.
+- **Hard −10% stop, always on** (mechanical keeper exit — `SPEC_AutoTarget`).
+- **FundingVault caps** (MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP —
+  `SPEC_FundingVault`). A rug that slips every check is still bounded to a
+  capped fraction of the closed-loop vault.
 
----
-
-## 6. Honest caveats (named, not buried)
-
-1. **PFG reduces the tail; it does not repeal gapping physics.** It stops you
-   *buying* a hollow pool and *explains* a bad *stop* fill. But if liquidity
-   vanishes in the slot *between* the gate and the fill, the stop still gaps.
-   Expect the −82% worst case to *shrink and rarefy*, not disappear. Measure it
-   on the forward ledger before claiming otherwise.
-2. **Point-in-time reads.** A gate passes at block/slot T; a rug can land at
-   T+1. PFG lowers probability, not to zero.
-3. **Keeper-trust boundary.** The gate *logic* runs off-chain; a malicious keeper
-   could fabricate a PASS. Mitigations: (a) the attestation is **public and
-   auditable** — a faked PASS that preceded an −82% fill is visible on the
-   transactions page; (b) the **FundingVault caps** bound the damage regardless;
-   (c) a future trustless version moves KDA/price on-chain (a real `sal_pfg`-
-   style view called atomically in the same tx as the swap). v1 is
-   attest-and-cap; full on-chain PFG is a hardening track, flagged.
+Naming these here is deliberate: SAV's PFG didn't need a structural backstop for
+one deliberate act; ours *accepts* that memecoins gap and puts the load on the
+cap. The PFG is the odds-shifter; the cap is the bound.
 
 ---
 
-## 7. Open decisions (cold seat + Architect — not guessed here)
+## 8. Provisional until proven — the forward-ledger proof (existing machinery)
 
-1. **Thresholds:** JIT liquidity floor + collapse-Δ %, KDA min-out ratio,
-   price-drift veto %, sequencer congestion bound. **Calibrate from the forward
-   ledger** (which −82% trades would a given KDA threshold have vetoed, and how
-   many +75% runners would it have clipped? — the whole point is to cut tails
-   without clipping runners).
-2. **Veto vs warn per gate** — which are fail-closed on BUY.
-3. **Attestation on-chain schema** — hash-only vs structured; storage vs
-   event-only (cost vs queryability for the transactions page).
-4. **v1 attest-and-cap vs on-chain trustless PFG** — start attest; flag the
-   trustless track.
-5. **Per-chain adapters** — EVM Quoter/StateView, Solana curve-reserves. Solana
-   first (the edge).
+This is the gate that makes the badge mean something, and **we already run this
+loop.** `strat_take=1` is a filter; the standing forward query
+(`candidates WHERE strat_take=1 AND outcome!='live'`) is its test — it is *why*
+we know the current strat is net-negative (n=77, avg −8%, rug 39%, no edge). PFG
+certification is **one more flag through the same machine.**
 
----
+**The proof metric — the only one that counts:** compare the **geometric
+(compounded) growth of the PFG-certified subset vs. the uncertified subset, net
+of per-tx fees, with the winners fully counted.** NOT "did rug rate drop" — that
+is the seductive, misleading number. In a fat-right-tailed distribution the mean
+is carried by rare runners; a filter can cut the rug rate *and* clip the runners
+and end up **less** profitable. A safety filter earns its place only if it is
+**loser-selective** (kills losers at a higher rate than winners), and that is an
+empirical property of *this* filter on *our* data, provable only by running it.
 
-## 8. Definition of Done (what this authorizes, once ratified)
-
-- The keeper-side gate module (per-chain adapters) + the attestation schema.
-- `FundingVault.drawForTrade` accepts + records the PFG hash; a missing/failed
-  PASS blocks the draw (adversarial-tested).
-- The desk records the exit attestation at `markExecuted`.
-- The transactions page renders per-trade PFG results.
-- **Calibration proof:** a backtest over the forward ledger showing the chosen
-  thresholds cut the tail (fewer/less-deep sub-−50% trades) **without** clipping
-  the runners — the numeric case the strat verdict demanded.
+Concretely, once `pfg_certified` accrues samples, the proof is the standing
+forward query with one added clause / GROUP BY — certified vs uncertified,
+compounded PnL, fees in, winners in.
 
 ---
 
-*Draft for the cold seat. The load-bearing claim to attack: does the KDA
-dust-swap gate actually separate the −82% traps from the +75% runners on real
-pre-DEX pump.fun state, or is bonding-curve liquidity too shallow-by-design for
-the gate to discriminate? That question — not the plumbing — is what decides if
-this earns its place.*
+## 9. The council-vote PFG — a separate, long-horizon mode (pointer only)
+
+A full **council vote** on a rich evidence packet is *not* in scope for the fast
+trader — there is no time for model round-trips inside a snipe. The council PFG
+belongs to a **different product**: a deliberate, longer-term conviction
+position in a coin, where latency is irrelevant and deep multi-seat judgment is
+worth its cost. That is its own spec when we start taking such positions. Flagged
+here so it isn't conflated with the fast filter certification; not built here.
+
+---
+
+## 10. Honest caveats (named, not buried)
+
+1. **Certification ≠ safety, until §8 clears it.** Shipping a "certified" mark
+   that reads as safety before the ledger backs it is the trap this spec exists
+   to avoid. Instrument first, prove second, claim third.
+2. **The fast checks may not discriminate at all.** It is entirely possible the
+   forward test returns "certified ≈ uncertified." That is a *success* of the
+   method (cheap, honest disproof), and the badge simply retires.
+3. **Point-in-time reads.** A check passes at filter time; a rug lands later. The
+   cap, not the check, is the bound.
+4. **Off-chain trust.** The rich attestation is only as honest as the indexer;
+   the on-chain hash must commit to the full snapshot to keep it auditable.
+5. **Evasion is an arms race.** Concentration / bundle heuristics raise a
+   bundler's cost; they don't close the vector. Specced as cost-raising.
+
+---
+
+## 11. Open decisions (FULL COUNCIL + Architect — not guessed here)
+
+1. **Which candidate checks (§5) enter v1** — start with the fast/cheap set;
+   let §8 promote or retire each. Solana pre-DEX explicitly *excludes* KDA.
+2. **Certification rule** — all-fast-checks-pass, or a weighted score? (Score is
+   more tunable but harder to attest cleanly.)
+3. **Attestation schema** — accepted: hash-only on-chain + off-chain event; hash
+   commits to full snapshot. Confirm storage vs event-only.
+4. **v1 posture** — accepted: attest-and-record (never gate the fast trade);
+   on-chain-trustless PFG stays a flagged hardening track.
+5. **Data-pipeline scope** — deployer-reputation table + bundle forensics are
+   their own radar-side build; confirm whether v1 ships with them or with only
+   the curve/chain-sanity checks and adds forensics once the pipeline exists.
+
+---
+
+## 12. Definition of Done (what full-council ratification authorizes)
+
+- `pfg_certified` + check-snapshot on the candidate pipeline (filter-stage,
+  latency-budgeted — proven not to touch the execution path).
+- The desk/vault **records** the PFG status + `bytes32 pfgRef` with each trade;
+  **recording never blocks or delays the fill** (adversarial-tested: a failing
+  or absent cert must not slow the buy).
+- The transactions page renders per-trade PFG status + snapshot, certified and
+  uncertified side by side.
+- **Proof-of-meaning:** the forward-ledger comparison of §8 — compounded PnL,
+  net of fees, winners counted, certified vs uncertified — showing the
+  certification is loser-selective **before** the badge is allowed to imply
+  anything. If it isn't, the badge retires; that is a valid outcome.
+
+---
+
+*For the full council. The load-bearing question is no longer "does a gate
+discriminate" — we've accepted no synchronous gate does. It's this: **given that
+the execution path must stay untouched and fast, can a cheap filter-stage
+certification prove itself loser-selective on the forward ledger — or does the
+honest answer end at "the cap is the only real protection, and the PFG is just an
+honest receipt"?** Either answer is worth having, and the method is cheap enough
+to find out.*
