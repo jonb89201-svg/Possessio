@@ -100,7 +100,11 @@ contract PossessioFactoryForkTest is Test {
             vm.createSelectFork(rpc);
         } catch {}
         forked = (block.chainid == 8453);
-        if (!forked) return;
+        // FIX B (council, False-Green): skip, don't vacuously pass, when no RPC.
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
 
         // 1. Deploy the REAL Payments treasury (validates live mainnet venues).
         PossessioPayments.DeployParams memory pp = PossessioPayments.DeployParams({
