@@ -119,9 +119,16 @@ This is V3's launch page, not a universal form. Each template ships its own mani
    - The `Proposal` struct (`:599-604`) stores **only** `approvals`, `expiry`, `executed`, `hasApproved`. It does **not** store `amount`, a recipient, or the preimage.
    - `executeInvent(uint256 amount, bytes32 proposalHash, bytes metadata)` (`:2011`) looks the hash up, checks `expiry`/`executed`/`approvals >= INVENT_THRESHOLD`, then deducts `amount / 4` from each seat and transfers to `TREASURY_SAFE`. **There is no check that `proposalHash == keccak256(amount, metadata, …)`, and no `amount` stored at propose-time to compare against.**
    - **Consequence:** the council approves an opaque `bytes32`; the Architect executes with **any** `amount` (bounded only by available claimable) and **any** `metadata`. The contract never verifies the executed amount is the approved one. What the council actually approved is **unverifiable by anyone** — including the seats — because the preimage is never on-chain.
-   - This is not a fund-drain (money still routes to `TREASURY_SAFE`, `onlyTreasury`), so §3's safety floor holds. It is a **record-integrity** gap: the Architect's signature does not, on-chain, prove it matches the council's intent.
+   - This is not a fund-drain (money still routes to `TREASURY_SAFE`, `onlyTreasury`), so §3's safety floor holds. **Replay verified BLOCKED** in the same read: `executeInvent` reverts `ProposalAlreadyExecuted` if `p.executed` (`:2023`) and sets `p.executed = true` (`:2032`) before the deductions/transfer — one approved hash executes exactly once. So this is purely a **record-integrity** gap: the Architect's signature does not, on-chain, prove it matches the council's intent.
 
-   **RECOMMENDED FIX (pre-freeze — the hook is not deployed):** bind the amount to the hash on-chain. Cleanest: require `proposalHash == keccak256(abi.encode(amount, metadata))` in `executeInvent` (and have the connector/console compute the hash that way), OR store `amount` in the `Proposal` at `proposeInvent` and assert equality at execute. Either makes the Architect's signature verify **exactly** what the council approved, and lets anyone recompute the hash from the executed calldata. Build it in the same hook edit as `approveInventBySig` (§4). **Fallback if deferred:** the F4 layer MUST publish the proposal preimage (amount + metadata) alongside every hash, so the hash is at least off-chain-checkable — weaker, and reliant on the Architect's honesty, which the Treasury gate already assumes.
+   **RECOMMENDED FIX — it is AND, not OR (both halves, they fix different things):**
+
+   1. **On-chain binding fixes *execution* integrity** — the Architect cannot execute an amount the hash didn't commit to. Pre-freeze (hook not deployed): require in `executeInvent` that
+      `proposalHash == keccak256(abi.encode(address(this), amount, metadata))`
+      — **`abi.encode`, not `encodePacked`** (packed is safe today with a fixed-width leading field but becomes collision-prone the moment a field is added; the hash is the authorization, make it future-safe), and **include the hook address** so the hash is self-describing about which deployment it authorizes (not a live replay risk — approvals are per-contract storage — but it makes the published record auditable cold). Alternatively store `amount` in the `Proposal` at `proposeInvent` and assert equality at execute. Build it in the same hook edit as `approveInventBySig` (§4).
+   2. **Preimage publication fixes *approval* integrity** — a seat approving `0xabc…` still has no idea it means "500 tokens for X" unless the preimage `(hookAddr, amount, metadata)` is published. The F4 layer MUST publish it alongside every hash.
+
+   Neither alone is enough: publication without binding is theater (nothing forces execution to match the published preimage); binding without publication leaves seats approving an opaque hash. **The binding is what makes the published preimage load-bearing** — with both, anyone recomputes `keccak256(abi.encode(hookAddr, amount, metadata))` and checks it against the approved hash and the executed calldata. Build the binding; keep publication in F4.
 
 5. **This does not make the AIs vote well** — only lets them vote at all, safely. Vote quality is the council's problem; this is the plumbing.
 
@@ -141,12 +148,14 @@ This is V3's launch page, not a universal form. Each template ships its own mani
 - Disclosure block (§5a) rendered before signing
 
 **Contract**
-- F3 answered in writing → **DONE (§6.4): UNBOUND.** Ratify the fix: on-chain `keccak256(amount, metadata)` binding built pre-freeze, or explicitly deferred to off-chain preimage publication in F4.
+- F3 answered in writing → **DONE (§6.4): UNBOUND; replay verified blocked.** Ratify the AND fix: (1) on-chain binding `proposalHash == keccak256(abi.encode(address(this), amount, metadata))` built pre-freeze, AND (2) preimage `(hookAddr, amount, metadata)` published per-hash in F4. Neither alone suffices.
 - `approveInventBySig` built, or explicitly deferred with the funding step retained
 
 **Adversarial**
 - A non-council address cannot propose or approve
 - A seat cannot approve twice
+- Replay: a proposal executes at most once (`p.executed` guard `:2023` + set `:2032`) — **verified present**; keep a regression test that a second `executeInvent` on the same hash reverts `ProposalAlreadyExecuted`
+- Post-binding: `executeInvent` with an `amount`/`metadata` whose `keccak256(abi.encode(address(this), amount, metadata))` ≠ the approved `proposalHash` reverts
 - **F5 (VERIFIED, Code Integrity 2026-07-20):** a rogue seat **cannot** reset an *active* proposal — `proposeInvent` reverts `ProposalStillActive` while `expiry` is in the future and `executed` is false (`:1973`). The only reset window is post-`INVENT_EXPIRY` (30 days). **Test to keep:** assert re-proposing an active hash reverts `ProposalStillActive`; document the 30-day post-expiry reset as a liveness note (execute approved proposals well within the window), not an exploitable block.
 
 **The proof**
