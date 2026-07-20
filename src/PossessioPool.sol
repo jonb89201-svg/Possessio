@@ -250,6 +250,17 @@ contract PossessioPool is ReentrancyGuard {
     ///         Each inflow bumps the velocity window: the floor tracks
     ///         real infrastructure-funding throughput (the analog of
     ///         x402's per-settlement bump).
+    /// @notice Positive interface marker for the infra-sink door. A funding
+    ///         source (factory / AutoTarget) staticcalls this in its constructor
+    ///         to prove `feeSink` actually implements `receiveInfraFunds` before
+    ///         it freezes the immutable — a `code.length` check alone is
+    ///         insufficient (a real-but-wrong contract, e.g. PossessioPayments,
+    ///         has code but not this door, and would brick the source forever).
+    ///         Council-verified brick vector; see SPEC_Factory_FeeSink_A.md.
+    function isInfraSink() external pure returns (bool) {
+        return true;
+    }
+
     /// @param amount USDC infrastructure funds to pull in. Caller must
     ///        have approved this pool for at least `amount`.
     function receiveInfraFunds(uint256 amount) external nonReentrant {

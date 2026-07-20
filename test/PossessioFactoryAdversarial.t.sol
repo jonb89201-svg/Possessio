@@ -41,6 +41,7 @@ contract MockPool {
     MockUSDC internal immutable usdc;
     uint256 public received;
     constructor(MockUSDC u) { usdc = u; }
+    function isInfraSink() external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
@@ -317,5 +318,27 @@ contract PossessioFactoryAdversarialTest is Test {
 
         vm.expectRevert(PossessioFactory.EmptyTemplateCodehash.selector);
         new PossessioFactory(FEE, keccak256(""), address(p), address(usdc), sink);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        BRICK GUARD — the test that would have caught the live revert.
+        A feeSink that does not implement receiveInfraFunds bricks every
+        deployTemplate forever at the permanent anchor. Construction must
+        reject it. code.length alone is insufficient — the demonstrated
+        brick (PossessioPayments) HAS code, so we assert both an EOA and a
+        real-but-wrong contract are rejected.
+    //////////////////////////////////////////////////////////////*/
+
+    function test_constructor_rejects_feeSink_wrongContract() public {
+        PossessioSaltPool p = new PossessioSaltPool(address(0xF), keeper, OPERATOR, TREASURY, FEESRC);
+        bytes32 codehash = keccak256(type(HonestTemplate).creationCode);
+
+        // (a) real contract WITHOUT the door (usdc mock) — the exact class that bricked live.
+        vm.expectRevert(PossessioFactory.FeeSinkInterfaceMismatch.selector);
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), address(usdc));
+
+        // (b) an EOA / undeployed address — no code, staticcall throws.
+        vm.expectRevert(PossessioFactory.FeeSinkInterfaceMismatch.selector);
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), makeAddr("eoaFeeSink"));
     }
 }

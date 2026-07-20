@@ -61,6 +61,7 @@ contract MockPool {
     MockUSDC internal immutable usdc;
     uint256 public received;
     constructor(MockUSDC u) { usdc = u; }
+    function isInfraSink() external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;

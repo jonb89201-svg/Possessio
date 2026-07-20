@@ -74,6 +74,7 @@ interface IERC3009 {
 ///         strand it (the pool has no sync door, Pool DoD #14).
 interface IPossessioPool {
     function receiveInfraFunds(uint256 amount) external;
+    function isInfraSink() external view returns (bool);
 }
 
 contract PossessioAutoTarget is ReentrancyGuard {
@@ -85,6 +86,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
 
     error ZeroAddress();
     error ZeroFee();
+    error FeeSinkInterfaceMismatch();
     error ZeroTokenRef();
     error ZeroChainTag();
     error ZeroEntryPrice();
@@ -218,6 +220,19 @@ contract PossessioAutoTarget is ReentrancyGuard {
             revert ZeroAddress();
         }
         if (_perTxFee == 0) revert ZeroFee();
+
+        // BRICK GUARD (council, same vector as PossessioFactory): feeSink must be
+        // a live contract that implements the accounted door, else every
+        // openIntent reverts forever. A code-length check is insufficient (a
+        // real-but-wrong contract has code but not the door). The pool must be
+        // live before this desk deploys. code-length pre-check handles the EOA
+        // case (no-code call reverts on return-decode outside try/catch).
+        if (_feeSink.code.length == 0) revert FeeSinkInterfaceMismatch();
+        try IPossessioPool(_feeSink).isInfraSink() returns (bool ok) {
+            if (!ok) revert FeeSinkInterfaceMismatch();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
+        }
 
         payToken = IERC3009(_payToken);
         payTokenERC20 = IERC20(_payToken);

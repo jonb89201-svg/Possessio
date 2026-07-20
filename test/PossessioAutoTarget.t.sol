@@ -250,6 +250,8 @@ contract MockHeart {
         usdc = MockEIP3009USDC(_usdc);
     }
 
+    function isInfraSink() external pure returns (bool) { return true; }
+
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;

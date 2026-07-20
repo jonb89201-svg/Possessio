@@ -74,6 +74,7 @@ interface ICreateX {
 ///         it — the pool has no sync door (SPEC_Factory_FeeSink_A.md, DoD #14).
 interface IPossessioPool {
     function receiveInfraFunds(uint256 amount) external;
+    function isInfraSink() external view returns (bool);
 }
 
 contract PossessioFactory is ReentrancyGuard {
@@ -90,6 +91,7 @@ contract PossessioFactory is ReentrancyGuard {
     error OwnerIsFactory();
     error TemplateCodehashMismatch(bytes32 got, bytes32 expected);
     error DeployFailed();
+    error FeeSinkInterfaceMismatch();
 
     /*//////////////////////////////////////////////////////////////
                         FEE AUTHORIZATION (EIP-3009)
@@ -160,6 +162,26 @@ contract PossessioFactory is ReentrancyGuard {
         if (_templateCodehash == EMPTY_CODEHASH) revert EmptyTemplateCodehash();
         if (_saltPool == address(0) || _payToken == address(0) || _feeSink == address(0)) {
             revert ZeroAddress();
+        }
+
+        // BRICK GUARD (council, verified live): feeSink must be a LIVE contract
+        // that implements the accounted door (receiveInfraFunds). A zero/code
+        // check alone is insufficient — the demonstrated brick was feeSink =
+        // PossessioPayments (real code, no door), which deploys clean, passes
+        // the extcodehash gate, then reverts EVERY deployTemplate forever at the
+        // permanent anchor. The marker staticcall catches EOA (no code -> throws),
+        // wrong-contract (no selector -> throws), and an explicit `false`.
+        // NOTE: this makes feeSink a deploy-order dependency — the pool must be
+        // live before the factory (RUNBOOK_CONSTELLATION.md §2, revised order).
+        // The code-length pre-check catches the EOA/undeployed case explicitly
+        // (a high-level call to a no-code address reverts on return-decode
+        // OUTSIDE try/catch); the try/catch then catches has-code-but-wrong and
+        // an explicit `false`.
+        if (_feeSink.code.length == 0) revert FeeSinkInterfaceMismatch();
+        try IPossessioPool(_feeSink).isInfraSink() returns (bool ok) {
+            if (!ok) revert FeeSinkInterfaceMismatch();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
         }
 
         DEPLOYMENT_FEE = _deploymentFee;

@@ -64,12 +64,15 @@ contract DeployPoolCreate3 is Script {
         bytes32 gs = keccak256(abi.encodePacked(bytes32(uint256(uint160(ANCHOR_EOA))), SALT));
         if (CREATEX.computeCreate3Address(gs) != PREDICTED) revert PredictionMismatch(CREATEX.computeCreate3Address(gs), PREDICTED);
 
-        // VERIFY-BEFORE-WIRE: both immutable sources must already be live code.
-        if (FACTORY.code.length == 0) revert SourceNotDeployed(FACTORY);
+        // REVISED ORDER (council brick-guard, FIX A): the pool now deploys BEFORE
+        // the factory (the factory's constructor verifies feeSink=this-pool is a
+        // live infra-sink). So the FACTORY is NOT yet live here — bake it as its
+        // PREDICTED CREATE3 address (a source is only read at runtime). Only
+        // x402Core, which deploys before the pool, is liveness-verified.
         if (X402CORE.code.length == 0) revert SourceNotDeployed(X402CORE);
 
         address[] memory sources = new address[](2);
-        sources[0] = FACTORY;
+        sources[0] = FACTORY; // predicted CREATE3 addr; factory deploys next
         sources[1] = X402CORE;
 
         // Constructor: (_payToken, _authorizedSources, _operatorDestination,

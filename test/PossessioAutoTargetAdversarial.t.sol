@@ -260,6 +260,18 @@ contract PossessioAutoTargetAdversarialTest is Test {
         vm.expectRevert(PossessioAutoTarget.ZeroFee.selector);
         new PossessioAutoTarget(address(usdc), address(heart), keeper, 0);
     }
+
+    // BRICK GUARD — same vector as the factory. A feeSink that does not
+    // implement receiveInfraFunds would revert every openIntent forever.
+    // Construction must reject both an EOA and a real-but-wrong contract.
+    function test_constructor_rejects_feeSink_wrongContract() public {
+        // real contract without the door (usdc mock) — has code, no marker.
+        vm.expectRevert(PossessioAutoTarget.FeeSinkInterfaceMismatch.selector);
+        new PossessioAutoTarget(address(usdc), address(usdc), keeper, FEE);
+        // an EOA — no code, staticcall throws.
+        vm.expectRevert(PossessioAutoTarget.FeeSinkInterfaceMismatch.selector);
+        new PossessioAutoTarget(address(usdc), makeAddr("eoaFeeSink"), keeper, FEE);
+    }
 }
 
 contract GoodHeart {
@@ -270,6 +282,8 @@ contract GoodHeart {
         usdc = MockEIP3009USDC(_usdc);
     }
 
+    function isInfraSink() external pure returns (bool) { return true; }
+
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
@@ -277,6 +291,10 @@ contract GoodHeart {
 }
 
 contract RevertingHeart {
+    // Passes the constructor brick-guard (it IS an infra-sink by interface)...
+    function isInfraSink() external pure returns (bool) { return true; }
+    // ...but reverts at open time, so the fee-route-unwinds test still exercises
+    // the runtime failure path rather than being blocked at construction.
     function receiveInfraFunds(uint256) external pure {
         revert("Heart down");
     }
