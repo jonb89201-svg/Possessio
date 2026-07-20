@@ -137,7 +137,10 @@ spec.
 ## 6. The certification + transaction-data capture (the real product)
 
 - **Certification flag** on the candidate row: `pfg_certified ∈ {0,1}` plus a
-  compact check-result snapshot. This is the "middle section."
+  compact check-result snapshot **and a `pfg_version` tag** (council amendment —
+  check-set versioning). The version pins which check-set produced the flag, so
+  §8 never pools samples from two different check-sets as if they were one.
+  This is the "middle section."
 - **At trade time**, the desk / vault records the coin's PFG status and snapshot
   with the trade (recorded, never gating).
 - **On-chain footprint (Gemini's sound call, accepted):** hash-only. A single
@@ -186,7 +189,29 @@ empirical property of *this* filter on *our* data, provable only by running it.
 
 Concretely, once `pfg_certified` accrues samples, the proof is the standing
 forward query with one added clause / GROUP BY — certified vs uncertified,
-compounded PnL, fees in, winners in.
+compounded PnL, fees in, winners in, **grouped by `pfg_version`**.
+
+**What the filter must prove (sharpened by the radar audit, item 4).** The
+audit's P1-b finding settled that the −82% tail is **rug-driven, not
+exit-latency-driven** — 30 of 31 stops were rug-depth gaps no keeper speed can
+rescue. So the certification's *entire* job is **loser-selectivity on rugs at
+entry**: does the certified subset have a materially lower rug rate *without*
+clipping the runners that carry the compounded return? That is the one number
+that decides it — exit speed cannot.
+
+**Three council amendments, folded in (binding on §8):**
+1. **Blind phase.** The badge is **computed and logged but NOT displayed** to the
+   human until the pre-registered sample threshold is reached. This stops the
+   badge from influencing the human's selection *before* it is proven — which
+   would contaminate the very comparison meant to validate it (the certified
+   subset must not be a self-fulfilling selection).
+2. **Pre-registered stopping rule.** The **minimum-n and the decision margin are
+   declared before data accrues** — written into this spec's DoD, not chosen
+   after peeking. No stopping the moment the number looks good; that is p-hacking
+   the ledger. The rule fires the verdict; we do not.
+3. **Check-set versioning.** `pfg_version` on every snapshot; §8 groups by it.
+   Changing a check retires the old version's samples rather than silently
+   pooling incomparable data. A new check-set starts a new blind phase.
 
 ---
 
@@ -225,12 +250,20 @@ here so it isn't conflated with the fast filter certification; not built here.
 2. **Certification rule** — all-fast-checks-pass, or a weighted score? (Score is
    more tunable but harder to attest cleanly.)
 3. **Attestation schema** — accepted: hash-only on-chain + off-chain event; hash
-   commits to full snapshot. Confirm storage vs event-only.
+   commits to full snapshot, `pfg_version` tag included. Confirm storage vs
+   event-only.
 4. **v1 posture** — accepted: attest-and-record (never gate the fast trade);
    on-chain-trustless PFG stays a flagged hardening track.
 5. **Data-pipeline scope** — deployer-reputation table + bundle forensics are
    their own radar-side build; confirm whether v1 ships with them or with only
    the curve/chain-sanity checks and adds forensics once the pipeline exists.
+6. **The pre-registered stopping rule numbers** — the one genuinely still-open
+   input: declare `min_n` and the decision margin (e.g. rug-rate delta and
+   compounded-PnL delta thresholds) **before** samples accrue. Architect +
+   council set these; this seat does not guess them.
+
+**Accepted and folded (no longer open):** blind phase, pre-registered stopping
+rule (mechanism; numbers per #6), check-set versioning — all in §8.
 
 ---
 
@@ -242,11 +275,18 @@ here so it isn't conflated with the fast filter certification; not built here.
   **recording never blocks or delays the fill** (adversarial-tested: a failing
   or absent cert must not slow the buy).
 - The transactions page renders per-trade PFG status + snapshot, certified and
-  uncertified side by side.
+  uncertified side by side — **only after the blind phase ends** (badge computed
+  + logged, not displayed, until `min_n` is met).
+- Every snapshot carries `pfg_version`; §8 comparisons group by it, and a
+  check-set change starts a fresh blind phase.
 - **Proof-of-meaning:** the forward-ledger comparison of §8 — compounded PnL,
-  net of fees, winners counted, certified vs uncertified — showing the
-  certification is loser-selective **before** the badge is allowed to imply
-  anything. If it isn't, the badge retires; that is a valid outcome.
+  net of fees, winners counted, certified vs uncertified, grouped by version —
+  run against a **pre-registered** `min_n` + margin (§11.6) declared before data
+  accrues, showing the certification is loser-selective (**on rugs, at entry** —
+  the audit item-4 target) **before** the badge is allowed to imply anything. If
+  it isn't, the badge retires; that is a valid outcome.
+- Runs on the **calibrated** radar (council items 2–3 landed: rug gate
+  affirmative-pass, measurement core tested) — a precondition, now met.
 
 ---
 
