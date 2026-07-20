@@ -17,7 +17,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
     FIX #1 - VALVE INTEGRITY NOW STRUCTURAL (the real one). v0.5's
       valve-by-omission was convention-dependent: nothing stopped
       deploymentFeeSource being set == operatorDestination or
-      treasuryDestination at deploy, which would let drawn funds be
+      heartSink at deploy, which would let drawn funds be
       reinjected via receiveDeploymentFee - defeating "ingress
       structurally impossible" for that path. The constructor now
       reverts ValveIntegrityViolation if they collide. The guarantee
@@ -145,6 +145,16 @@ interface IERC3009 {
     ) external;
 }
 
+/// @notice The Heart (PossessioPool) — x402Core's surplus sink. Surplus over
+///         the operating cap is routed here via the accounted door
+///         (receiveInfraFunds), option A, exactly as the factory routes its
+///         deployment fee. isInfraSink() is the brick-guard marker the
+///         constructor verifies (identical to PossessioFactory's IPossessioPool).
+interface IPossessioPool {
+    function receiveInfraFunds(uint256 amount) external;
+    function isInfraSink() external view returns (bool);
+}
+
 contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -162,15 +172,16 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         - Dual-sink immutability: both outbound destinations fixed at
           construction, never updatable. No arbitrary recipient.
         - Valve-by-omission (Problem 1): there is NO function anywhere
-          in this contract that moves funds FROM treasuryDestination or
+          in this contract that moves funds FROM heartSink or
           operatorDestination back into the settlement/trading path.
           Capital movement outward is push-only. Ingress to the trading
           seat is structurally impossible - enforced by ABSENCE, not a
           check. Audit confirmed: grep the contract for any transfer
           whose SOURCE is treasury/operator - there are none.
         - Cap-then-surplus fill (Problem 2, first half): toll accrues to
-          operationalPoolBalance up to OPERATIONAL_CAP; the exact excess
-          is pushed one-way to treasuryDestination in the same tx.
+          operationalPoolBalance up to OPERATIONAL_CAP; the exact excess is
+          routed one-way INTO THE HEART (receiveInfraFunds — feeSink=A, council
+          2026-07-20) in the same tx. The Heart handles its own treasury sweep.
 
       NOT MERGED (the one open seam): settleOperationalCosts - the PAYOUT
       of the pool to cover infra cost. Gemini's last draw-to-balance
@@ -179,9 +190,14 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
       Technical Authority. See the marked stub below.
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Sovereign treasury - absolute one-way outflow destination.
-    ///         Immutable. Nothing in this contract can pull FROM it.
-    address public immutable treasuryDestination;
+    /// @notice The Heart (PossessioPool) — x402Core's surplus sink. Surplus
+    ///         over the cap is routed here via receiveInfraFunds (option A),
+    ///         one-way. Immutable. Nothing in this contract can pull FROM it.
+    ///         The Heart handles its own surplus→treasury sweep downstream, so
+    ///         infra money flows INTO the Heart (feeSink=A philosophy) rather
+    ///         than out to a raw treasury EOA. Verified as a live infra-sink at
+    ///         construction (brick-guard) — same discipline as the factory.
+    address public immutable heartSink;
 
     /// @notice Infrastructure operator (the datacenter/API fundee).
     ///         Immutable. The ONLY address operating-cost payout can reach.
@@ -195,14 +211,22 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     address public immutable deploymentFeeSource;
 
     /// @notice Capped operating reserve. Toll fills this; surplus above it
-    ///         is forced one-way to treasuryDestination. Immutable bound.
+    ///         is routed one-way into the Heart (heartSink). Immutable bound.
     uint256 public immutable OPERATIONAL_CAP;
 
     /// @notice Live accounting of the self-funding pool (infra reserve).
     ///         Denominated in payToken (USDC). NEVER native ETH.
     uint256 public operationalPoolBalance;
 
-    event TreasurySurplusSwept(uint256 amount);
+    /// @notice Surplus over the operating cap routed into the Heart via the
+    ///         accounted door (receiveInfraFunds), replacing the old raw
+    ///         treasury sweep. The Heart credits its poolBalance and manages
+    ///         any onward treasury sweep itself.
+    event HeartSurplusRouted(uint256 amount);
+
+    /// @notice Brick-guard: heartSink is not a live infra-sink (EOA, wrong
+    ///         contract, or isInfraSink()==false). Same guard as the factory.
+    error FeeSinkInterfaceMismatch();
 
     /*//////////////////////////////////////////////////////////////
         VELOCITY-DERIVED FLOOR (Gemini concept, APPROVED - reimplemented)
@@ -314,7 +338,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         bytes32 root,
         uint256 dustFloor,
         address _payToken,
-        address _treasuryDestination,
+        address _heartSink,
         address _operatorDestination,
         address _deploymentFeeSource,
         uint256 _operationalCap,
@@ -325,10 +349,27 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         // Zero-address guards on every load-bearing destination.
         if (
             _payToken == address(0) ||
-            _treasuryDestination == address(0) ||
+            _heartSink == address(0) ||
             _operatorDestination == address(0) ||
             _deploymentFeeSource == address(0)
         ) revert ZeroAddress();
+
+        // BRICK GUARD (council, mirrors PossessioFactory): heartSink must be a
+        // LIVE contract implementing the accounted door (receiveInfraFunds),
+        // marked by isInfraSink(). A code-length pre-check catches the EOA /
+        // undeployed case (a high-level call to a no-code address reverts on
+        // return-decode OUTSIDE try/catch); the try/catch then catches
+        // has-code-but-wrong-contract and an explicit `false`. This makes the
+        // surplus push CRITICAL yet safe — a bricked Heart cannot be wired in.
+        // DEPLOY ORDER: the Heart must be live before x402Core (RUNBOOK: POOL →
+        // x402Core → factory → saltPool). The Pool constructor does not require
+        // its sources live, so Pool-first is sound.
+        if (_heartSink.code.length == 0) revert FeeSinkInterfaceMismatch();
+        try IPossessioPool(_heartSink).isInfraSink() returns (bool ok) {
+            if (!ok) revert FeeSinkInterfaceMismatch();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
+        }
 
         // FIX #1 - VALVE INTEGRITY, ENFORCED STRUCTURALLY (not by deploy discipline).
         // deploymentFeeSource is the ONLY inbound path to the pool. If it could
@@ -338,18 +379,18 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         // no reliance on the deployer wiring it correctly.
         //
         // INTENTIONAL OMISSION (cold-seat re-audit note): we deliberately do
-        // NOT require treasuryDestination != operatorDestination. Both are
+        // NOT require heartSink != operatorDestination. Both are
         // OUTBOUND destinations; collapsing them to one address opens no ingress
         // path and is an allowed deployment shape. The absence of that check is
         // by design, not an oversight - do not add it.
         if (
             _deploymentFeeSource == _operatorDestination ||
-            _deploymentFeeSource == _treasuryDestination
+            _deploymentFeeSource == _heartSink
         ) revert ValveIntegrityViolation();
 
         payToken = IERC3009(_payToken);
         payTokenERC20 = IERC20(_payToken);
-        treasuryDestination = _treasuryDestination;
+        heartSink = _heartSink;
         operatorDestination = _operatorDestination;
         deploymentFeeSource = _deploymentFeeSource;
         OPERATIONAL_CAP = _operationalCap;
@@ -377,7 +418,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
            permissionless submission safe.
         5. receiveWithAuthorization - front-run-closed, USDC lands here.
         6. Split: basePrice -> seller; toll -> operating pool (surplus
-           over cap swept one-way to treasury). Exact. (No tollSink.)
+           over cap routed one-way into the Heart). Exact. (No tollSink.)
         7. _observe - DustSpam fed live; RoundTrip inert by construction.
     //////////////////////////////////////////////////////////////*/
     function settleCall(
@@ -424,16 +465,20 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         uint256 tollValue = value - basePrice;
         payTokenERC20.safeTransfer(seller, basePrice);
 
-        // 6a. Accrue toll into the operating pool; push only the surplus
-        //     above the immutable cap, one-way, to the treasury. There is
-        //     NO path that moves funds the other direction (valve-by-omission).
+        // 6a. Accrue toll into the operating pool; route only the surplus
+        //     above the immutable cap, one-way, INTO THE HEART via the
+        //     accounted door (receiveInfraFunds — feeSink=A). There is NO path
+        //     that moves funds the other direction (valve-by-omission). CEI:
+        //     state committed before the external push; the brick-guard makes
+        //     the critical push safe.
         if (tollValue > 0) {
             uint256 newBalance = operationalPoolBalance + tollValue;
             if (newBalance > OPERATIONAL_CAP) {
                 uint256 surplus = newBalance - OPERATIONAL_CAP;
                 operationalPoolBalance = OPERATIONAL_CAP;      // effects before interaction
-                payTokenERC20.safeTransfer(treasuryDestination, surplus);
-                emit TreasurySurplusSwept(surplus);
+                payTokenERC20.forceApprove(heartSink, surplus);
+                IPossessioPool(heartSink).receiveInfraFunds(surplus);
+                emit HeartSurplusRouted(surplus);
             } else {
                 operationalPoolBalance = newBalance;
             }
@@ -522,7 +567,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     /// @notice Scoped, valve-safe deployment-fee inflow. USDC, pulled from
     ///         the immutable deploymentFeeSource only. NOT a general deposit
     ///         door - any other caller reverts. Funds the pool to capitalize
-    ///         scaling; surplus over the cap pushes one-way to treasury.
+    ///         scaling; surplus over the cap routes one-way into the Heart.
     /// @dev    v0.6 FIX #3 (Sonnet-5 audit): CEI consistency. The inbound pull
     ///         is unavoidable (funds must be received before they can be
     ///         accounted), but the pool-balance EFFECT is now committed before
@@ -547,10 +592,12 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         }
         emit DeploymentFeeReceived(msg.sender, amount);
 
-        // INTERACTION: outbound surplus push AFTER state is committed.
+        // INTERACTION: route surplus INTO THE HEART (receiveInfraFunds — option
+        // A) AFTER state is committed. Brick-guard makes the critical push safe.
         if (surplus > 0) {
-            payTokenERC20.safeTransfer(treasuryDestination, surplus);
-            emit TreasurySurplusSwept(surplus);
+            payTokenERC20.forceApprove(heartSink, surplus);
+            IPossessioPool(heartSink).receiveInfraFunds(surplus);
+            emit HeartSurplusRouted(surplus);
         }
     }
 
@@ -633,14 +680,14 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
   13. POOL FILL: toll accrues to operationalPoolBalance up to
       OPERATIONAL_CAP exactly; balance never exceeds the cap.
   14. ONE-WAY SURPLUS (fuzz): any settlement pushing the pool over the
-      cap sends the EXACT overflow to treasuryDestination, atomically,
-      and never more or less.
+      cap routes the EXACT overflow into the Heart (heartSink) via
+      receiveInfraFunds, atomically, and never more or less.
   15. VALVE-BY-OMISSION (static + fuzz): NO function moves funds whose
-      SOURCE is treasuryDestination or operatorDestination back into
+      SOURCE is heartSink or operatorDestination back into
       settlement/pool. Prove by inspection (absence) AND fuzz an
-      arbitrary caller with infinite treasury allowance cannot raise
+      arbitrary caller with infinite allowance cannot raise
       the pool or seller path. Ingress is structurally impossible.
-  16. IMMUTABLE RECIPIENTS: treasuryDestination and operatorDestination
+  16. IMMUTABLE RECIPIENTS: heartSink and operatorDestination
       cannot be changed post-construction; no setter exists.
 
    --- OPERATING DRAW + VELOCITY FLOOR (v0.5, implemented) ---
@@ -659,17 +706,22 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
   20. DEPLOYMENT-FEE BOUND: receiveDeploymentFee reverts NotDeploymentFeeSource
       for ANY caller except the immutable deploymentFeeSource. It is not a
       general deposit door. USDC pulled via transferFrom; surplus over cap
-      sweeps one-way to treasury.
+      routes one-way into the Heart (receiveInfraFunds).
   21. DRAW ASSET = USDC: settleOperationalCosts and receiveDeploymentFee
       move USDC via safeTransfer/safeTransferFrom only. No native ETH path
       exists anywhere (no msg.value, no .call{value}).
 
    --- v0.6 FIXES (Sonnet-5 audit - RE-AUDIT THESE, cold seat) ---
   23. VALVE INTEGRITY STRUCTURAL: constructor reverts ValveIntegrityViolation
-      if deploymentFeeSource == operatorDestination OR == treasuryDestination.
+      if deploymentFeeSource == operatorDestination OR == heartSink.
       Prove no deploy config can wire the inbound fee path to an outbound
       destination (which would let drawn funds be reinjected). Also: every
       load-bearing address reverts ZeroAddress if zero at construction.
+  24. HEART BRICK-GUARD (council 2026-07-20): constructor reverts
+      FeeSinkInterfaceMismatch if heartSink is an EOA, a non-infra-sink
+      contract, or isInfraSink()==false — so the critical surplus push into
+      the Heart can never brick. Requires the Heart live at construction
+      (deploy order POOL → x402Core → factory → saltPool).
   24. tollSink GONE: no declaration, no param, no reference anywhere. Grep
       must return zero hits. Confirm nothing dangling references it.
   25. CEI IN receiveDeploymentFee: pool-balance effect commits before the

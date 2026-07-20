@@ -79,7 +79,7 @@ contract DeployFactoryCreate3 is Script {
         // VERIFY-BEFORE-WIRE (council brick-guard, FIX A): feeSink = POOL must be
         // LIVE before the factory deploys — the factory's constructor staticcalls
         // pool.isInfraSink() and reverts if absent. This is why the REVISED deploy
-        // order is x402Core -> POOL -> factory -> saltPool (RUNBOOK §2). If the
+        // order is POOL -> x402Core -> factory -> saltPool (RUNBOOK §2). If the
         // pool is not live, stop here rather than let CreateX wrap the brick-guard
         // revert in an opaque failure.
         if (POOL.code.length == 0) revert FeeSinkPoolNotLive(POOL);

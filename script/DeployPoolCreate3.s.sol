@@ -64,16 +64,16 @@ contract DeployPoolCreate3 is Script {
         bytes32 gs = keccak256(abi.encodePacked(bytes32(uint256(uint160(ANCHOR_EOA))), SALT));
         if (CREATEX.computeCreate3Address(gs) != PREDICTED) revert PredictionMismatch(CREATEX.computeCreate3Address(gs), PREDICTED);
 
-        // REVISED ORDER (council brick-guard, FIX A): the pool now deploys BEFORE
-        // the factory (the factory's constructor verifies feeSink=this-pool is a
-        // live infra-sink). So the FACTORY is NOT yet live here — bake it as its
-        // PREDICTED CREATE3 address (a source is only read at runtime). Only
-        // x402Core, which deploys before the pool, is liveness-verified.
-        if (X402CORE.code.length == 0) revert SourceNotDeployed(X402CORE);
-
+        // REVISED ORDER (council 2026-07-20): the pool (Heart) now deploys FIRST
+        // of the constellation — before BOTH x402Core and the factory — because
+        // each of those construction-verifies feeSink/heartSink = this-pool is a
+        // live infra-sink (brick-guard). The pool constructor does NOT require its
+        // sources live (they are runtime callers, verified when they call), so
+        // BOTH sources are baked as their PREDICTED CREATE3 addresses here.
+        // Order: POOL → x402Core → factory → saltPool.
         address[] memory sources = new address[](2);
-        sources[0] = FACTORY; // predicted CREATE3 addr; factory deploys next
-        sources[1] = X402CORE;
+        sources[0] = FACTORY;  // predicted CREATE3 addr; factory deploys after x402Core
+        sources[1] = X402CORE; // predicted CREATE3 addr; x402Core deploys next, verifies THIS pool
 
         // Constructor: (_payToken, _authorizedSources, _operatorDestination,
         //               _treasuryDestination, _operationalCap, _absoluteFloor,
@@ -94,9 +94,9 @@ contract DeployPoolCreate3 is Script {
         console2.log("  pool (== anchor)    :", poolAddr);
         console2.log("  extcodehash (record):");
         console2.logBytes32(poolAddr.codehash);
-        console2.log("  authorizedSources   : [factory, x402Core]");
+        console2.log("  authorizedSources   : [factory, x402Core] (both predicted; deploy after)");
         console2.log("  factory             :", FACTORY);
         console2.log("  x402Core            :", X402CORE);
-        console2.log("FOUNDATION COMPLETE. NEXT: keeper refills the salt pool (0x8C8 hook salts).");
+        console2.log("HEART LIVE. NEXT: deploy x402Core (heartSink = this pool) -> factory -> saltPool.");
     }
 }

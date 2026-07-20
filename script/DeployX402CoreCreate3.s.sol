@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
-// BUILD-PROOF: DEPLOY_X402CORE_CREATE3_V1 — deploys PossessioX402Core via CreateX
-// CREATE3 to its anchor address (deploy/anchor.json). FOUNDATION step 3 (before the
-// pool, so the pool's immutable authorizedSources can point at VERIFIED live code).
+// BUILD-PROOF: DEPLOY_X402CORE_CREATE3_V2 — deploys PossessioX402Core via CreateX
+// CREATE3 to its anchor address (deploy/anchor.json). REVISED ORDER (council
+// 2026-07-20): deploys AFTER the pool (Heart), because x402Core now
+// construction-verifies heartSink = the live Heart (brick-guard). Order:
+// POOL → x402Core → factory → saltPool.
 //
-// x402Core retains its OWN internal pool for now; its toll re-route into the Heart's
-// receiveInfraFunds is a later x402Core edit. deploymentFeeSource is x402Core's own
-// bound inflow source (Architect names it; valve check: != operator, != treasury).
+// x402Core's toll/deployment-fee surplus (over its operating cap) now routes INTO
+// the Heart via receiveInfraFunds (option A) — the re-route is DONE. heartSink is
+// the live pool; deploymentFeeSource is x402Core's own bound inflow source
+// (Architect names it; valve check: != operator, != heartSink).
 //
 // Economic params (root/dustFloor/cap/floor/perUnit/halflife) are env — DATA-GATED,
 // must be CALIBRATED before the immutable freeze (SPEC §22). CREATE3 address is
@@ -35,12 +38,16 @@ contract DeployX402CoreCreate3 is Script {
     address constant ANCHOR_EOA = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
     bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00ef0925278b81d5e6aa477d;
     address constant PREDICTED = 0x60d867AfA7c6f4b0822413fA51D0EE9edE786c05;
+    // The Heart (PossessioPool) — deployed FIRST (DeployPoolCreate3.PREDICTED).
+    // x402Core's surplus routes here; construction verifies it is a live infra-sink.
+    address constant HEART     = 0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce;
 
     error WrongChain(uint256 got);
     error KeyIsNotAnchorEOA(address got);
     error SaltNotSenderLocked();
     error PredictionMismatch(address computed, address pinned);
     error DeployedMismatch(address deployed, address predicted);
+    error HeartNotLive(address heart); // pool must be deployed before x402Core (revised order)
 
     function run() external returns (address x402Addr) {
         if (block.chainid != 8453) revert WrongChain(block.chainid);
@@ -49,7 +56,6 @@ contract DeployX402CoreCreate3 is Script {
         bytes32 root      = vm.envBytes32("X402_ROOT");
         uint256 dustFloor = vm.envUint("X402_DUST_FLOOR");
         address operator  = vm.envAddress("OPERATOR_DEST_ADDR");
-        address treasury  = vm.envAddress("TREASURY_DEST_ADDR");
         address feeSource = vm.envAddress("X402_FEE_SOURCE_ADDR"); // x402Core's own inflow source
         uint256 cap       = vm.envUint("X402_OP_CAP");
         uint256 absFloor  = vm.envUint("X402_ABS_FLOOR");
@@ -63,12 +69,18 @@ contract DeployX402CoreCreate3 is Script {
         bytes32 gs = keccak256(abi.encodePacked(bytes32(uint256(uint160(ANCHOR_EOA))), SALT));
         if (CREATEX.computeCreate3Address(gs) != PREDICTED) revert PredictionMismatch(CREATEX.computeCreate3Address(gs), PREDICTED);
 
-        // Constructor: (root, dustFloor, _payToken, _treasuryDestination, _operatorDestination,
+        // The Heart must be live before x402Core (revised order) — its constructor
+        // brick-guard verifies heartSink=HEART is an infra-sink, so a clean pre-check
+        // here gives a legible error instead of a raw construction revert.
+        if (HEART.code.length == 0) revert HeartNotLive(HEART);
+
+        // Constructor: (root, dustFloor, _payToken, _heartSink, _operatorDestination,
         //               _deploymentFeeSource, _operationalCap, _absoluteFloor, _floorPerUnit, _velocityHalflife)
-        // The contract's own valve check enforces feeSource != operator/treasury; a bad wire reverts here.
+        // The valve check enforces feeSource != operator/heartSink; the brick-guard
+        // enforces heartSink is a live infra-sink. A bad wire reverts here.
         bytes memory initCode = abi.encodePacked(
             type(PossessioX402Core).creationCode,
-            abi.encode(root, dustFloor, PAY_TOKEN, treasury, operator, feeSource, cap, absFloor, perUnit, halflife)
+            abi.encode(root, dustFloor, PAY_TOKEN, HEART, operator, feeSource, cap, absFloor, perUnit, halflife)
         );
 
         vm.startBroadcast(pk);
@@ -82,6 +94,7 @@ contract DeployX402CoreCreate3 is Script {
         console2.log("  extcodehash (record):");
         console2.logBytes32(x402Addr.codehash);
         console2.log("  payToken (USDC)     :", PAY_TOKEN);
-        console2.log("NEXT: deploy pool with authorizedSources = [factory, this x402Core], both verified.");
+        console2.log("  heartSink (Heart)   :", HEART);
+        console2.log("NEXT: deploy factory (feeSink = the Heart) -> then saltPool.");
     }
 }

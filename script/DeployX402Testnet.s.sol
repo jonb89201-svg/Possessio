@@ -61,15 +61,17 @@ contract DeployX402Testnet is Script {
     error TestnetAddressesMustBeDistinct(); // pre-check mirror of ValveIntegrityViolation + WO's 3-distinct rule
 
     function run() external returns (address core) {
-        address treasury  = vm.envAddress("TREASURY_TEST");
+        // heartSink = a LIVE infra-sink (the Heart/pool on testnet), deployed
+        // first. x402Core construction-verifies it (brick-guard).
+        address heart     = vm.envAddress("HEART_TEST");
         address operator  = vm.envAddress("OPERATOR_TEST");
         address feeSource = vm.envAddress("FEESOURCE_TEST");
 
-        // WO rule: three DISTINCT controlled addresses. Constructor line 345
-        // only forbids feeSource collisions (treasury==operator is an allowed
+        // WO rule: three DISTINCT controlled addresses. The constructor's valve
+        // check forbids feeSource collisions (heartSink==operator is an allowed
         // shape by design), but on testnet we want three distinct so every
         // flow is separately visible in balances - enforce all three here.
-        if (treasury == operator || feeSource == operator || feeSource == treasury) {
+        if (heart == operator || feeSource == operator || feeSource == heart) {
             revert TestnetAddressesMustBeDistinct();
         }
 
@@ -84,7 +86,7 @@ contract DeployX402Testnet is Script {
             root:                 root,
             dustFloor:            DUST_FLOOR,
             _payToken:            USDC_BASE_SEPOLIA,
-            _treasuryDestination: treasury,
+            _heartSink:           heart,
             _operatorDestination: operator,
             _deploymentFeeSource: feeSource,
             _operationalCap:      OPERATIONAL_CAP,
@@ -96,7 +98,7 @@ contract DeployX402Testnet is Script {
 
         console2.log("PossessioX402Core (TESTNET, placeholder economics):", core);
         console2.log("  USDC (Base Sepolia, verified):", USDC_BASE_SEPOLIA);
-        console2.log("  treasury :", treasury);
+        console2.log("  heartSink:", heart);
         console2.log("  operator :", operator);
         console2.log("  feeSource:", feeSource);
         console2.log("  HANDSHAKE_ROOT (two-leaf test tree):");

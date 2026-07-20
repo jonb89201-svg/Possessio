@@ -53,28 +53,33 @@ export DEPLOYER_PK=... DEPLOYMENT_FEE=... TEMPLATE_CODEHASH=0x... \
        X402_ROOT=0x... X402_DUST_FLOOR=... X402_FEE_SOURCE_ADDR=0x... \
        X402_OP_CAP=... X402_ABS_FLOOR=... X402_FLOOR_PER_UNIT=... X402_HALFLIFE=... \
        POOL_OP_CAP=... POOL_ABS_FLOOR=... POOL_FLOOR_PER_UNIT=... POOL_HALFLIFE=...
-forge script script/DeployX402CoreCreate3.s.sol  --rpc-url $BASE_RPC_URL -vvv
 forge script script/DeployPoolCreate3.s.sol      --rpc-url $BASE_RPC_URL -vvv
+forge script script/DeployX402CoreCreate3.s.sol  --rpc-url $BASE_RPC_URL -vvv
 forge script script/DeployFactoryCreate3.s.sol   --rpc-url $BASE_RPC_URL -vvv
 forge script script/DeploySaltPoolCreate3.s.sol  --rpc-url $BASE_RPC_URL -vvv
 ```
 A fork dry-run reverting = a real env/gate problem. Fix before mainnet. Note: the
-salt-pool and pool dry-runs assert their siblings are *live*, so on a fresh fork
-run them after the factory/x402Core actually deploy, or fork-run the full sequence
-with `--broadcast` against a *local anvil-fork* (state persists) to prove ordering.
+x402Core, factory, and salt-pool dry-runs assert their siblings (the pool, etc.)
+are *live*, so on a fresh fork run them after the pool actually deploys, or
+fork-run the full sequence with `--broadcast` against a *local anvil-fork* (state
+persists) to prove the POOL → x402Core → factory → salt-pool ordering.
 
 ---
 
 ## 2. MAINNET BROADCAST — ordered, verify-before-wire
 
-**ORDER REVISED (council brick-guard, FIX A): x402Core → POOL → factory → salt pool.**
-The factory constructor now staticcalls `feeSink.isInfraSink()` and reverts
-`FeeSinkInterfaceMismatch` if the pool is not a live infra-sink — so **the pool
-MUST land before the factory** (a `code.length` check alone would not have caught
-the demonstrated brick, where feeSink was a real-but-wrong contract). The pool
-bakes the *predicted* factory address as a source (read only at runtime), so no
-circularity. `DeployPoolCreate3` verifies only x402Core live; `DeployFactoryCreate3`
-verifies the pool live before wiring.
+**ORDER REVISED (council 2026-07-20): POOL → x402Core → factory → salt pool.**
+BOTH the factory AND x402Core constructors now staticcall
+`<sink>.isInfraSink()` and revert `FeeSinkInterfaceMismatch` if the pool is not a
+live infra-sink — the factory guards its `feeSink`, x402Core guards its
+`heartSink` (surplus over the operating cap routes into the Heart via
+`receiveInfraFunds`, option A). So **the pool (Heart) MUST land FIRST** (a
+`code.length` check alone would not have caught the demonstrated brick, where the
+sink was a real-but-wrong contract). The pool constructor does NOT require its
+sources live, so it bakes BOTH sources (factory, x402Core) as their *predicted*
+CREATE3 addresses (read only at runtime) — no circularity. `DeployPoolCreate3`
+verifies nothing live (both sources predicted); `DeployX402CoreCreate3` and
+`DeployFactoryCreate3` each verify the pool live before wiring.
 
 Run in this exact order. Each script's internal gates (`deployed == predicted`,
 salt→address recomputed via CreateX, siblings-must-be-live) abort the tx on any
@@ -82,8 +87,8 @@ mismatch. **After each: copy the logged `extcodehash` into the record below** �
 siblings and the post-deploy read-backs check against it (the front-run gate).
 
 ```
-forge script script/DeployX402CoreCreate3.s.sol --rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PK --broadcast -vvv | tee deploy_x402core.txt
 forge script script/DeployPoolCreate3.s.sol     --rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PK --broadcast -vvv | tee deploy_pool.txt
+forge script script/DeployX402CoreCreate3.s.sol --rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PK --broadcast -vvv | tee deploy_x402core.txt
 forge script script/DeployFactoryCreate3.s.sol  --rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PK --broadcast -vvv | tee deploy_factory.txt
 forge script script/DeploySaltPoolCreate3.s.sol --rpc-url $BASE_RPC_URL --private-key $DEPLOYER_PK --broadcast -vvv | tee deploy_saltpool.txt
 ```
