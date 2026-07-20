@@ -58,27 +58,27 @@ blast radius.
 
 ---
 
-## 3. THE LOAD-BEARING DECISION — capital-flow custody
+## 3. CAPITAL FLOW — the closed-loop sandbox (RESOLVED by the Architect)
 
-**Where does drawn capital go, and who holds the token mid-trade?** Flagged for
-the Architect; it shapes the whole contract.
+**The trader is a sandbox, not a wallet-spender.** The Architect's ruling
+supersedes the earlier A/B options with a stricter, safer model:
 
-- **(A) Vault → owner's wallet → trade → vault. [RECOMMENDED]**
-  `drawForTrade` sends USDC to a single immutable `tradeDestination` = the
-  operator's **own Base Account**. The trade executes there (via the desk's
-  existing spend-permission / xtrade rail); proceeds return via `returnProceeds`.
-  The vault is a **cap-enforcing allocator** — funds only ever sit in the vault
-  or the operator's own wallet. Maximum sovereignty; no third party ever
-  custodies. Matches *"keeps the sovereignty of the whole situation."*
-- **(B) Vault → keeper → swap → vault.** The keeper receives USDC, swaps, and
-  the token is transiently keeper-held. More automated, but a third party
-  touches funds mid-trade — weaker sovereignty, larger trust surface.
+> The **trader is hardcoded to the FundingVault as its ONLY source of funds** —
+> it can never reach the operator's main wallet. The user sends capital **to the
+> vault**; `drawForTrade` releases it (within caps) to the execution rail; on
+> sell, proceeds route **back to the vault**. Closed loop. The operator's main
+> wallet only ever touches `fund()` (deposit) and `withdraw()` (harvest).
 
-**Recommendation: (A).** The vault caps *exposure*; the operator's wallet +
-the desk's bounded rail do the *execution*. The token-custody question stays
-where AutoTarget already answered it (bounded Base-Account spend permission),
-and the vault never needs to know about tokens at all — it only meters USDC in
-and out. Clean separation: **desk = trigger, vault = capital+caps, wallet =
+Why this is strictly safer than "vault → owner wallet": the trader's entire
+reachable surface is the vault's balance. Worst case is bounded to *what's in
+the vault* — the main wallet is **never exposed to the trader at all.** The
+`trader` address is an **immutable** in the vault; there is no setter.
+
+**Residual detail (keeper/rail, not the vault):** between buy and sell the token
+is transiently held by the execution rail (the desk's bounded spend permission /
+Jupiter delegate) — same custody AutoTarget already bounds. The vault only ever
+meters **USDC out (draw) and USDC in (return)**; it never touches the token.
+Clean separation: **desk = trigger, vault = capital+caps (closed loop), rail =
 execution.**
 
 ---
@@ -143,15 +143,38 @@ execution.**
 ## 6. Interaction with AutoTarget (the bundle)
 
 - `openIntent` on the desk records the pick + rule (unchanged).
-- On entry, the keeper calls `vault.drawForTrade(intentId, entryUSDC)` — capital
-  flows to the operator's wallet, bounded by caps. If a cap is hit, **the trade
-  simply doesn't open** (honest refusal, like `PoolEmpty()` — never a degraded
-  path). This is also the **buy pre-flight** the metered-feed council statement
-  asked for: no capital, no position.
-- On exit (`ExitAuthorized` → swap → `markExecuted`), the keeper calls
-  `vault.returnProceeds(intentId, proceedsUSDC)` — closes the exposure and books
-  P&L. The vault's `TradeClosed` + the desk's `ExitExecuted` are the two halves
-  of the on-chain receipt.
+- On entry, the keeper runs the **trade Pre-Flight Guard (§6a)**; only if it
+  passes does it call `vault.drawForTrade(intentId, entryUSDC)` — capital
+  released to the execution rail, bounded by caps. If a cap is hit **or PFG
+  vetoes**, **the trade simply doesn't open** (honest refusal, like `PoolEmpty()`
+  — never a degraded path). No capital + no clean pool state → no position.
+- On exit (`ExitAuthorized` → swap → `markExecuted`), the keeper records the
+  **exit-side PFG attestation (§6a)** and calls `vault.returnProceeds(intentId,
+  proceedsUSDC)` — closes the exposure and books P&L. The vault's `TradeClosed`
+  + the desk's `ExitExecuted` + the PFG attestation are the on-chain receipt.
+
+## 6a. Trade Pre-Flight Guard (PFG) — the −82%-tail fix, per trade
+
+Modeled on `script/sal_pfg` (the SAV Pre-Flight Guard's five gates), adapted to
+a memecoin trade. The council's strat verdict named this exact remedy: *"a
+post-entry rug re-check to cut the −82% tails without clipping the +75%
+runners."* It runs keeper-side, reading live pool state (V4 Quoter/StateView on
+EVM; curve reserves / DexPaprika on Solana).
+
+- **BEFORE A BUY — veto.** Gates: sequencer/congestion; liquidity integrity
+  (reserves + delta — a rug in progress); **Kinetic Depth Anchor** (simulate a
+  dust swap; hollow/manipulated liquidity reveals itself — the key gate); price
+  discovery (not buying the top of a spike). **Any veto → no `drawForTrade`.**
+- **BEFORE A SELL — attest (veto only on a target-sell into a manipulated
+  spike).** A stop always exits; the PFG *records why the fill was what it was*
+  ("stop fired at −10%, KDA showed liquidity gone hollow → filled −60%").
+- **Attestation format:** a compact gate-result summary (per-gate pass/warn/veto
+  + the KDA quote + depth + price at that block/slot) carried into the trade
+  receipt — hashed into `TradeFunded` / recorded at `markExecuted` — so the
+  **transactions page renders `PFG buy ✓ 5/5` / `⚠ KDA veto` and the exit-side
+  pool state per trade.** This is where *"did the keeper fire on the right tick,
+  and was the fill honest"* becomes visible. Gets its own build spec
+  (`SPEC_TradePreFlightGuard.md`); this section is the wiring contract.
 
 The desk and vault are **separately deployed, jointly wired** (the desk knows
 the vault; the vault's `trader` is the keeper). Dual-launch, same anchor.
@@ -170,6 +193,28 @@ the vault; the vault's `trader` is the keeper). Dual-launch, same anchor.
   not a nice-to-have.**
 
 ---
+
+## 7b. Console wiring (standing requirement — every contract, always)
+
+The operator's flow is fixed: **open possessio.io in the wallet browser →
+connect wallet → dual-launch → receive both addresses → the console connects
+BOTH contracts at once.** Everything built must be console-wireable:
+
+- **Multi-contract connect.** The desk + vault deploy as a bundle; the console
+  connects both simultaneously (per-tab, addresses auto-registerable from the
+  CREATE3 anchor). This is the console defect already logged — the top card must
+  follow the selected contract, and multiple contracts hold at once.
+- **The emergency breaker box.** Every owner-only safety control the vault
+  exposes — `pause`/`unpause`, `setCap` (lower-instant / raise-delayed),
+  `withdraw` — is surfaced in the console as a labelled control, in plain
+  language ("Freeze trading", "Tighten daily cap", "Withdraw capital").
+- **Changeable functions listed.** The console enumerates every mutable
+  parameter (caps, pause state, pending delayed raises) with its live value and
+  the control to change it — read + write, per the console's existing
+  action-group pattern (Inflow Policy / Operations / Security).
+- **Build with this in mind.** Each contract's ABI, its owner-only vs
+  trader-only surface, and its events (the receipt skeleton) are what the
+  console renders. Design the surface to be legible, not just correct.
 
 ## 8. Open decisions (Architect gates — not guessed here)
 
