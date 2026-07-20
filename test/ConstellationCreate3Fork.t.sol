@@ -88,41 +88,44 @@ contract ConstellationCreate3ForkTest is Test {
         return CREATEX.deployCreate3(salt, initCode);
     }
 
-    /// Deploy the foundation in the ratified verify-before-wire order, asserting
-    /// each organ lands at its anchor address. Backward refs use the DEPLOYED
-    /// (== predicted) address; the factory's forward refs use the predicted
-    /// salt pool / pool (they don't exist yet — factory-first).
+    /// Deploy the foundation in the REVISED order (council brick-guard, FIX A):
+    /// the factory's constructor now verifies feeSink (the pool) is a LIVE
+    /// infra-sink, so the POOL must land BEFORE the factory. CREATE3 addresses
+    /// are deterministic, so the pool bakes the PREDICTED factory address as a
+    /// source (read only at runtime) without the factory existing yet.
+    /// Order: x402Core -> POOL -> factory -> salt pool.
     function _deployConstellation() internal returns (address factory, address saltpool, address x402, address pool) {
-        // 1. FACTORY — feeSink = predicted POOL (option A), saltPool = predicted SALT POOL.
-        factory = _deploy(FACTORY_SALT, abi.encodePacked(
-            type(PossessioFactory).creationCode,
-            abi.encode(uint256(1e6), keccak256("TEMPLATE"), SALTPOOL_ADDR, USDC, POOL_ADDR)
-        ));
-        assertEq(factory, FACTORY_ADDR, "factory != anchor");
-
-        // 2. SALT POOL — factory = verified live factory; deploymentFeeSource = factory (check-only).
-        saltpool = _deploy(SALTPOOL_SALT, abi.encodePacked(
-            type(PossessioSaltPool).creationCode,
-            abi.encode(factory, KEEPER, OPERATOR, TREASURY, factory)
-        ));
-        assertEq(saltpool, SALTPOOL_ADDR, "saltpool != anchor");
-
-        // 3. X402CORE.
+        // 1. X402CORE — a pool source; independent of the other organs.
         x402 = _deploy(X402CORE_SALT, abi.encodePacked(
             type(PossessioX402Core).creationCode,
             abi.encode(keccak256("ROOT"), uint256(1e6), USDC, TREASURY, OPERATOR, X402_FEESRC, CAP, FLOOR, FPU, HL)
         ));
         assertEq(x402, X402CORE_ADDR, "x402core != anchor");
 
-        // 4. POOL — authorizedSources = [verified factory, verified x402Core].
+        // 2. POOL — sources = [PREDICTED factory, live x402Core]. The factory
+        //    address is the deterministic CREATE3 constant; only read at runtime.
         address[] memory sources = new address[](2);
-        sources[0] = factory;
+        sources[0] = FACTORY_ADDR;
         sources[1] = x402;
         pool = _deploy(POOL_SALT, abi.encodePacked(
             type(PossessioPool).creationCode,
             abi.encode(USDC, sources, OPERATOR, TREASURY, CAP, FLOOR, FPU, HL)
         ));
         assertEq(pool, POOL_ADDR, "pool != anchor");
+
+        // 3. FACTORY — feeSink = LIVE pool (brick-guard passes), saltPool = predicted.
+        factory = _deploy(FACTORY_SALT, abi.encodePacked(
+            type(PossessioFactory).creationCode,
+            abi.encode(uint256(1e6), keccak256("TEMPLATE"), SALTPOOL_ADDR, USDC, pool)
+        ));
+        assertEq(factory, FACTORY_ADDR, "factory != anchor");
+
+        // 4. SALT POOL — factory = live factory; deploymentFeeSource = factory (check-only).
+        saltpool = _deploy(SALTPOOL_SALT, abi.encodePacked(
+            type(PossessioSaltPool).creationCode,
+            abi.encode(factory, KEEPER, OPERATOR, TREASURY, factory)
+        ));
+        assertEq(saltpool, SALTPOOL_ADDR, "saltpool != anchor");
     }
 
     // ============ CORE GATE: deploys at anchor addresses + wiring ============

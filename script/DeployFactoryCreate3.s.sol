@@ -53,6 +53,7 @@ contract DeployFactoryCreate3 is Script {
     error SaltNotSenderLocked();
     error PredictionMismatch(address computed, address pinned);
     error DeployedMismatch(address deployed, address predicted);
+    error FeeSinkPoolNotLive(address pool);
 
     function run() external returns (address factoryAddr) {
         if (block.chainid != 8453) revert WrongChain(block.chainid); // Base (fork or mainnet)
@@ -74,6 +75,14 @@ contract DeployFactoryCreate3 is Script {
         bytes32 guardedSalt = keccak256(abi.encodePacked(bytes32(uint256(uint160(ANCHOR_EOA))), FACTORY_SALT));
         address computed = CREATEX.computeCreate3Address(guardedSalt);
         if (computed != PREDICTED_FACTORY) revert PredictionMismatch(computed, PREDICTED_FACTORY);
+
+        // VERIFY-BEFORE-WIRE (council brick-guard, FIX A): feeSink = POOL must be
+        // LIVE before the factory deploys — the factory's constructor staticcalls
+        // pool.isInfraSink() and reverts if absent. This is why the REVISED deploy
+        // order is x402Core -> POOL -> factory -> saltPool (RUNBOOK §2). If the
+        // pool is not live, stop here rather than let CreateX wrap the brick-guard
+        // revert in an opaque failure.
+        if (POOL.code.length == 0) revert FeeSinkPoolNotLive(POOL);
 
         // initCode = factory creation bytecode ++ abi.encode(constructor args).
         // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink).

@@ -30,7 +30,7 @@ pragma solidity ^0.8.26;
 import {Test, console2} from "forge-std/Test.sol";
 import {PossessioFactory} from "../src/PossessioFactory.sol";
 import {PossessioSaltPool} from "../src/PossessioSaltPool.sol";
-import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {PossessioPool} from "../src/PossessioPool.sol";
 
 interface ICreateX {
     function computeCreate3Address(bytes32 salt) external view returns (address);
@@ -84,7 +84,7 @@ contract PossessioFactoryForkTest is Test {
     bytes32 constant RECEIVE_TYPEHASH =
         keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
 
-    PossessioPayments internal payments;
+    PossessioPool internal heart; // feeSink (option A) — repaired from the pre-A Payments sink
     PossessioSaltPool internal pool;
     PossessioFactory internal factory;
 
@@ -100,38 +100,31 @@ contract PossessioFactoryForkTest is Test {
             vm.createSelectFork(rpc);
         } catch {}
         forked = (block.chainid == 8453);
-        if (!forked) return;
+        // FIX B (council, False-Green): skip, don't vacuously pass, when no RPC.
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
 
-        // 1. Deploy the REAL Payments treasury (validates live mainnet venues).
-        PossessioPayments.DeployParams memory pp = PossessioPayments.DeployParams({
-            owner:            OWNER,
-            usdc:             USDC,
-            cbeth:            CBETH,
-            dai:              DAI,
-            weth:             WETH,
-            router:           ROUTER,
-            aeroRouter:       AERO_ROUTER,
-            morphoVault:      MORPHO_VAULT,
-            chainlink:        CHAINLINK_CBETH,
-            chainlinkDai:     CHAINLINK_DAI,
-            chainlinkUsdcUsd: CHAINLINK_USDC,
-            chainlinkEthUsd:  CHAINLINK_ETH,
-            lstRates:         LST_RATES,
-            minSwapBatch:     MIN_SWAP_BATCH,
-            daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT,
-            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
-            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
-        });
-        payments = new PossessioPayments(pp);
-
-        // 2. Deploy the salt pool sender-locked to the (predicted) factory, then
-        //    the factory with Payments as its fee sink.
+        // Money-path wiring (feeSink = A, council FIX C — repaired from the
+        // pre-A Payments sink that the brick-guard now correctly rejects):
+        //   salt pool (sender-locked to the predicted factory)
+        //   -> the Heart (feeSink; factory is its authorized source)
+        //   -> factory (feeSink = the LIVE Heart; its brick-guard verifies it).
+        // Addresses are predicted so the pool names the factory as a source and
+        // the factory names the live pool as feeSink. Order mirrors the revised
+        // constellation: salt pool(n) -> Heart(n+1) -> factory(n+2).
         templateCodehash = keccak256(type(ForkTemplate).creationCode);
+        address operatorDest = makeAddr("operatorDest");
+        address treasuryDest = makeAddr("treasuryDest");
         uint256 nonce = vm.getNonce(address(this));
-        address predictedFactory = vm.computeCreateAddress(address(this), nonce + 1);
-        pool = new PossessioSaltPool(predictedFactory, keeper, OWNER, address(payments), USDC);
-        factory = new PossessioFactory(FEE, templateCodehash, address(pool), USDC, address(payments));
+        address predictedFactory = vm.computeCreateAddress(address(this), nonce + 2);
+
+        pool = new PossessioSaltPool(predictedFactory, keeper, operatorDest, treasuryDest, predictedFactory);
+        address[] memory sources = new address[](1);
+        sources[0] = predictedFactory;
+        heart = new PossessioPool(USDC, sources, operatorDest, treasuryDest, 1_000_000e6, 0, 0, 3600);
+        factory = new PossessioFactory(FEE, templateCodehash, address(pool), USDC, address(heart));
         require(address(factory) == predictedFactory, "factory prediction");
 
         (buyer, buyerPk) = makeAddrAndKey("buyer");
@@ -187,7 +180,8 @@ contract PossessioFactoryForkTest is Test {
         PossessioFactory.FeeAuth memory feeAuth = _signFee(FEE, authNonce);
 
         address owner = makeAddr("templateOwner");
-        uint256 paymentsBefore = IUSDC(USDC).balanceOf(address(payments));
+        uint256 poolBalBefore = heart.poolBalance();
+        uint256 heartUsdcBefore = IUSDC(USDC).balanceOf(address(heart));
 
         // === the atomic sequence ===
         vm.prank(buyer);
@@ -201,18 +195,14 @@ contract PossessioFactoryForkTest is Test {
         assertEq(ForkTemplate(deployed).owner(), owner, "owner mismatch");
         assertTrue(ForkTemplate(deployed).owner() != address(factory), "factory must never be owner");
 
-        // the fee landed in the REAL Payments treasury
-        assertEq(IUSDC(USDC).balanceOf(address(payments)), paymentsBefore + FEE, "fee did not reach Payments");
+        // the fee was routed INTO the Heart via the accounted door (option A):
+        // real USDC landed AND poolBalance was credited (not stranded).
+        assertEq(IUSDC(USDC).balanceOf(address(heart)), heartUsdcBefore + FEE, "fee did not reach the Heart");
+        assertEq(heart.poolBalance(), poolBalBefore + FEE, "poolBalance not credited (fee stranded)");
         assertEq(IUSDC(USDC).balanceOf(buyer), 0, "buyer charged exactly the fee");
 
         // the salt was consumed
         assertEq(pool.depth(), 0, "salt not consumed");
-
-        // === exit proof: the deployment fee is spendable treasury ===
-        address payee = makeAddr("payee");
-        vm.prank(OWNER);
-        payments.sendUSDC(FEE, payee);
-        assertEq(IUSDC(USDC).balanceOf(payee), FEE, "owner could not withdraw the fee from Payments");
     }
 
     /// A second deploy through the same pipeline with a fresh salt + nonce,

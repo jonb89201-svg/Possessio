@@ -15,7 +15,8 @@ contract PossessioAutoTargetAdversarialTest is Test {
 
     uint256 internal constant FEE = 20_000;
     address internal keeper;
-    address internal token;
+    uint32 internal constant CHAIN = 8453; // Base (EVM rail)
+    bytes32 internal tokenRef;
     address internal attacker;
 
     uint256 internal userPk = 0xA11CE;
@@ -24,7 +25,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
     function setUp() public {
         user = vm.addr(userPk);
         keeper = makeAddr("keeper");
-        token = makeAddr("pickedToken");
+        tokenRef = bytes32(uint256(uint160(makeAddr("pickedToken"))));
         attacker = makeAddr("attacker");
         usdc = new MockEIP3009USDC();
         heart = new GoodHeart(address(usdc));
@@ -50,7 +51,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
     function _open(uint16 targetBps, bytes32 nonce) internal returns (uint256 id) {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, nonce);
         vm.prank(user);
-        id = desk.openIntent(token, 1e18, targetBps, a);
+        id = desk.openIntent(tokenRef, CHAIN, 1e18, targetBps, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -120,7 +121,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(badDesk), FEE, keccak256("n1"));
         vm.prank(user);
         vm.expectRevert(bytes("Heart down"));
-        badDesk.openIntent(token, 1e18, 2500, a);
+        badDesk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
 
         // Fee unwound: the whole tx reverted, so the EIP-3009 settle rolled back.
         assertEq(usdc.balanceOf(user), balBefore, "user not charged on failed open");
@@ -139,7 +140,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("n1"));
         vm.prank(attacker);
         vm.expectRevert(bytes("FiatTokenV2: invalid signature"));
-        attackerDesk.openIntent(token, 1e18, 2500, a); // to would be attackerDesk, sig was for desk
+        attackerDesk.openIntent(tokenRef, CHAIN, 1e18, 2500, a); // to would be attackerDesk, sig was for desk
     }
 
     function test_nonce_replay_burns() public {
@@ -148,7 +149,7 @@ contract PossessioAutoTargetAdversarialTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("dup"));
         vm.prank(user);
         vm.expectRevert(bytes("FiatTokenV2: authorization is used or canceled"));
-        desk.openIntent(token, 1e18, 2500, a);
+        desk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -259,6 +260,18 @@ contract PossessioAutoTargetAdversarialTest is Test {
         vm.expectRevert(PossessioAutoTarget.ZeroFee.selector);
         new PossessioAutoTarget(address(usdc), address(heart), keeper, 0);
     }
+
+    // BRICK GUARD — same vector as the factory. A feeSink that does not
+    // implement receiveInfraFunds would revert every openIntent forever.
+    // Construction must reject both an EOA and a real-but-wrong contract.
+    function test_constructor_rejects_feeSink_wrongContract() public {
+        // real contract without the door (usdc mock) — has code, no marker.
+        vm.expectRevert(PossessioAutoTarget.FeeSinkInterfaceMismatch.selector);
+        new PossessioAutoTarget(address(usdc), address(usdc), keeper, FEE);
+        // an EOA — no code, staticcall throws.
+        vm.expectRevert(PossessioAutoTarget.FeeSinkInterfaceMismatch.selector);
+        new PossessioAutoTarget(address(usdc), makeAddr("eoaFeeSink"), keeper, FEE);
+    }
 }
 
 contract GoodHeart {
@@ -269,6 +282,8 @@ contract GoodHeart {
         usdc = MockEIP3009USDC(_usdc);
     }
 
+    function isInfraSink() external pure returns (bool) { return true; }
+
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
@@ -276,6 +291,10 @@ contract GoodHeart {
 }
 
 contract RevertingHeart {
+    // Passes the constructor brick-guard (it IS an infra-sink by interface)...
+    function isInfraSink() external pure returns (bool) { return true; }
+    // ...but reverts at open time, so the fee-route-unwinds test still exercises
+    // the runtime failure path rather than being blocked at construction.
     function receiveInfraFunds(uint256) external pure {
         revert("Heart down");
     }

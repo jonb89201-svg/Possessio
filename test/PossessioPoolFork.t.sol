@@ -93,7 +93,13 @@ contract PossessioPoolForkTest is Test {
             vm.createSelectFork(rpc);
         } catch {}
         forked = (block.chainid == 8453);
-        if (!forked) return;
+        // FIX B (council, metered-feed/False-Green): a fork suite with no RPC
+        // must SKIP, not vacuously PASS. Without this the scenario short-circuits
+        // (~2.5k gas) yet reports green, hiding whatever the live run would fail.
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
 
         usdc = IUSDC(USDC);
 
