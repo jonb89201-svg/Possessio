@@ -11,13 +11,17 @@ Referenced dependency of `SPEC_FundingVault.md` (§6a) and `SPEC_AutoTarget.md`.
 ## 0. Provenance (so the record is honest)
 
 This is **not** a Grok recommendation — Grok's x402Core audit was clean and
-scoped to x402Core. The trade PFG stands on three independent legs:
-1. **The forward strat verdict** (n=50, avg −10%, rug 40%, worst −82%): the
+scoped to x402Core, and he has no priors on the trader. The call to apply a
+pre-flight guard to *trading* came from a **different council seat (Gemini)**.
+It stands on four independent legs:
+1. **The Gemini seat** — flagged that the same pre-flight discipline SAV runs
+   before a hook deploy belongs before every trade buy/sell.
+2. **The forward strat verdict** (n=50, avg −10%, rug 40%, worst −82%): the
    losses are *post-entry rugs and gapping fills* the entry gate never saw. The
    verdict's own remedy: *"a post-entry rug re-check to cut the −82% tails
    without clipping the +75% runners."*
-2. **The Architect's read** — apply the same idea before every buy/sell.
-3. **`sal_pfg` precedent** — the SAV Pre-Flight Guard (`script/sal_pfg`,
+3. **The Architect's read** — apply the same idea before every buy/sell.
+4. **`sal_pfg` precedent** — the SAV Pre-Flight Guard (`script/sal_pfg`,
    README §PFG): five sequenced gates that already protect the council's own
    allocation from executing into manipulated/hollow pool state.
 
