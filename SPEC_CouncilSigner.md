@@ -71,6 +71,10 @@ Three things it buys:
 - Seats need **zero** gas
 - **A seat key never needs to be hot** — which materially mitigates F2
 
+**Replay protection is mandatory on the sig path — the signature IS the authorization, so it must be unambiguous about what it authorizes:**
+- **Cross-deployment:** EIP-712 domain separator with `chainId` + `verifyingContract`, so a sig for one hook cannot be submitted against another.
+- **Resubmission — and note the wrinkle:** the on-chain `hasApproved[seat]` dedup (`:2000`) blocks a *second* submission within one proposal round, BUT `proposeInvent` resets `hasApproved` when a hash is re-proposed after expiry — so a captured round-1 sig could be replayed against a **re-proposed round-2 of the same hash** without the seat's fresh consent. Therefore the signed payload must be scoped to the *proposal instance*, not just the hash: include the proposal's current `expiry` (or a per-seat nonce) in the EIP-712 struct so a sig is valid for exactly one round. This is the same class as the F3 binding — one line, but load-bearing.
+
 **Code Integrity note:** the same pre-freeze window that makes `approveInventBySig` cheap makes the **F3 amount-binding fix** (§6.4) cheap — build them in the same hook edit, since both touch the invent path and both close a trust gap that hardens once the hook freezes.
 
 Fallback if not built: fund each seat minimally. A council vote is one cheap Base tx.
@@ -130,6 +134,8 @@ This is V3's launch page, not a universal form. Each template ships its own mani
 
    Neither alone is enough: publication without binding is theater (nothing forces execution to match the published preimage); binding without publication leaves seats approving an opaque hash. **The binding is what makes the published preimage load-bearing** — with both, anyone recomputes `keccak256(abi.encode(hookAddr, amount, metadata))` and checks it against the approved hash and the executed calldata. Build the binding; keep publication in F4.
 
+   **The formula must live in ONE source.** `keccak256(abi.encode(address(this), amount, metadata))` now exists in two places — the contract's `executeInvent` check and the F4 publisher that composes the preimage. If they drift by one field or one encoding choice, every published preimage fails to recompute and **nobody can tell a bug from a lie.** Pin the formula once (a documented canonical spec + a single shared implementation the publisher imports), reference it from both sides, and gate on the DoD test below. The hash is the authorization; its definition cannot have two authors.
+
 5. **This does not make the AIs vote well** — only lets them vote at all, safely. Vote quality is the council's problem; this is the plumbing.
 
 ---
@@ -154,8 +160,10 @@ This is V3's launch page, not a universal form. Each template ships its own mani
 **Adversarial**
 - A non-council address cannot propose or approve
 - A seat cannot approve twice
-- Replay: a proposal executes at most once (`p.executed` guard `:2023` + set `:2032`) — **verified present**; keep a regression test that a second `executeInvent` on the same hash reverts `ProposalAlreadyExecuted`
+- Replay (execute path): a proposal executes at most once (`p.executed` guard `:2023` + set `:2032`) — **verified present**; keep a regression test that a second `executeInvent` on the same hash reverts `ProposalAlreadyExecuted` (the edit that touches `executeInvent` is exactly when this guard is most likely to get disturbed)
 - Post-binding: `executeInvent` with an `amount`/`metadata` whose `keccak256(abi.encode(address(this), amount, metadata))` ≠ the approved `proposalHash` reverts
+- **Cross-source parity:** a preimage `(hookAddr, amount, metadata)` built by the F4 publisher path recomputes to a hash that passes the contract's `executeInvent` binding check — the one test that proves the formula did not drift between its two authors
+- **Sig-path replay (if `approveInventBySig` built):** a captured signature (a) submitted against a different `verifyingContract`/`chainId` reverts, and (b) replayed against a re-proposed round-2 of the same hash reverts (payload scoped to the proposal instance via `expiry`/nonce)
 - **F5 (VERIFIED, Code Integrity 2026-07-20):** a rogue seat **cannot** reset an *active* proposal — `proposeInvent` reverts `ProposalStillActive` while `expiry` is in the future and `executed` is false (`:1973`). The only reset window is post-`INVENT_EXPIRY` (30 days). **Test to keep:** assert re-proposing an active hash reverts `ProposalStillActive`; document the 30-day post-expiry reset as a liveness note (execute approved proposals well within the window), not an exploitable block.
 
 **The proof**
