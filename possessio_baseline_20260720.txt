@@ -1,0 +1,40 @@
+##############################################################################
+# POSSESSIO — TESTING BASELINE
+# Date: 2026-07-20
+# Toolchain: forge 1.7.1 (4072e487), solc 0.8.35
+# Tree: branch claude/repo-audit-h9m2ev @ 56ceda2
+##############################################################################
+
+OFFLINE FULL SUITE
+------------------
+  Ran 45 test suites in 15.94s (37.74s CPU):
+    856 tests passed · 0 failed · 7 skipped   (863 total)
+
+Unchanged from the prior baseline (856/0/7). Everything committed since is
+docs-only (SPEC_TradePreFlightGuard.md provenance edits + v2 reframe,
+SPEC_FundingVault.md). No source/test delta => no count delta. Suite green.
+
+THE 7 OFFLINE SKIPS (fork-gated — RUN and PASS live, per prior live batch):
+  PossessioAutoTargetForkTest ...... 2 skip  -> 2/2 live
+  PossessioFactoryForkTest ......... 1 skip  -> 2/2 live (whole suite gate)
+  PossessioPoolForkTest ............ 1 skip  -> 13/13 live (whole suite gate)
+  PossessioSaltPoolCreate3Test ..... 1 skip  -> 4/4 live
+  PossessioPaymentsTest ............ 1 skip  (deliberate mock-mode variant)
+  ConstellationCreate3Fork ......... (etched offline; 3/3 live)
+  => the fork gates skip cleanly offline (FIX B: vm.skip, not vacuous pass).
+
+NOTABLE SUITES (adversarial / gauntlet coverage):
+  PossessioX402CoreGauntletTest .... 18   (the x402 gauntlet, this branch)
+  PossessioAutoTargetAdversarialTest 20
+  PossessioPaymentsGauntlet ........ 33
+  POSSESSIOv2Gauntlet .............. 32
+  SAVGauntlet ...................... 42
+  PossessioWhiskyMarketGauntlet .... 22
+  SymmetryGuardCoreGauntlet ........ 20
+  PLATETest ........................ 98
+  PossessioPaymentsTest ............ 129
+
+CONTRACT LAYER: green, adversarially covered, fork-proven live.
+NEXT AUDIT TARGET (council request 2026-07-20): the RADAR itself — the
+off-chain measurement instrument (radar/*.ts + D1). See radar audit scoping.
+##############################################################################
