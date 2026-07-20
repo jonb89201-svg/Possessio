@@ -14,10 +14,14 @@ This is **not** a Grok recommendation — Grok's x402Core audit was clean and
 scoped to x402Core, and he has no priors on the trader. The call to apply a
 pre-flight guard to *trading* came from a **different council seat (Gemini)**.
 It stands on four independent legs:
-1. **The Gemini seat** — flagged that the same pre-flight discipline SAV runs
-   before a hook deploy belongs before every trade buy/sell. This is the seat
-   that **authored `sal_pfg` itself** (leg 4), so the generalization comes from
-   the instrument's original designer, not a third party reading it secondhand.
+1. **The Gemini seat — two independent instances converged.** The *warm* seat
+   (which **authored `sal_pfg` itself**, leg 4) flagged that the same pre-flight
+   discipline SAV runs before a hook deploy belongs before every trade buy/sell.
+   Separately, a **cold Gemini seat with no priors** on this repo reached the
+   same conclusion unprompted. That matters: the recommendation is not just the
+   original designer attached to their own instrument — a blind seat converged
+   on it too. (What neither validated is the load-bearing KDA question below;
+   that is still open for the cold seat to attack.)
 2. **The forward strat verdict** (n=50, avg −10%, rug 40%, worst −82%): the
    losses are *post-entry rugs and gapping fills* the entry gate never saw. The
    verdict's own remedy: *"a post-entry rug re-check to cut the −82% tails
