@@ -15,7 +15,9 @@ scoped to x402Core, and he has no priors on the trader. The call to apply a
 pre-flight guard to *trading* came from a **different council seat (Gemini)**.
 It stands on four independent legs:
 1. **The Gemini seat** — flagged that the same pre-flight discipline SAV runs
-   before a hook deploy belongs before every trade buy/sell.
+   before a hook deploy belongs before every trade buy/sell. This is the seat
+   that **authored `sal_pfg` itself** (leg 4), so the generalization comes from
+   the instrument's original designer, not a third party reading it secondhand.
 2. **The forward strat verdict** (n=50, avg −10%, rug 40%, worst −82%): the
    losses are *post-entry rugs and gapping fills* the entry gate never saw. The
    verdict's own remedy: *"a post-entry rug re-check to cut the −82% tails
