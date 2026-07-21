@@ -1,3 +1,10 @@
+> ⚠️ **SUPERSEDED — DO NOT CITE AS CURRENT.** This report describes tree
+> `f8fd66a`, which is **before `PossessioFundingVault` existed** (the vault was
+> built later at `dce2053`). Its `889 / 0 / 7` and the per-suite list in §2 were
+> correct *as of `f8fd66a`* but are **stale for HEAD** — the current tree has the
+> vault and runs `936 / 0 / 8`. Authoritative report:
+> **`COUNCIL_TEST_REPORT_20260721.md`**. Kept only as dated history.
+
 # COUNCIL TEST REPORT — 2026-07-20
 
 **Tree:** `claude/repo-audit-h9m2ev` @ `f8fd66a` (PR #42) · **Toolchain:** forge 1.7.1
