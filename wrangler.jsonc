@@ -9,6 +9,11 @@
   "kv_namespaces": [
     { "binding": "DRIP_LIMITS", "id": "49f2f2c858424605a9e90efc11e5e5f7" } // possessio-testnet-drip-limits (provisioned by Code Integrity seat)
   ],
+  "d1_databases": [
+    // The council communication ledger lives in the radar DB's headroom
+    // (SPEC_CouncilSigner_v3 §8). Read/written via /api/council/ledger.
+    { "binding": "COUNCIL_DB", "database_name": "possessio-radar-ledger", "database_id": "e7f0f7fd-a1cc-4c7c-97eb-a2eb6c19ecde" }
+  ],
   "vars": {
     "POOL_ADDRESS": "0x0000000000000000000000000000000000000000", // placeholder -> fill with the deployed PossessioTestnetLaunchPool; endpoint answers POOL_NOT_DEPLOYED until then
     "USDC_ADDRESS": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia test USDC (verified live 2026-07-06)

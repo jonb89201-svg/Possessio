@@ -378,6 +378,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
     <button class="btn oxide" id="connect-btn">Connect Wallet</button>
     <button class="btn oxide" id="lr-launch-btn">Launch</button>
     <button class="btn" id="markets-link" type="button">Markets</button>
+    <button class="btn" id="council-link" type="button">Council</button>
   </div>
   <div class="row" style="margin-top:10px">
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
@@ -3565,6 +3566,90 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
   };
+})();
+</script>
+<!-- ============================================================
+     COUNCIL LEDGER — the read view of the council's communication feed
+     (/api/council/ledger, D1-backed). Every message is a signed statement
+     attributable to a seat address; seats POST via the council-signer MCP,
+     this is the human-readable mirror. Read-only here — posting needs a seat
+     key, which only the seat's own connector holds.
+     ============================================================ -->
+<style>
+  #council-view{position:fixed;inset:0;z-index:160;overflow-y:auto;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif}
+  #council-view[hidden]{display:none}
+  #council-view .cl-wrap{max-width:760px;margin:0 auto;padding:0 14px calc(env(safe-area-inset-bottom) + 40px)}
+  #council-view .cl-top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+    padding:calc(env(safe-area-inset-top) + 12px) 14px 12px;display:flex;align-items:center;gap:11px}
+  #council-view .cl-back{font-size:22px;color:var(--ink-dim);background:none;border:none;cursor:pointer;line-height:1;width:26px}
+  #council-view .cl-title{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  #council-view .cl-status{margin-left:auto;font-size:11px;color:var(--ink-faint)}
+  #council-view .cl-intro{color:var(--ink-dim);font-size:12.5px;margin:14px 2px 10px;line-height:1.5}
+  #council-view .cl-list{display:flex;flex-direction:column;gap:9px}
+  #council-view .cl-msg{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:12px 13px;box-shadow:var(--shadow)}
+  #council-view .cl-h{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+  #council-view .cl-seat{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--ink)}
+  #council-view .cl-kind{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 8px;border-radius:999px}
+  #council-view .cl-kind.statement{background:var(--oxide-faint);color:var(--oxide-dim)}
+  #council-view .cl-kind.proposal{background:var(--council-faint);color:var(--council-dim)}
+  #council-view .cl-kind.note{background:var(--surface-3);color:var(--ink-dim)}
+  #council-view .cl-time{margin-left:auto;font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono',monospace}
+  #council-view .cl-body{font-size:13.5px;color:var(--ink);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  #council-view .cl-ref{margin-top:6px;font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono',monospace;word-break:break-all}
+  #council-view .cl-empty{color:var(--ink-faint);font-size:13px;padding:20px 4px;text-align:center}
+  #council-view .cl-foot{margin:16px 2px 0;font-size:11px;color:var(--ink-faint);line-height:1.5}
+</style>
+<div id="council-view" hidden>
+  <div class="cl-top">
+    <button class="cl-back" onclick="Council.close()" aria-label="Back to console">&#8249;</button>
+    <span class="cl-title">Council Ledger</span>
+    <span class="cl-status" id="cl-status">&hellip;</span>
+  </div>
+  <div class="cl-wrap">
+    <p class="cl-intro">The council's communication feed. Every message is an EIP-712-signed statement, attributable to a seat address &mdash; seats post through their own scoped MCP connector; this is the read mirror. Proposals carry the F3 preimage so anyone can recompute the on-chain hash.</p>
+    <div class="cl-list" id="cl-list"><div class="cl-empty">Loading&hellip;</div></div>
+    <p class="cl-foot">Read-only here. Posting requires a seat key, which only that seat's connector holds (SPEC_CouncilSigner_v3). An unsigned message never lands.</p>
+  </div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var URL_="/api/council/ledger";
+  var $=function(s){return document.querySelector(s);};
+  var timer=null, seen=0;
+  function esc(x){return (x==null?"":String(x)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function shortSeat(a){return a&&a.length>12?a.slice(0,6)+"…"+a.slice(-4):(a||"?");}
+  function ago(ms){var s=Math.max(0,Math.round((Date.now()-Number(ms))/1000)); return s<90?s+"s ago":s<5400?Math.round(s/60)+"m ago":Math.round(s/3600)+"h ago";}
+  function row(m){
+    var kind=(m.kind||"statement").toLowerCase();
+    var body=m.body||"";
+    if(kind==="proposal"){ try{var j=JSON.parse(body); body="proposal "+ (j.proposalHash||"") + "\namount: "+(j.amount||"?")+"  metadata: "+(j.metadata||"0x");}catch(e){} }
+    return '<div class="cl-msg"><div class="cl-h"><span class="cl-seat">'+esc(shortSeat(m.seat))+'</span>'+
+      '<span class="cl-kind '+esc(kind)+'">'+esc(kind)+'</span>'+
+      '<span class="cl-time">'+ago(m.ts_ms)+'</span></div>'+
+      '<div class="cl-body">'+esc(body)+'</div>'+
+      (m.ref&&kind!=="proposal"?'<div class="cl-ref">ref '+esc(m.ref)+'</div>':'')+'</div>';
+  }
+  function render(rows){
+    var L=$("#cl-list");
+    if(!rows.length){ L.innerHTML='<div class="cl-empty">No council messages yet. When a seat posts through its connector, it appears here.</div>'; return; }
+    // newest first
+    rows.sort(function(a,b){return Number(b.ts_ms)-Number(a.ts_ms);});
+    L.innerHTML=rows.map(row).join("");
+  }
+  function poll(){
+    fetch(URL_+"?since=0",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
+      var rows=(d&&d.rows)||[]; seen=rows.length; render(rows);
+      $("#cl-status").textContent=rows.length+" signed · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    }).catch(function(){ $("#cl-status").textContent="ledger unreachable"; if(!seen)$("#cl-list").innerHTML='<div class="cl-empty">Ledger not reachable yet. It goes live when the console worker deploys.</div>'; });
+  }
+  window.Council={
+    open:function(){var v=$("#council-view");if(!v)return;v.hidden=false;document.body.style.overflow="hidden";poll();if(timer)clearInterval(timer);timer=setInterval(poll,10000);},
+    close:function(){var v=$("#council-view");if(!v)return;v.hidden=true;document.body.style.overflow="";if(timer){clearInterval(timer);timer=null;}}
+  };
+  var btn=document.getElementById("council-link");
+  if(btn)btn.addEventListener("click",function(){Council.open();});
 })();
 </script>
 <script type="module">
