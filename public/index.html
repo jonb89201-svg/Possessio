@@ -3133,6 +3133,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 (function(){
   "use strict";
   var CHAIN_ID=8453; // the Base trader; Solana picks route to a Solana desk (not yet launched)
+  var FEED_URL="/api/radar/candidates"; // same-origin proxy -> possessio-radar /radar/candidates
   var $=function(s){return document.querySelector(s);};
   var fmt=function(n){ if(n>=1e6) return "$"+(n/1e6).toFixed(2)+"M"; if(n>=1e3) return "$"+(n/1e3).toFixed(1)+"k"; return "$"+Number(n).toFixed(0); };
   var pctStr=function(a,b){ var p=(b-a)/a*100; return (p>=0?"+":"")+p.toFixed(0)+"%"; };
@@ -3151,7 +3152,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"WIBBIT",n:"Wibbit Wibbit",ch:"base",ico:"🐸",entry:11300,read:["slow","slow grind"]},
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
-  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[]};
+  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview"};
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3162,27 +3163,58 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
   function makeCoin(){ var t=POOL[Math.floor(Math.random()*POOL.length)]; var drift=(Math.random()*1.9-0.5);
     var now=Math.max(t.entry*(1+drift),t.entry*0.15);
-    return {id:++S.seq,s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
-  function coinHTML(c){ var up=c.now>=c.entry;
-    return '<div class="coin'+(c.hot?' hot':'')+'" data-id="'+c.id+'"><div><div class="coin-top">'+
-      '<div class="ico">'+c.ico+'</div><div class="cn"><div class="s">'+c.s+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+c.n+'</div></div></div>'+
-      '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> <span id="dk-now-'+c.id+'">'+fmt(c.now)+'</span></span>'+
-      '<span class="pct '+(up?"up":"down")+'" id="dk-pct-'+c.id+'">'+pctStr(c.entry,c.now)+'</span>'+
-      '<span class="age">'+Math.max(1,Math.round((Date.now()-c.born)/1000))+'s</span></div>'+
-      '<div class="read '+c.read[0]+'">'+c.read[1]+'</div></div>'+
+    return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
+  // Map a real /radar/candidates `live` row into a desk coin. Radar screens
+  // Solana/pump.fun, so ch="sol" — these route to the Solana-trader gate until
+  // that desk ships; Base coins appear here only once the radar screens Base.
+  function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
+  function mapRow(c){
+    var entry=Number(c.entry_mc)||0, now=Number(c.last_mc!=null?c.last_mc:c.entry_mc)||entry;
+    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1;
+    var read=rug?["fast","rug-gate"]:(take?["go","◆ pick"]:["reading","screening"]);
+    return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
+      ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
+      born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"" }; }
+  function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
+  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id);
+    var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
+    return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
+      icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
+      '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
+      '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
+      '<span class="age">'+ago(c.born)+'</span></div>'+
+      '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div></div>'+
       '<div class="act"><div class="targets">'+
-        '<button class="tbtn t10" onclick="Desk.pick('+c.id+',1000)">+10</button>'+
-        '<button class="tbtn t25" onclick="Desk.pick('+c.id+',2500)">+25</button>'+
-        '<button class="tbtn t50" onclick="Desk.pick('+c.id+',5000)">+50</button>'+
+        '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">+10</button>'+
+        '<button class="tbtn t25" onclick="Desk.pick(\''+qid+'\',2500)">+25</button>'+
+        '<button class="tbtn t50" onclick="Desk.pick(\''+qid+'\',5000)">+50</button>'+
       '</div>'+(S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+'</div></div>';
   }
   function renderList(){ $("#dk-list").innerHTML=S.live.map(coinHTML).join(""); $("#dk-livecount").textContent=S.live.length; }
-  function driftCoins(){ S.live.forEach(function(c){ var mv=(Math.random()-0.47)*c.now*0.03; c.now=Math.max(c.now+mv,c.entry*0.1); c.peak=Math.max(c.peak,c.now);
-    var ne=$("#dk-now-"+c.id),pe=$("#dk-pct-"+c.id);
-    if(ne){ ne.textContent=fmt(c.now); ne.style.color=mv>=0?"var(--up)":"var(--down)"; setTimeout(function(){if(ne)ne.style.color="";},300); }
-    if(pe){ var up=c.now>=c.entry; pe.textContent=pctStr(c.entry,c.now); pe.className="pct "+(up?"up":"down"); } }); }
-  function dropCoin(){ if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
-    $("#dk-dropnote").textContent="new pick · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+  // Preview-only drift/drop (fallback when the live feed is unreachable).
+  function driftCoins(){ if(S.source!=="preview")return; S.live.forEach(function(c){ var mv=(Math.random()-0.47)*c.now*0.03; c.now=Math.max(c.now+mv,c.entry*0.1); c.peak=Math.max(c.peak,c.now); }); renderList(); }
+  function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
+    $("#dk-dropnote").textContent="preview · demo data · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+
+  // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
+  // pool with actual /radar/candidates `live` rows. On any failure, stays in (or
+  // falls back to) preview — never a fabricated "live" state.
+  function pollFeed(){
+    fetch(FEED_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("feed "+r.status); return r.json(); })
+      .then(function(d){
+        var rows=(d&&d.live&&d.live.length)? d.live.slice(0,7).map(mapRow):[];
+        S.source="live"; S.live=rows; renderList();
+        var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
+        var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
+        if(d.btc&&d.btc.now){ chains[0].px=Number(d.btc.now); var pe=$("#dk-px-BTC"); if(pe)pe.textContent="$"+money(chains[0].px); }
+        $("#dk-dropnote").textContent=rows.length? ("live · "+rows.length+" in the window · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}))
+                                                 : "live · nothing in the entry window right now";
+      })
+      .catch(function(){
+        if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
+          $("#dk-dropnote").textContent="preview · demo data (live feed unreachable)"; }
+      });
+  }
 
   /* pick — GATED. Base needs the connected Base trader; Solana needs its own desk. */
   var pending=null;
@@ -3238,7 +3270,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+p.s+' <span class="ctag '+p.ch+'" style="vertical-align:1px">'+(p.ch==="sol"?"SOL":"BASE")+'</span></div>'+
         '<div class="pmeta">in '+fmt(p.entry)+' · +'+(p.bps/100)+'% / −10%</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
   function toast(m){ var t=$("#dk-toast"); t.textContent=m; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(function(){t.classList.remove("on");},2600); }
-  function setRegime(){ var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
+  function setRegime(){ if(S.source==="live")return; var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
 
   /* CONNECT CONTRACT — the buy gate. Verifies code on chain, same as the console panels. */
   async function connect(){
@@ -3259,14 +3291,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ set("Connect failed: "+((e&&e.message)||e),"err"); }
   }
 
-  function startTimers(){ if(S.reduce)return; S.timers=[setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000),setInterval(driftPositions,650)]; }
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(driftPositions,650));
+    if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
   window.Desk={
     open:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=false; document.body.style.overflow="hidden";
       S.reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
-      if(!S.live.length){ renderTicks(); setRegime(); for(var i=0;i<4;i++)S.live.push(makeCoin()); renderList(); renderPos(); }
-      stopTimers(); startTimers(); },
+      renderTicks(); setRegime();
+      if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
+      renderList(); renderPos();
+      stopTimers(); startTimers(); pollFeed(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers(); },
     pick:pick, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
   };

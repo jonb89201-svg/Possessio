@@ -20,6 +20,31 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
+    // Radar feed proxy — the AI Assisted Trading desk (public/index.html,
+    // #desk-view) fetches its live coin list from here. The radar runs on a
+    // separate worker with no CORS headers, so a browser fetch cross-origin
+    // would be blocked; this same-origin proxy fetches it server-side. Read-
+    // only passthrough of the public /radar/candidates JSON; 5s edge cache to
+    // match the desk's poll cadence and shield the radar from fan-out.
+    if (pathname === "/api/radar/candidates") {
+      const RADAR = "https://possessio-radar.jonb89201.workers.dev/radar/candidates";
+      try {
+        const r = await fetch(RADAR, {
+          cf: { cacheTtl: 5, cacheEverything: true },
+        } as any);
+        const body = await r.text();
+        return new Response(body, {
+          status: r.status,
+          headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+      } catch {
+        return new Response(JSON.stringify({ error: "RADAR_UNREACHABLE" }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+
     if (pathname === "/api/testnet/drip") {
       const deployed = env.POOL_ADDRESS && env.POOL_ADDRESS.toLowerCase() !== ZERO;
 
