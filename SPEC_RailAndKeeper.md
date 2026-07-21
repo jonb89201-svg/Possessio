@@ -136,8 +136,14 @@ desk copy must say which mode a given deployment is in.
      `usdcOut = received`.
   4. `vault.returnProceeds(intentId, usdcOut)` — proceeds home to the vault
      (hardcoded; the Rail pre-approves the vault for `usdcOut`).
-  5. set `Closed`; call `autoTarget.markExecuted(intentId, usdcOut)` (the on-chain
-     receipt); emit `Exited(intentId, usdcOut, pnl = int(usdcOut) - int(usdcIn))`.
+  5. set `Closed`; emit `Exited(intentId, usdcOut, pnl = int(usdcOut) - int(usdcIn))`
+     — the Rail's money-path receipt. **The Rail does NOT call
+     `autoTarget.markExecuted`** (build decision): that would require the Rail to
+     be AutoTarget's `keeper`, which creates a Rail↔AutoTarget construction cycle
+     (Rail needs AutoTarget's address; AutoTarget's keeper is immutable). Instead
+     the **Keeper** calls `AutoTarget.markExecuted(id, usdcOut)` directly right
+     after `Rail.exit` (§4 step 5). The Rail only ever *reads* AutoTarget, so
+     deploy order stays acyclic and AutoTarget needs no change.
 
 **Owner escape hatch (the un-removable exit, mirrors the FundingVault ethos):**
 - `ownerExit(uint256 intentId, uint256 minUsdcOut)` — `onlyVaultOwner`
@@ -171,9 +177,10 @@ only**; every fund movement it can cause is gated by the Rail + vault + AutoTarg
 4. **Resolve:** the instant price crosses, call `AutoTarget.resolveIntent(id,
    observedPrice)` — the authoritative on-chain trigger (`NotTriggered` price-gates
    a premature call). *This is "the quick."*
-5. **Exit:** call `Rail.exit(id, minUsdcOut)` — sells, returns to vault, marks
-   executed. `Rail.exit` re-checks the AutoTarget resolution on-chain, so even a
-   buggy keeper cannot sell an unresolved position.
+5. **Exit:** call `Rail.exit(id, minUsdcOut)` — sells, returns to vault. `Rail.exit`
+   re-checks the AutoTarget resolution on-chain, so even a buggy keeper cannot sell
+   an unresolved position. Then call `AutoTarget.markExecuted(id, usdcOut)` to write
+   the intent's on-chain receipt (the Rail doesn't — §3 exit step 5).
 
 **Bounds (what a rogue/broken keeper can and cannot do):**
 - **Cannot** over-draw: vault caps gate `drawForTrade`.
