@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {PossessioX402Core} from "../src/PossessioX402Core.sol";
+import {MockInfraSink} from "./X402TestnetMocks.sol";
 
 /// @dev Exposes the REAL internal _decayedVelocity() and lets the test set the
 ///      two storage inputs it reads. No reimplementation of the decay math -
@@ -14,7 +15,7 @@ contract DecayHarness is PossessioX402Core {
             bytes32(0),          // root      (unused by decay)
             0,                   // dustFloor (unused by decay)
             address(0x1111),     // payToken
-            address(0x2222),     // treasury
+            address(new MockInfraSink(address(0))), // heartSink (infra-sink marker; funds path unused by decay)
             address(0x3333),     // operator
             address(0x4444),     // deploymentFeeSource (distinct -> valve ok)
             1e12,                // operationalCap

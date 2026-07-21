@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {PossessioX402Core} from "../src/PossessioX402Core.sol";
 import {HandshakeLib} from "../src/libraries/HandshakeLib.sol";
-import {MockEIP3009USDC} from "./X402TestnetMocks.sol";
+import {MockEIP3009USDC, MockInfraSink, NotAnInfraSink} from "./X402TestnetMocks.sol";
 
 /// @notice WO 2026-07-06: fork-prove the DoD items that need no real economics,
 ///         at the RATIFIED TESTNET PLACEHOLDER values (NOT production - #22 open):
@@ -45,6 +45,7 @@ contract X402TestnetProofTest is Test {
 
     PossessioX402Core internal core;
     address internal usdc;
+    MockInfraSink internal heart; // stands in for the Heart (surplus sink)
     bool internal forkMode;
 
     // three DISTINCT parties (WO rule; line-345 guard needs feeSource distinct)
@@ -86,11 +87,13 @@ contract X402TestnetProofTest is Test {
         leafB = HandshakeLib.hashLeaf(SECRET_B, spare);
         bytes32 root = HandshakeLib.hashNode(leafA, leafB);
 
+        heart = new MockInfraSink(usdc);
+
         core = new PossessioX402Core({
             root:                 root,
             dustFloor:            DUST_FLOOR,
             _payToken:            usdc,
-            _treasuryDestination: treasury,
+            _heartSink:           address(heart),
             _operatorDestination: operator,
             _deploymentFeeSource: feeSource,
             _operationalCap:      OPERATIONAL_CAP,
@@ -225,13 +228,13 @@ contract X402TestnetProofTest is Test {
             assertLe(core.operationalPoolBalance(), OPERATIONAL_CAP, "pool never exceeds cap");
         }
         assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP, "5 x 20 USDC toll = cap, exactly");
-        assertEq(_bal(treasury), 0, "nothing swept before the cap");
+        assertEq(heart.received(), 0, "nothing routed to the Heart before the cap");
     }
 
-    /// DoD #14: a settlement pushing the pool over the cap sends the EXACT
-    /// overflow to treasuryDestination, atomically, in the same tx - never
-    /// more, never less. (The 6th settle at the placeholder numbers.)
-    function test_DoD14_exactSurplusSweepsOneWay() public {
+    /// DoD #14: a settlement pushing the pool over the cap routes the EXACT
+    /// overflow INTO THE HEART (receiveInfraFunds), atomically, in the same tx -
+    /// never more, never less. (The 6th settle at the placeholder numbers.)
+    function test_DoD14_exactSurplusRoutesToHeart() public {
         for (uint256 i = 0; i < 5; i++) _settle(_signedAuth());
         assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP);
 
@@ -240,15 +243,15 @@ contract X402TestnetProofTest is Test {
         uint256 toll = a.value - basePrice; // pool is AT cap -> entire toll is surplus
 
         vm.expectEmit(false, false, false, true, address(core));
-        emit PossessioX402Core.TreasurySurplusSwept(toll);
+        emit PossessioX402Core.HeartSurplusRouted(toll);
         _settle(a);
 
         assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP, "pool pinned at cap");
-        assertEq(_bal(treasury), toll, "treasury got the exact overflow");
+        assertEq(heart.received(), toll, "Heart got the exact overflow");
     }
 
     /// DoD #14 (fuzz leg): for ANY basePrice in a sane band, once the pool is
-    /// at cap the treasury receives exactly the toll of every further settle.
+    /// at cap the Heart receives exactly the toll of every further settle.
     function testFuzz_DoD14_surplusIsExact(uint96 rawBase) public {
         uint256 basePrice = bound(uint256(rawBase), 10_000000, 5_000_000000); // 10..5000 USDC
         vm.prank(seller);
@@ -258,14 +261,14 @@ contract X402TestnetProofTest is Test {
         while (core.operationalPoolBalance() < OPERATIONAL_CAP) {
             _settle(_signedAuth());
         }
-        uint256 treasuryBefore = _bal(treasury);
+        uint256 heartBefore = heart.received();
 
         Auth memory a = _signedAuth();
         uint256 toll = a.value - basePrice;
         _settle(a);
 
         assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP, "pool never exceeds cap");
-        assertEq(_bal(treasury) - treasuryBefore, toll, "exact overflow, never more or less");
+        assertEq(heart.received() - heartBefore, toll, "exact overflow, never more or less");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -388,32 +391,59 @@ contract X402TestnetProofTest is Test {
     /// header's intentional omission - both are outbound).
     function test_DoD23_valveIntegrityStructural() public {
         bytes32 root = keccak256("any");
+        address H = address(heart); // a live infra-sink so the valve/zero checks are reached
 
+        // feeSource == operator -> valve violation
         vm.expectRevert(PossessioX402Core.ValveIntegrityViolation.selector);
-        new PossessioX402Core(root, DUST_FLOOR, usdc, treasury, operator, operator,
+        new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, operator,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
 
+        // feeSource == heartSink -> valve violation (inbound == outbound Heart)
         vm.expectRevert(PossessioX402Core.ValveIntegrityViolation.selector);
-        new PossessioX402Core(root, DUST_FLOOR, usdc, treasury, operator, treasury,
+        new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, H,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
 
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
-        new PossessioX402Core(root, DUST_FLOOR, address(0), treasury, operator, feeSource,
+        new PossessioX402Core(root, DUST_FLOOR, address(0), H, operator, feeSource,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, address(0), operator, feeSource,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
-        new PossessioX402Core(root, DUST_FLOOR, usdc, treasury, address(0), feeSource,
+        new PossessioX402Core(root, DUST_FLOOR, usdc, H, address(0), feeSource,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
-        new PossessioX402Core(root, DUST_FLOOR, usdc, treasury, operator, address(0),
+        new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, address(0),
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
 
         // intentional-omission shape: both outbound to one address - ALLOWED
+        // (heartSink == operator; the Heart is still a valid infra-sink).
         PossessioX402Core merged = new PossessioX402Core(root, DUST_FLOOR, usdc,
-            treasury, treasury, feeSource,
+            H, H, feeSource,
             OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
-        assertEq(merged.treasuryDestination(), merged.operatorDestination(), "treasury==operator is by design");
+        assertEq(merged.heartSink(), merged.operatorDestination(), "heartSink==operator is by design");
+    }
+
+    /// DoD #24 (council 2026-07-20): constructor reverts FeeSinkInterfaceMismatch
+    /// when heartSink is not a live infra-sink — an EOA (no code) or a real
+    /// contract missing the isInfraSink() marker. Mirrors the factory brick-guard;
+    /// makes the critical surplus-into-Heart push un-brickable by construction.
+    function test_DoD24_heartBrickGuard() public {
+        bytes32 root = keccak256("any");
+
+        // EOA heartSink -> no code -> pre-check reverts.
+        vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
+        new PossessioX402Core(root, DUST_FLOOR, usdc, makeAddr("eoa"), operator, feeSource,
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+
+        // real contract, no isInfraSink() marker -> try/catch reverts.
+        address wrong = address(new NotAnInfraSink());
+        vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
+        new PossessioX402Core(root, DUST_FLOOR, usdc, wrong, operator, feeSource,
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+
+        // the live infra-sink constructs cleanly (positive control).
+        new PossessioX402Core(root, DUST_FLOOR, usdc, address(heart), operator, feeSource,
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
     }
 }

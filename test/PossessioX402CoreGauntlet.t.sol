@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {PossessioX402Core} from "../src/PossessioX402Core.sol";
 import {HandshakeLib} from "../src/libraries/HandshakeLib.sol";
-import {MockEIP3009USDC} from "./X402TestnetMocks.sol";
+import {MockEIP3009USDC, MockInfraSink, NotAnInfraSink} from "./X402TestnetMocks.sol";
 
 /// @notice ADVERSARIAL gauntlet for PossessioX402Core — the attacker-driven
 ///         complement to the DoD proof suite (PossessioX402CoreTestnet.t.sol).
@@ -25,6 +25,7 @@ contract PossessioX402CoreGauntletTest is Test {
 
     PossessioX402Core internal core;
     MockEIP3009USDC internal usdc;
+    MockInfraSink internal heart; // stands in for the Heart (surplus sink)
 
     address internal treasury = makeAddr("treasury");
     address internal operator = makeAddr("operator");
@@ -45,6 +46,7 @@ contract PossessioX402CoreGauntletTest is Test {
     function setUp() public {
         buyer = vm.addr(buyerPk);
         usdc = new MockEIP3009USDC();
+        heart = new MockInfraSink(address(usdc));
 
         bytes32 leafA = HandshakeLib.hashLeaf(SECRET_A, buyer);
         bytes32 leafB = HandshakeLib.hashLeaf(SECRET_B, spare);
@@ -54,7 +56,7 @@ contract PossessioX402CoreGauntletTest is Test {
             root: root,
             dustFloor: DUST_FLOOR,
             _payToken: address(usdc),
-            _treasuryDestination: treasury,
+            _heartSink: address(heart),
             _operatorDestination: operator,
             _deploymentFeeSource: feeSource,
             _operationalCap: OPERATIONAL_CAP,
@@ -241,17 +243,19 @@ contract PossessioX402CoreGauntletTest is Test {
         core.receiveDeploymentFee(0);
     }
 
-    function test_deploymentFee_overCap_sweepsOneWay() public {
+    function test_deploymentFee_overCap_routesToHeart() public {
         vm.prank(feeSource);
         usdc.approve(address(core), type(uint256).max);
-        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        uint256 heartBefore = heart.received();
 
-        // push MORE than the cap in one shot; the excess must sweep one-way.
+        // push MORE than the cap in one shot; the excess must route one-way
+        // INTO THE HEART via the accounted door (not a raw treasury transfer).
         vm.prank(feeSource);
         core.receiveDeploymentFee(OPERATIONAL_CAP + 30_000000);
 
         assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP, "pool capped exactly");
-        assertEq(usdc.balanceOf(treasury), treasuryBefore + 30_000000, "surplus swept one-way to treasury");
+        assertEq(heart.received(), heartBefore + 30_000000, "surplus routed one-way into the Heart");
+        assertEq(usdc.balanceOf(address(heart)), 30_000000, "Heart holds the surplus USDC");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -339,7 +343,7 @@ contract PossessioX402CoreGauntletTest is Test {
             root: root,
             dustFloor: DUST_FLOOR,
             _payToken: address(usdc),
-            _treasuryDestination: treasury,
+            _heartSink: address(heart),
             _operatorDestination: operator,
             _deploymentFeeSource: operator, // == operator -> ingress could feed egress
             _operationalCap: OPERATIONAL_CAP,
@@ -347,5 +351,95 @@ contract PossessioX402CoreGauntletTest is Test {
             _floorPerUnit: FLOOR_PER_UNIT,
             _velocityHalflife: VELOCITY_HALFLIFE
         });
+    }
+
+    function test_constructor_rejects_feeSourceEqualsHeart() public {
+        bytes32 root = HandshakeLib.hashNode(
+            HandshakeLib.hashLeaf(SECRET_A, buyer), HandshakeLib.hashLeaf(SECRET_B, spare)
+        );
+        // feeSource == heartSink would wire the inbound fee path to an outbound
+        // destination — same valve violation, now against the Heart.
+        vm.expectRevert(PossessioX402Core.ValveIntegrityViolation.selector);
+        new PossessioX402Core({
+            root: root,
+            dustFloor: DUST_FLOOR,
+            _payToken: address(usdc),
+            _heartSink: address(heart),
+            _operatorDestination: operator,
+            _deploymentFeeSource: address(heart),
+            _operationalCap: OPERATIONAL_CAP,
+            _absoluteFloor: ABSOLUTE_FLOOR,
+            _floorPerUnit: FLOOR_PER_UNIT,
+            _velocityHalflife: VELOCITY_HALFLIFE
+        });
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        HEART BRICK-GUARD (heartSink must be a live infra-sink)
+    //////////////////////////////////////////////////////////////*/
+
+    function test_constructor_rejects_heartSink_EOA() public {
+        // An EOA (no code) — the code-length pre-check reverts.
+        address eoa = makeAddr("eoaHeart");
+        bytes32 root = HandshakeLib.hashNode(
+            HandshakeLib.hashLeaf(SECRET_A, buyer), HandshakeLib.hashLeaf(SECRET_B, spare)
+        );
+        vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
+        new PossessioX402Core({
+            root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
+            _heartSink: eoa, _operatorDestination: operator, _deploymentFeeSource: feeSource,
+            _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+        });
+    }
+
+    function test_constructor_rejects_heartSink_wrongContract() public {
+        // Real code, but no isInfraSink() marker — the try/catch reverts.
+        address wrong = address(new NotAnInfraSink());
+        bytes32 root = HandshakeLib.hashNode(
+            HandshakeLib.hashLeaf(SECRET_A, buyer), HandshakeLib.hashLeaf(SECRET_B, spare)
+        );
+        vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
+        new PossessioX402Core({
+            root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
+            _heartSink: wrong, _operatorDestination: operator, _deploymentFeeSource: feeSource,
+            _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+        });
+    }
+
+    function test_constructor_accepts_realInfraSink() public {
+        // The positive control — a live infra-sink constructs cleanly.
+        bytes32 root = HandshakeLib.hashNode(
+            HandshakeLib.hashLeaf(SECRET_A, buyer), HandshakeLib.hashLeaf(SECRET_B, spare)
+        );
+        PossessioX402Core ok = new PossessioX402Core({
+            root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
+            _heartSink: address(heart), _operatorDestination: operator, _deploymentFeeSource: feeSource,
+            _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+        });
+        assertEq(ok.heartSink(), address(heart), "heartSink wired");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        settleCall surplus routes into the Heart (not treasury)
+    //////////////////////////////////////////////////////////////*/
+
+    function test_settleCall_surplusOverCap_routesToHeart() public {
+        // Fill the operating pool to the cap via deployment fee first, so the
+        // next settleCall's toll is pure surplus routed to the Heart.
+        vm.prank(feeSource);
+        usdc.approve(address(core), type(uint256).max);
+        vm.prank(feeSource);
+        core.receiveDeploymentFee(OPERATIONAL_CAP); // pool at cap, heart untouched
+        assertEq(heart.received(), 0, "no surplus yet");
+
+        // one real settlement; pool is at cap, so its whole toll is surplus.
+        Auth memory a = _validAuth();
+        _settle(buyer, seller, channelId, a);
+
+        assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP, "pool stays at cap");
+        assertGt(heart.received(), 0, "settleCall toll surplus routed into the Heart");
     }
 }

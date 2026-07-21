@@ -1,0 +1,29 @@
+-- migration 0023: rug-gate calibration — NULL means UNKNOWN, never PASS.
+-- Ratified by full council 2026-07-20 (AUDIT_PACKET_RADAR.md, finding P1-c).
+--
+-- WHAT CHANGED (code, not schema): `strat_take` in screen.ts previously read
+--   `gateRug !== 0` — a NULL rug gate (SOLANA_RPC_URL unset/unreachable, or the
+--   on-chain read pending) counted as NOT-FAILED, i.e. a silent PASS. That is the
+--   same False-Green species FIX B removed from the fork suites: a check that
+--   passes when its dependency is absent. It now requires an AFFIRMATIVE pass
+--   (`gateRug === 1`), mirroring gate_dev which already required `=== 1`. An
+--   unknown rug read now SUPPRESSES the take and logs a warning (skip loudly).
+--
+-- WHY THIS IS A DOCUMENTATION MIGRATION (no DDL): the change is in the take
+-- COMPUTATION, not the table shape. `gate_rug` already records NULL / 0 / 1
+-- distinctly, so post-fix rows are self-distinguishing:
+--     strat_take=1                     -> momentum + fresh dev + rug AFFIRMED pass
+--     strat_take=0 AND gate_rug IS NULL -> take suppressed: rug UNKNOWN (RPC gap)
+--     strat_take=0 AND gate_rug=0       -> take suppressed: rug HARD FAIL (whale)
+--
+-- ROW-PROVENANCE (per council §5 — future queries must know the boundary):
+--   * Rows with qualified_ms BEFORE this migration's deploy were measured under
+--     the old `!== 0` rule. HOWEVER, an audit of the frozen n=77 window proved
+--     every take there carried gate_rug=1 with a real top_holder_share (zero
+--     NULLs; 112/279 qualified coins actively failed the gate). So NO historical
+--     take flips under the new rule — the old autonomous verdict (n=77, -8%,
+--     rug 39%) already satisfies the calibrated semantics and remains valid.
+--   * The calibration therefore protects the NEW (AI-assisted) forward ledger,
+--     whose early samples a silent RPC outage would otherwise have poisoned.
+--
+-- No table alteration. This file is the schema-history record of the boundary.

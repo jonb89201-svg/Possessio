@@ -17,7 +17,7 @@ The council architecture integrates their native output rather than directing it
 
 Every line of every contract was authored by AI council members across months of sessions. The architect did not write code; the architect routed substrate between seats, adjudicated decisions, and ratified what the council produced. Where a council member invented a primitive that became load-bearing in V2 architecture (X-LINK, MAVAN Merchant Identity, SAL), the spec acknowledges the inventor at the section documenting that primitive.
 
-Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. **778 passed / 0 failed / 2 skipped across 38 suites** (verified 2026-07-15; run `forge test` for the live tally). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
+Everything in this README can be confirmed by inspection. Read the source. Run `forge test`. Query the chain. **889 passed / 0 failed / 7 skipped across 46 suites** (verified 2026-07-20; run `forge test` for the live tally). Two V3 contracts (LSTExchangeRate, PossessioPayments) are live on Base mainnet; the remainder are forge-verified or fork-proven and pre-deployment. Run it yourself.
 
 ---
 
@@ -35,7 +35,7 @@ That fact is load-bearing. Mobile-only forces a specific operational discipline 
 forge test
 ```
 
-**Result: 778 passed / 0 failed / 2 skipped (780 total) across 38 suites** -- as of the 2026-07-15 PossessioPool cold-seat re-audit fresh run (`AUDIT_POOL_20260715.md`; arc across the build's history: 487 -> 585 -> 621 -> 690 -> 765 -> 778). The suite is actively extended, so the live `forge test` output is the count of record when this line and the terminal disagree. The suite spans unit, adversarial/gauntlet, invariant, fuzz, ffi, and fork tests; the per-suite breakdown is printed by `forge test` itself. Fork suites skip cleanly when no fork RPC is configured (the 2 skips are intentional mock-mode-only paths).
+**Result: 889 passed / 0 failed / 7 skipped (896 total) across 46 suites** -- as of the 2026-07-20 pre-freeze governance + money-path hardening (arc across the build's history: 487 -> 585 -> 621 -> 690 -> 765 -> 778 -> 889). The suite is actively extended, so the live `forge test` output is the count of record when this line and the terminal disagree. The suite spans unit, adversarial/gauntlet, invariant, fuzz, ffi, and fork tests; the per-suite breakdown is printed by `forge test` itself. Fork suites skip cleanly when no fork RPC is configured (the 7 skips are fork-gated paths that run and pass live, plus one intentional mock-mode variant). The 2026-07-20 additions: the hook's F3 vote-amount binding + `approveInventBySig` (EIP-712, replay-protected), x402Core surplus->Heart brick-guard, and radar rug-gate calibration -- all mutation-verified.
 
 The off-chain organs carry their own suites, all green same-day: radar **12/12**, solana-mcp **11/11**, xtrade constitution gates **22/22** (`node --test` in each directory).
 
@@ -259,7 +259,7 @@ The contracts are the protocol; these are the machine's operational organs. All 
 | Program | What it is | Status |
 |---|---|---|
 | [`worker/`](worker/) + [`public/`](public/) | The **operator console** at [possessio.io](https://possessio.io) -- browser contract explorer + wallet console for every POSSESSIO contract, served by the `possessio` Worker; `worker/drip-endpoint.ts` is the `/api/fuel` testnet drip (KV-rate-limited, on-chain-cooldown-backstopped) | **LIVE** at possessio.io |
-| [`radar/`](radar/) | **possessio-radar** -- pump.fun birth scanner + minute-tape (D1), conviction/ladder hypothesis tracking, live feed as a Farcaster Mini App, BTC news strip, x402 pay-per-call toll routes. CI redeploys `main` every 3h ([`radar-refresh.yml`](.github/workflows/radar-refresh.yml)) | **LIVE** -- tests 12/12 (`cd radar && node --test test/*.mjs`) |
+| [`radar/`](radar/) | **possessio-radar** -- pump.fun birth scanner + minute-tape (D1), conviction/ladder hypothesis tracking, live feed as a Farcaster Mini App, BTC news strip, x402 pay-per-call toll routes. CI redeploys `main` every 3h ([`radar-refresh.yml`](.github/workflows/radar-refresh.yml)) | **LIVE** -- tests 35/35 (`cd radar && node --test --experimental-strip-types test/*.mjs test/*.test.mjs`) -- includes the P4 `screenScan` measurement-core harness |
 | [`mailer/`](mailer/) | **possessio-mailer** -- cron-paced merchant outreach via Resend (2/tick, every 30 min -- deliberate pace, not a blast), D1 lead pipeline, bearer-locked `/status` | **LIVE** -- deployed 2026-07-14 with locked `/status` |
 | [`mcp/solana-mcp/`](mcp/solana-mcp/) | Read-only Solana mainnet JSON-RPC MCP worker -- strict method allowlist (no sends, no writes), key-gated | Deployed -- tests 11/11 |
 | [`mcp/xtrade/`](mcp/xtrade/) | Constitution-gated trading MCP -- RULEBOOK gates (session/rug/entry), $2 per-trade / $20 daily caps enforced server-side, build-only (unsigned payloads; hot path hard-refuses until facts are device-verified) | Build-only by design -- tests 22/22 |

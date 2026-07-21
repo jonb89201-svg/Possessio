@@ -77,6 +77,6 @@ contract DeploySaltPoolCreate3 is Script {
         console2.logBytes32(saltPoolAddr.codehash);
         console2.log("  factory (pull gate) :", FACTORY);
         console2.log("  keeper (compute-only):", keeper);
-        console2.log("NEXT: deploy x402Core, then pool (authorizedSources must include this factory).");
+        console2.log("SALT POOL LIVE: constellation complete (POOL -> x402Core -> factory -> saltPool).");
     }
 }

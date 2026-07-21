@@ -285,7 +285,8 @@ contract POSSESSIO_v2_Invariants_t is Test {
     function test_Invariant_ExecuteInvent_FlooringOnAmount7() public {
         _seedSAV(100 ether);
 
-        bytes32 hash = keccak256("p7");
+        // F3 binding: the approved hash must commit to (this hook, amount, metadata).
+        bytes32 hash = keccak256(abi.encode(address(hook), uint256(7), bytes("")));
         _proposeAndApproveAll(hash);
 
         uint256 treasuryBefore = steel.balanceOf(treasury);
@@ -306,12 +307,13 @@ contract POSSESSIO_v2_Invariants_t is Test {
     function test_Invariant_ExecuteInvent_DivisibleAmount_FullTransfer() public {
         _seedSAV(100 ether);
 
-        bytes32 hash = keccak256("p_clean");
+        uint256 amount = 4 ether;
+        // F3 binding: the approved hash must commit to (this hook, amount, metadata).
+        bytes32 hash = keccak256(abi.encode(address(hook), amount, bytes("")));
         _proposeAndApproveAll(hash);
 
         uint256 treasuryBefore = steel.balanceOf(treasury);
 
-        uint256 amount = 4 ether;
         vm.prank(treasury);
         hook.executeInvent(amount, hash, "");
 
@@ -321,7 +323,8 @@ contract POSSESSIO_v2_Invariants_t is Test {
     function test_Invariant_ExecuteInvent_NoOrphanInClaimables() public {
         _seedSAV(100 ether);
 
-        bytes32 hash = keccak256("p_orphan_check");
+        // F3 binding: the approved hash must commit to (this hook, amount, metadata).
+        bytes32 hash = keccak256(abi.encode(address(hook), uint256(13), bytes("")));
         _proposeAndApproveAll(hash);
 
         vm.prank(treasury);

@@ -105,3 +105,30 @@ contract MockEIP3009USDC {
         emit Transfer(from, to, amount);
     }
 }
+
+interface ITransferFrom {
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+/// @notice Minimal live infra-sink standing in for the Heart (PossessioPool):
+///         the accounted door (receiveInfraFunds, pulls via transferFrom) plus
+///         the isInfraSink() brick-guard marker. x402Core routes surplus here
+///         exactly as it will to the real Heart (forceApprove + receiveInfraFunds).
+///         USDC-agnostic (takes an address) so it works offline AND on a fork
+///         where the pay token is real Base USDC.
+contract MockInfraSink {
+    address internal immutable usdc;
+    uint256 public received;
+    constructor(address u) { usdc = u; }
+    function isInfraSink() external pure returns (bool) { return true; }
+    function receiveInfraFunds(uint256 amount) external {
+        ITransferFrom(usdc).transferFrom(msg.sender, address(this), amount);
+        received += amount;
+    }
+}
+
+/// @notice A real contract WITHOUT the infra-sink marker — the brick-guard
+///         must reject it as heartSink (has code, but isInfraSink() missing).
+contract NotAnInfraSink {
+    function ping() external pure returns (bool) { return true; }
+}

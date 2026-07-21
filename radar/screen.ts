@@ -495,15 +495,32 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
       topShare = await topHolderShare(env, r.token_address as string, curveAcct);
       if (topShare !== null) gateRug = topShare <= rugMaxTop ? 1 : 0;
     } catch { /* leave NULL — not evaluated */ }
-    // MOMENTUM + composite take (migration 0021). entry_vel = climb rate into the
-    // band = (entry_mc - birth_mc)/age. strat_take = the full validated entry
-    // filter: momentum in band AND fresh dev AND rug not failed (pending/NULL
-    // counts as not-failed until the on-chain read lands). Paper — records the
-    // strategy's picks; the rest are still recorded for taken-vs-rejected compare.
+    // MOMENTUM + composite take (migration 0021; RECALIBRATED migration 0023).
+    // entry_vel = climb rate into the band = (entry_mc - birth_mc)/age.
+    // strat_take = the full validated entry filter: momentum in band AND fresh
+    // dev AND rug AFFIRMATIVELY passed.
+    //
+    // RATIFIED CALIBRATION (council 2026-07-20, AUDIT_PACKET_RADAR P1-c — FIX B's
+    // principle applied to the radar): a NULL rug gate means UNKNOWN, never PASS.
+    // The old `gateRug !== 0` counted a pending/failed-RPC read as not-failed —
+    // the same False-Green species as a fork test that passes when its dependency
+    // is absent. strat_take now requires an AFFIRMATIVE pass (`gateRug === 1`),
+    // mirroring gate_dev which already requires `=== 1`. An unknown rug read
+    // suppresses the take (recorded strat_take=0 with gate_rug NULL — distinct
+    // from a hard rug fail, gate_rug=0). Provenance: the n=77 window carried ZERO
+    // NULL rug gates (RPC was live; 112/279 actively failed), so no historical
+    // take flips — this guards the NEW AI-assisted ledger against a silent RPC
+    // outage poisoning its early samples.
     const mcAtBirth = Number(r.mc_at_birth_usd ?? 0);
     const entryVel = (mcAtBirth > 0 && ageSec > 0) ? (mc - mcAtBirth) / ageSec : null;
-    const stratTake = (entryVel !== null && entryVel >= stratVelLo && entryVel <= stratVelHi
-      && gateDev === 1 && gateRug !== 0) ? 1 : 0;
+    const momentumOk = entryVel !== null && entryVel >= stratVelLo && entryVel <= stratVelHi;
+    const stratTake = (momentumOk && gateDev === 1 && gateRug === 1) ? 1 : 0;
+    // Skip LOUDLY (council): a coin that clears momentum + fresh-dev but whose rug
+    // read is UNKNOWN is a would-be take suppressed only by a missing on-chain
+    // read. Surface it so an RPC outage is visible in logs, never silent.
+    if (stratTake === 0 && gateRug === null && gateDev === 1 && momentumOk) {
+      console.warn(`rug gate UNKNOWN — take suppressed (SOLANA_RPC down?) token=${r.token_address}`);
+    }
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO candidates
          (token_address, symbol, name, creator, qualified_ms, entry_age_sec,
