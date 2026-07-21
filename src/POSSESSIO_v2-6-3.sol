@@ -236,8 +236,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20}         from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20}      from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast}       from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {EIP712}         from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ECDSA}          from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 // Uniswap V4 — real imports from v4-core and v4-periphery
 import {IPoolManager}    from "v4-core/interfaces/IPoolManager.sol";
@@ -381,7 +379,7 @@ contract STEEL is ERC20, ERC20Permit, Ownable2Step {
  *     cast call HOOK_ADDR "getHookPermissions()(bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool)"
  *     Match flags against actual address bits.
  */
-contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, AutomationCompatibleInterface, EIP712 {
+contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, AutomationCompatibleInterface {
     using SafeERC20 for IERC20;
     using SafeCast  for uint256;
     using SafeCast  for int256;
@@ -444,15 +442,6 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
     // SAV constants
     uint256 internal constant INVENT_EXPIRY    = 30 days;
     uint8   internal constant INVENT_THRESHOLD = 3;
-
-    // Council Signer (pre-freeze edit, council-ratified 2026-07-20).
-    // EIP-712 typehash for a gasless seat approval. The signed struct is scoped
-    // to the proposal INSTANCE by `expiry` — a re-proposed round gets a fresh
-    // expiry, so a captured signature from a prior round cannot be replayed.
-    // The EIP-712 domain (chainId + verifyingContract) scopes it to THIS
-    // deployment. See approveInventBySig.
-    bytes32 internal constant APPROVE_INVENT_TYPEHASH =
-        keccak256("ApproveInvent(bytes32 proposalHash,uint256 expiry)");
 
     // v3 — DAI_V3_FEE removed (no V3 DAI swap).
 
@@ -709,7 +698,6 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
     error AlreadyApproved();
     error ThresholdNotMet();
     error ProposalHashMismatch();     // F3: executed amount/metadata do not match the approved hash
-    error StaleApprovalSignature();   // sig scoped to a different proposal instance (expiry)
     error ExceedsClaimable();
     error InsufficientClaimable();
     error NothingToSlash();
@@ -814,7 +802,7 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         address[4] council;
     }
 
-    constructor(DeployParams memory p) Ownable(p.deployer) EIP712("PossessioHook", "1") {
+    constructor(DeployParams memory p) Ownable(p.deployer) {
         if (p.steel          == address(0)) revert InvalidAddress();
         if (p.poolManager    == address(0)) revert InvalidAddress();
         if (p.treasury       == address(0)) revert InvalidAddress();
@@ -2015,43 +2003,6 @@ contract PossessioHook is IUnlockCallback, ReentrancyGuard, Ownable2Step, Automa
         p.hasApproved[msg.sender] = true;
         p.approvals++;
         emit InventApproved(proposalHash, msg.sender, p.approvals);
-    }
-
-    /**
-     * @notice Step 2 (gasless) — a relayer submits a council seat's EIP-712-signed
-     *         approval. Same effect as approveInvent, but msg.sender need not be the
-     *         seat, so seats never need gas or a hot key (Council Signer §4).
-     *         Replay-protected on both axes the signature must be unambiguous about:
-     *           - cross-deployment: the EIP-712 domain binds chainId + this contract;
-     *           - resubmission: the signed `expiry` binds the sig to THIS proposal
-     *             instance — proposeInvent resets approvals with a fresh expiry on
-     *             re-propose, so a captured prior-round sig fails the expiry match.
-     *         The recovered signer must be a council seat and must not have already
-     *         approved this round (mirrors approveInvent's dedup).
-     */
-    function approveInventBySig(
-        bytes32 proposalHash,
-        uint256 expiry,
-        bytes calldata signature
-    ) external savNotPaused notSlashed {
-        Proposal storage p = proposals[proposalHash];
-        if (p.expiry == 0)               revert ProposalNotFound();
-        // Expiry compared against a 30-day window; validator's ~12s manipulation window is immaterial.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= p.expiry) revert ProposalExpired();
-        if (p.executed)                  revert ProposalAlreadyExecuted();
-        if (p.expiry != expiry)          revert StaleApprovalSignature(); // instance-scope
-
-        bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(APPROVE_INVENT_TYPEHASH, proposalHash, expiry))
-        );
-        address seat = ECDSA.recover(digest, signature);
-        if (!_isCouncilMember(seat))     revert OnlyCouncilMember();
-        if (p.hasApproved[seat])         revert AlreadyApproved();
-
-        p.hasApproved[seat] = true;
-        p.approvals++;
-        emit InventApproved(proposalHash, seat, p.approvals);
     }
 
     /**

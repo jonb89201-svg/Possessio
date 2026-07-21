@@ -343,6 +343,69 @@ contract POSSESSIO_v2_Invariants_t is Test {
     }
 
     // ======================================================================
+    //  F3 amount-binding (pre-freeze edit, council-ratified 2026-07-20).
+    //  executeInvent requires proposalHash == keccak256(abi.encode(this,
+    //  amount, metadata)) — the Architect cannot execute an amount/metadata the
+    //  council did not commit to. (approveInventBySig was ruled out by the
+    //  EIP-170 ceiling; only this binding survives — Council Signer §4.)
+    // ======================================================================
+
+    function test_F3_executeWithBoundHash_succeeds() public {
+        _seedSAV(100 ether);
+        uint256 amount = 40 ether;
+        bytes memory meta = "legitimate work item";
+        // The canonical formula — the SAME one the contract's binding uses.
+        bytes32 hash = keccak256(abi.encode(address(hook), amount, meta));
+        _proposeAndApproveAll(hash);
+
+        uint256 tBefore = steel.balanceOf(treasury);
+        vm.prank(treasury);
+        hook.executeInvent(amount, hash, meta);
+        // cross-source parity: a hash built test-side is accepted by the contract.
+        assertEq(steel.balanceOf(treasury) - tBefore, amount, "bound execution transferred the amount");
+    }
+
+    function test_F3_executeWithMismatchedAmount_reverts() public {
+        _seedSAV(100 ether);
+        uint256 approved = 40 ether;
+        bytes memory meta = "approved for 40";
+        bytes32 hash = keccak256(abi.encode(address(hook), approved, meta));
+        _proposeAndApproveAll(hash);
+
+        // Architect tries to execute a DIFFERENT amount against the approved hash.
+        vm.prank(treasury);
+        vm.expectRevert(PossessioHook.ProposalHashMismatch.selector);
+        hook.executeInvent(50 ether, hash, meta);
+    }
+
+    function test_F3_executeWithMismatchedMetadata_reverts() public {
+        _seedSAV(100 ether);
+        uint256 amount = 40 ether;
+        bytes32 hash = keccak256(abi.encode(address(hook), amount, bytes("the approved reason")));
+        _proposeAndApproveAll(hash);
+
+        vm.prank(treasury);
+        vm.expectRevert(PossessioHook.ProposalHashMismatch.selector);
+        hook.executeInvent(amount, hash, "a different reason");
+    }
+
+    function test_F3_replay_executesAtMostOnce() public {
+        _seedSAV(100 ether);
+        uint256 amount = 40 ether;
+        bytes memory meta = "once";
+        bytes32 hash = keccak256(abi.encode(address(hook), amount, meta));
+        _proposeAndApproveAll(hash);
+
+        vm.prank(treasury);
+        hook.executeInvent(amount, hash, meta);
+
+        // second execution of the same approved hash must revert (p.executed).
+        vm.prank(treasury);
+        vm.expectRevert(PossessioHook.ProposalAlreadyExecuted.selector);
+        hook.executeInvent(amount, hash, meta);
+    }
+
+    // ======================================================================
     //  P2-INV-6 -- Re-propose timing boundary
     // ======================================================================
 
