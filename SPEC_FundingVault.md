@@ -112,8 +112,22 @@ execution.**
   P&L = `amount − drawn[intentId]`. Emits `TradeClosed(intentId, drawn, amount,
   pnl)`. This is the receipt row the transactions page renders.
 
-**Views:** `outstanding()`, `available()` (= balance − outstanding),
-`drawableToday()`, `getTrade(intentId)`.
+**Views:** `outstanding()`, `available()`, `drawableToday()`,
+`getTrade(intentId)`.
+
+> **BUILD NOTE (Code Integrity, found in build — for council review):** this
+> spec first wrote `available = balance − outstanding`. That **double-counts**
+> under the ratified physical-transfer custody model (§3): `drawForTrade`
+> physically sends USDC OUT to `tradeDestination`, so the vault's token balance
+> *already* nets out at-rail (outstanding) capital. Example: fund 10k, draw 3k →
+> `balanceOf(vault)` is 7k and `outstanding` is 3k; `balance − outstanding` would
+> wrongly report 4k idle and **trap 3k of the owner's idle capital**, violating
+> §5.1 (owner-always-can-exit). The built contract therefore uses
+> **`available() = balanceOf(vault)`** (idle capital physically held); the at-rail
+> capital is inherently un-withdrawable until `returnProceeds` brings it home,
+> which *is* the "bounded only by outstanding" intent of §5.1. `withdraw` and the
+> draw idle-ceiling both bind on `available()`. This is the one substantive
+> spec↔build reconciliation; flagged here so the council reviews it explicitly.
 
 **Events (the receipt skeleton, per the transactions-page spec):**
 `Funded`, `Withdrawn`, `TradeFunded`, `TradeClosed`, `CapChanged`, `Paused`.

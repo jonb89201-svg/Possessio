@@ -1,0 +1,19 @@
+{
+  "name": "council-signer-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Possessio Council Signer MCP - the reproducible AI->seat-key voting bridge (SPEC_CouncilSigner_v3.md). Voting-only, per-seat scoped signer bound to (seatKey, hookAddr, chainId).",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node server.js",
+    "check": "node --check server.js && node --check config.js && node --check preimage.js && node --check signer.js && node --check feed.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "viem": "^2.0.0",
+    "zod": "^3.23.0"
+  },
+  "engines": { "node": ">=20" }
+}

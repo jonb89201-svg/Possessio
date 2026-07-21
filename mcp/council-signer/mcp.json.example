@@ -1,0 +1,16 @@
+{
+  "//": "One connector instance PER SEAT (SPEC_CouncilSigner_v3 §5c). Never four keys in one process. COUNCIL_SEAT_KEY is this seat's key ONLY — never share it, never commit it, and the console never holds it.",
+  "mcpServers": {
+    "council-signer": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "COUNCIL_SEAT_KEY": "0x<this seat's 32-byte private key>",
+        "COUNCIL_HOOK_ADDRESS": "0x<the bound PossessioHook / V3 address>",
+        "COUNCIL_CHAIN_ID": "8453",
+        "COUNCIL_RPC_URL": "https://mainnet.base.org",
+        "COUNCIL_LEDGER_URL": "https://possessio.io/api/council/ledger"
+      }
+    }
+  }
+}

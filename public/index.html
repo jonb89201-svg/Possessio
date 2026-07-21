@@ -378,6 +378,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
     <button class="btn oxide" id="connect-btn">Connect Wallet</button>
     <button class="btn oxide" id="lr-launch-btn">Launch</button>
     <button class="btn" id="markets-link" type="button">Markets</button>
+    <button class="btn" id="council-link" type="button">Council</button>
   </div>
   <div class="row" style="margin-top:10px">
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
@@ -972,6 +973,312 @@ const CONTRACTS = [
     ],
   },
 
+  // 4. PossessioFundingVault — the trader's hard-capped, closed-loop capital source
+  {
+    key:"VAULT", label:"Funding Vault", title:"PossessioFundingVault",
+    chain:"Base", chainId:8453,
+    desc:"The trader's hard-capped, closed-loop capital source. You (owner) fund it and can ALWAYS withdraw idle capital — even while trades are open or the vault is paused. The desk (trader) can only draw within three immutable caps (per-trade, concurrent-outstanding, daily) and only to a hardcoded trading rail; sale proceeds route back in via returnProceeds. No admin, no upgrade path, no arbitrary-recipient path: withdraw always goes to you, draws always go to the one fixed rail. Everything the desk can ever touch is bounded, on-chain, and auditable.",
+    access:"Two immutable roles — owner (fund / withdraw-to-self / pause / caps) + trader (drawForTrade / returnProceeds). Recipients hardcoded.",
+    categories:[
+      { id:"funds", label:"Fund & Withdraw", blurb:"Put capital in, take idle capital out — you can always exit",
+        names:["fund","withdraw","pause","unpause","available","outstanding","paused"] },
+      { id:"caps", label:"Risk Caps", blurb:"The three hard limits on the desk — tighten now, raise on a 24h delay",
+        names:["decreaseCap","queueCapIncrease","executeCapIncrease","cancelCapIncrease","maxPerTrade","maxOutstanding","dailyDrawCap","drawableToday","queuedRaise"] },
+      { id:"desk", label:"Trading Desk", blurb:"The bounded surface: draw capital for a trade, return the proceeds",
+        names:["drawForTrade","returnProceeds","getTrade","available","outstanding","drawableToday"] },
+      { id:"setup", label:"Roles & Setup", blurb:"The immutable wiring — who owns it, who trades, where draws go",
+        names:["owner","trader","tradeDestination","payToken","LIMIT_DELAY","WINDOW_SIZE","windowStart","dailyDrawn"] },
+    ],
+    functions:[
+
+      // ── Owner — fund / exit / pause ──
+      { kind:"write", name:"fund", gated:["anyone"],
+        plain:{ label:"Add Money", desc:"Put trading capital into the vault. Anyone can top it up, but only you can ever take it out. Approve the vault to spend your USDC first.", inputHint:"USDC amount to deposit" },
+        desc:"Deposit USDC into the vault. Not owner-gated (top-ups are harmless — only owner withdraws). Caller must have approved `amount` to this vault first. Reverts ZeroAmount if 0.",
+        inputs:[{name:"amount",type:"uint256",hint:"USDC, 6 decimals (1000000000 = 1,000 USDC). Approve this vault to spend it first."}], outputs:[] },
+      { kind:"write", name:"withdraw", gated:["onlyOwner"],
+        plain:{ label:"Take Money Out", desc:"Move idle capital back to your own wallet. You can always exit — this works even while trades are open and even while the vault is paused. You just can't pull capital that's currently out in a live trade (it isn't here — it returns when the trade closes).", inputHint:"USDC amount to withdraw to yourself" },
+        desc:"Withdraw idle capital to the owner (hardcoded recipient). Bounded only by available() (the vault's idle balance). Capital out in open trades physically sits at tradeDestination, so it is inherently un-withdrawable until returnProceeds brings it home. NOT blocked by pause. Reverts ExceedsAvailable if amount > available(), ZeroAmount if 0.",
+        inputs:[{name:"amount",type:"uint256",hint:"USDC 6-dec; must be <= available()"}], outputs:[] },
+      { kind:"write", name:"pause", gated:["onlyOwner"], danger:true,
+        plain:{ label:"Freeze Trading", desc:"Stop the desk from drawing any new capital, right away. Your own withdrawals keep working — freezing the desk never traps your money." },
+        desc:"Freeze drawForTrade. Does NOT freeze withdraw (owner can always exit). Instant.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"unpause", gated:["onlyOwner"],
+        plain:{ label:"Resume Trading", desc:"Let the desk draw capital again." },
+        desc:"Resume drawForTrade.",
+        inputs:[], outputs:[] },
+
+      // ── Owner — asymmetric caps (lower instant · raise +24h) ──
+      { kind:"write", name:"decreaseCap", gated:["onlyOwner"],
+        plain:{ label:"Tighten a Limit", desc:"Lower one of the three limits on the desk. Tightening risk always takes effect immediately — no waiting. Pick which limit (0 = biggest single trade, 1 = most out at once, 2 = most per day).", inputHint:"Which limit, and the new lower value" },
+        desc:"Lower a cap. Applies immediately — tightening is always instant. newValue must be strictly below the current value. Reverts InvalidCap otherwise, ZeroAmount if 0.",
+        inputs:[
+          {name:"cap",type:"uint8",hint:"0 = per-trade cap · 1 = concurrent-outstanding cap · 2 = daily-draw cap"},
+          {name:"newValue",type:"uint256",hint:"USDC 6-dec; must be LOWER than the current cap"},
+        ], outputs:[] },
+      { kind:"write", name:"queueCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Raise a Limit — Step 1", desc:"Request a higher limit. Raises don't take effect for 24 hours — a safety delay so that even if your key were stolen, no one could widen a limit and drain the vault in one move. Come back after the wait to apply it (Step 2).", inputHint:"Which limit, and the new higher value" },
+        desc:"Queue a cap raise. Takes effect only after LIMIT_DELAY (24h). newValue must be strictly above the current value. Reverts InvalidCap otherwise.",
+        inputs:[
+          {name:"cap",type:"uint8",hint:"0 = per-trade cap · 1 = concurrent-outstanding cap · 2 = daily-draw cap"},
+          {name:"newValue",type:"uint256",hint:"USDC 6-dec; must be HIGHER than the current cap"},
+        ], outputs:[] },
+      { kind:"write", name:"executeCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Raise a Limit — Step 2", desc:"Apply a higher limit once its 24-hour safety wait has passed. If the wait isn't up yet, this safely does nothing.", inputHint:"Which limit to apply the queued raise for" },
+        desc:"Execute a queued cap raise after LIMIT_DELAY elapsed. Reverts NoIncreaseQueued if none pending, TimelockNotPassed if the 24h hasn't elapsed.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[] },
+      { kind:"write", name:"cancelCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Cancel a Queued Raise", desc:"Call off a pending limit increase before it applies. Immediate." },
+        desc:"Cancel a queued cap raise. Applies immediately (tightening). Reverts NoIncreaseQueued if none pending.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[] },
+
+      // ── Trader — bounded surface ──
+      { kind:"write", name:"drawForTrade", gated:["onlyTrader","notPaused"],
+        plain:{ label:"Draw for a Trade", desc:"The desk pulls capital to open a position. It can only ever draw within all three of your limits and only to the one fixed trading rail — never to an arbitrary address. Each trade needs its own unique id.", inputHint:"A unique trade id, and the amount to draw" },
+        desc:"Release trading capital to tradeDestination, within ALL three caps AND the idle balance: amount<=maxPerTrade, outstanding+amount<=maxOutstanding, dailyDrawn+amount<=dailyDrawCap (rolling 24h), amount<=available(). CEI + nonReentrant. intentId is single-use. Reverts IsPaused / PerTradeCapExceeded / OutstandingCapExceeded / DailyCapExceeded / InsufficientAvailable / TradeAlreadyOpen.",
+        inputs:[
+          {name:"intentId",type:"uint256",hint:"unique id for this trade (single-use — a reused id reverts)"},
+          {name:"amount",type:"uint256",hint:"USDC 6-dec; must pass per-trade, outstanding, daily caps AND be <= available()"},
+        ], outputs:[] },
+      { kind:"write", name:"returnProceeds", gated:["onlyTrader"],
+        plain:{ label:"Return Proceeds", desc:"The desk sends a position's sale proceeds back into the vault and closes out that trade. Whether it made a profit or took a loss, the trade's exposure is cleared exactly — and any profit stays in the vault, growing your war chest.", inputHint:"The trade id being closed, and the USDC coming back" },
+        desc:"Close a trade: pull `amount` proceeds from tradeDestination (must have approved this vault) and clear the exposure. Clears exactly the ORIGINAL draw from outstanding regardless of P&L (a total loss returns 0 and still clears). Realized P&L stays in the vault. Reverts TradeNotOpen if the intent isn't currently open.",
+        inputs:[
+          {name:"intentId",type:"uint256",hint:"the open trade's id"},
+          {name:"amount",type:"uint256",hint:"USDC 6-dec coming back; tradeDestination must approve the vault to pull it (0 allowed = total loss)"},
+        ], outputs:[] },
+
+      // ── Reads — live money ──
+      { kind:"read", name:"available", gated:["read"],
+        plain:{ label:"Idle Capital", blurb:"Money sitting in the vault right now, free to draw or withdraw." },
+        desc:"Idle capital physically held by the vault (== token balance). Because draws transfer USDC OUT to the rail, the balance already nets out at-rail capital. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"outstanding", gated:["read"],
+        plain:{ label:"Out in Trades", blurb:"Capital currently out in open trades, not yet returned." },
+        desc:"Sum of the original draws of all currently-open trades. Cleared exactly on returnProceeds. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"drawableToday", gated:["read"],
+        plain:{ label:"Drawable Today", blurb:"How much the desk can still draw in the current 24-hour window." },
+        desc:"USDC still drawable in the current rolling 24h window (accounts for a window that has already elapsed, which resets the counter). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getTrade", gated:["read"],
+        plain:{ label:"Trade Receipt", blurb:"Look up one trade by id — what was drawn, what came back, and its status." },
+        desc:"Per-intent trade record. status: 0 = none, 1 = open, 2 = closed.",
+        inputs:[{name:"intentId",type:"uint256"}], outputs:[
+          {name:"drawn",type:"uint256"},
+          {name:"returned",type:"uint256"},
+          {name:"status",type:"uint8"},
+        ] },
+
+      // ── Reads — caps ──
+      { kind:"read", name:"maxPerTrade", gated:["read"],
+        plain:{ label:"Per-Trade Limit", blurb:"The most the desk can pull in a single trade." },
+        desc:"Cap 0 — most USDC a single draw can pull. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"maxOutstanding", gated:["read"],
+        plain:{ label:"Concurrent Limit", blurb:"The most that can be out across open trades at once." },
+        desc:"Cap 1 — most USDC out in open trades at once (concurrency). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"dailyDrawCap", gated:["read"],
+        plain:{ label:"Daily Limit", blurb:"The most the desk can draw in any rolling 24-hour window." },
+        desc:"Cap 2 — most USDC drawn per rolling 24h window (rate). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"queuedRaise", gated:["read"],
+        desc:"A queued cap raise for the given cap (0/1/2). executeAfter == 0 means none queued.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[
+          {name:"newValue",type:"uint256"},
+          {name:"executeAfter",type:"uint256"},
+        ] },
+
+      // ── Reads — immutable wiring ──
+      { kind:"read", name:"owner", gated:["read"], desc:"The operator's account — the sovereign role (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"trader", gated:["read"], desc:"The desk + keeper — the bounded role, only address that can draw (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"tradeDestination", gated:["read"], desc:"Hardcoded recipient of every draw / approved source of every return (immutable). No setter exists.",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"payToken", gated:["read"], desc:"The settlement asset — USDC on Base (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"paused", gated:["read"], desc:"True while drawForTrade is frozen. withdraw is never frozen.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"LIMIT_DELAY", gated:["read"], desc:"Delay before a cap RAISE takes effect. Constant 24 hours.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"WINDOW_SIZE", gated:["read"], desc:"Rolling window for the daily draw cap. Constant 24 hours.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"windowStart", gated:["read"], desc:"Start timestamp of the current daily-draw window.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"dailyDrawn", gated:["read"], desc:"USDC drawn so far in the current window. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+    ],
+  },
+
+  // 5. PossessioX402Core — the autonomous trader's metered pay-per-call core
+  {
+    key:"X402", label:"x402 Core", title:"PossessioX402Core",
+    chain:"Base", chainId:8453,
+    desc:"The metered pay-per-call money core (x402). Sellers register a channel and set a base price; each metered call settles a USDC fee (EIP-3009) with an anti-spam fee guard (dust/round-trip/velocity shaping) and a running-minimum floor; the surplus above the operational floor routes INTO the Heart. The metered settleCall and the handshake register() are driven by the x402 request flow (signed off-chain), so the operator surface here is pricing, the surplus/operational path, the guard + velocity reads, and the wiring.",
+    access:"channel seller (setBasePrice) · operator (settleOperationalCosts) · deployment-fee source (receiveDeploymentFee). settleCall/register are flow-driven.",
+    categories:[
+      { id:"pricing", label:"Pricing", blurb:"Claim a channel and set its base price; read the fee math",
+        names:["setBasePrice","channelBasePrice","channelSeller","feeBreakdown","totalFeeBps","getRunningMinimumFloor","FLOOR_PER_UNIT","ABSOLUTE_FLOOR"] },
+      { id:"surplus", label:"Surplus & Heart", blurb:"The operational pool, the drawable surplus, and where it routes",
+        names:["settleOperationalCosts","receiveDeploymentFee","drawableSurplus","operationalPoolBalance","heartSink","operatorDestination","deploymentFeeSource","OPERATIONAL_CAP"] },
+      { id:"guard", label:"Anti-spam Guard", blurb:"Dust / round-trip / shape flags per sender+pool",
+        names:["isFlaggedDustSpam","isFlaggedRoundTrip","guardDustHits","guardShapeHits","guardObservations","DUST_FLOOR","consumed"] },
+      { id:"velocity", label:"Velocity & Floor", blurb:"The decaying call-velocity and the floor it feeds",
+        names:["velocityScaled","lastVelocityTs","VELOCITY_HALFLIFE"] },
+      { id:"wiring", label:"Wiring", blurb:"Tokens, registration, handshake root, metadata",
+        names:["payToken","payTokenERC20","registered","HANDSHAKE_ROOT","metadata"] },
+    ],
+    functions:[
+      { kind:"write", name:"setBasePrice", gated:["channel seller (first-claim)"],
+        plain:{ label:"Set Channel Price", desc:"Claim a channel (first caller becomes its seller) and set the base price per call. Only the channel's seller can change it after." },
+        desc:"Set a channel's base price. First caller for an unclaimed channelId becomes its seller; thereafter only that seller may update. basePrice in USDC 6-dec.",
+        inputs:[{name:"channelId",type:"bytes32"},{name:"basePrice",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"settleOperationalCosts", gated:["onlyOperator"],
+        desc:"Operator draws operational costs from the pool, TO itself, bounded by the drawable surplus above the running-minimum floor. Reverts UnauthorizedCall / InsufficientOperationalFunds / ExceedsDrawableSurplus.",
+        inputs:[{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"receiveDeploymentFee", gated:["onlyDeploymentFeeSource"],
+        desc:"Accounted inbound of a deployment fee from the immutable factory source; any surplus above the operational floor routes into the Heart. Reverts NotDeploymentFeeSource for any other caller.",
+        inputs:[{name:"amount",type:"uint256"}], outputs:[] },
+      { kind:"read", name:"channelBasePrice", gated:["read"], desc:"The base price set for a channel (USDC 6-dec).",
+        inputs:[{name:"",type:"bytes32"}], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"channelSeller", gated:["read"], desc:"The seller who owns a channel (address(0) = unclaimed).",
+        inputs:[{name:"",type:"bytes32"}], outputs:[{type:"address"}] },
+      { kind:"read", name:"feeBreakdown", gated:["read"], desc:"The full fee decomposition for a sender+pool: base, round-trip surcharge, dust surcharge, total (bps).",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{name:"base",type:"uint256"},{name:"roundTrip",type:"uint256"},{name:"dust",type:"uint256"},{name:"total",type:"uint256"}] },
+      { kind:"read", name:"totalFeeBps", gated:["read"], desc:"The total fee (bps) for a sender+pool after guard shaping.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{name:"total",type:"uint256"}] },
+      { kind:"read", name:"getRunningMinimumFloor", gated:["read"], desc:"The current operational floor the pool must retain before surplus is drawable.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"FLOOR_PER_UNIT", gated:["read"], desc:"Floor contribution per unit (constant).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"ABSOLUTE_FLOOR", gated:["read"], desc:"The absolute operational floor (constant).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"drawableSurplus", gated:["read"],
+        plain:{ label:"Drawable Surplus", blurb:"Operational funds above the floor the operator may draw." },
+        desc:"operationalPoolBalance − running-minimum floor (0 if at/below floor).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"operationalPoolBalance", gated:["read"], desc:"USDC held in the operational pool.", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"heartSink", gated:["read"], desc:"The Heart surplus routes into (immutable).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"operatorDestination", gated:["read"], desc:"The immutable operator address settleOperationalCosts pays to.", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"deploymentFeeSource", gated:["read"], desc:"The immutable factory allowed to push deployment fees.", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"OPERATIONAL_CAP", gated:["read"], desc:"Cap on the operational pool (constant).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"isFlaggedDustSpam", gated:["read"], desc:"True if the sender+pool is flagged for dust-spam by the guard.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"isFlaggedRoundTrip", gated:["read"], desc:"True if the sender+pool is flagged for round-trip behavior.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"guardDustHits", gated:["read"], desc:"Dust-hit count for a sender+pool.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{type:"uint32"}] },
+      { kind:"read", name:"guardShapeHits", gated:["read"], desc:"Shape-hit count for a sender+pool.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{type:"uint32"}] },
+      { kind:"read", name:"guardObservations", gated:["read"], desc:"Total guard observations for a sender+pool.",
+        inputs:[{name:"sender",type:"address"},{name:"poolId",type:"bytes32"}], outputs:[{type:"uint32"}] },
+      { kind:"read", name:"DUST_FLOOR", gated:["read"], desc:"The dust threshold (constant).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"consumed", gated:["read"], desc:"True if a settlement nonce/salt has been consumed (replay guard).",
+        inputs:[{name:"",type:"bytes32"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"velocityScaled", gated:["read"], desc:"The current decaying call-velocity (scaled).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"lastVelocityTs", gated:["read"], desc:"Timestamp of the last velocity update.", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"VELOCITY_HALFLIFE", gated:["read"], desc:"Half-life (seconds) of the velocity decay (constant).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"payToken", gated:["read"], desc:"The settlement token (USDC).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"payTokenERC20", gated:["read"], desc:"The USDC ERC20 interface address (same token).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"registered", gated:["read"], desc:"True if an address has completed the handshake registration.",
+        inputs:[{name:"",type:"address"}], outputs:[{type:"bool"}] },
+      { kind:"read", name:"HANDSHAKE_ROOT", gated:["read"], desc:"The merkle root gating handshake registration (immutable).", inputs:[], outputs:[{type:"bytes32"}] },
+      { kind:"read", name:"metadata", gated:["read"], desc:"Contract metadata: (r, p, c) strings.",
+        inputs:[], outputs:[{name:"r",type:"string"},{name:"p",type:"string"},{name:"c",type:"string"}] },
+    ],
+  },
+
+  // 6. PossessioAutoTarget — the trader's exit discipline + fee + trigger
+  {
+    key:"AUTOTARGET", label:"Auto-Target", title:"PossessioAutoTarget",
+    chain:"Base", chainId:8453,
+    desc:"The discipline layer of the trader: it records the human's pick + target, attaches an UN-REMOVABLE -10% stop, charges a per-tx fee (routed into the Heart), and authorizes the exit the instant price crosses target or stop. NON-CUSTODIAL — it never holds the traded token, only the transient fee. openIntent is the desk's job (it needs a signed EIP-3009 fee), so the surface here is the keeper's trigger, the human's cancel, and the views.",
+    access:"onlyKeeper (resolveIntent/markExecuted) · intent owner (cancelIntent). openIntent is fee-gated + desk-driven.",
+    categories:[
+      { id:"trigger", label:"Exit Trigger", blurb:"The keeper's mechanical exit: authorize, then record the receipt",
+        names:["resolveIntent","markExecuted"] },
+      { id:"cancel", label:"Cancel", blurb:"The human bails an un-resolved intent",
+        names:["cancelIntent"] },
+      { id:"intents", label:"Intents & Prices", blurb:"Look up an intent and its target / stop prices",
+        names:["intents","targetPrice","stopPrice","intentCount"] },
+      { id:"config", label:"Rules & Wiring", blurb:"The immutable fee, the un-removable stop, and addresses",
+        names:["PER_TX_FEE","STOP_BPS","feeSink","keeper","payToken","CHAIN_BASE","CHAIN_SOLANA"] },
+    ],
+    functions:[
+      { kind:"write", name:"resolveIntent", gated:["onlyKeeper"],
+        desc:"Authoritative on-chain trigger. Given the observed price, fires TARGET if >= target or STOP if <= the -10% stop; reverts NotTriggered between (price-gated). Sets status Resolved and emits ExitAuthorized. Keeper-only; moves no funds.",
+        inputs:[{name:"id",type:"uint256"},{name:"observedPrice",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"markExecuted", gated:["onlyKeeper"],
+        desc:"Records the off-chain swap receipt after the Rail sold: sets Executed and stores usdcReturned. Requires status Resolved. Moves no funds (non-custodial).",
+        inputs:[{name:"id",type:"uint256"},{name:"usdcReturnedToUser",type:"uint256"}], outputs:[] },
+      { kind:"write", name:"cancelIntent", gated:["intent owner"],
+        plain:{ label:"Cancel My Intent", desc:"Call off an intent you opened, before it resolves. Only you (the author) can, and only while it is still open." },
+        desc:"Cancel an Open intent. onlyIntentOwner; only if status Open. Emits IntentCancelled.",
+        inputs:[{name:"id",type:"uint256"}], outputs:[] },
+      { kind:"read", name:"intents", gated:["read"],
+        plain:{ label:"Intent", blurb:"The full record of an intent: who, which coin, target, stop, status." },
+        desc:"Intent record. status: 0=None,1=Open,2=Resolved,3=Executed,4=Cancelled. exitKind: 0=None,1=Target,2=Stop. tokenRef is a padded EVM address or a Solana mint.",
+        inputs:[{name:"id",type:"uint256"}], outputs:[{name:"user",type:"address"},{name:"tokenRef",type:"bytes32"},{name:"chainTag",type:"uint32"},{name:"entryPrice",type:"uint256"},{name:"targetBps",type:"uint16"},{name:"stopBps",type:"uint16"},{name:"status",type:"uint8"},{name:"exitKind",type:"uint8"},{name:"usdcReturned",type:"uint256"}] },
+      { kind:"read", name:"targetPrice", gated:["read"], desc:"The sell-at-target price for an intent (entryPrice * (10000+targetBps)/10000).",
+        inputs:[{name:"id",type:"uint256"}], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"stopPrice", gated:["read"], desc:"The -10% stop price for an intent (always entryPrice * 9000/10000).",
+        inputs:[{name:"id",type:"uint256"}], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"intentCount", gated:["read"], desc:"Total intents ever opened (also the latest id).", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"PER_TX_FEE", gated:["read"], desc:"The immutable per-open fee (USDC 6-dec), routed into the Heart.", inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"STOP_BPS", gated:["read"], desc:"The un-removable stop, in bps. Always 1000 (-10%).", inputs:[], outputs:[{type:"uint16"}] },
+      { kind:"read", name:"feeSink", gated:["read"], desc:"The Heart the per-tx fee is routed into (immutable).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"keeper", gated:["read"], desc:"The bounded keeper that can resolve/mark (immutable).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"payToken", gated:["read"], desc:"The fee token (USDC).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"CHAIN_BASE", gated:["read"], desc:"Base chainId (8453).", inputs:[], outputs:[{type:"uint32"}] },
+      { kind:"read", name:"CHAIN_SOLANA", gated:["read"], desc:"Solana cluster tag (101) — for Solana-routed intents.", inputs:[], outputs:[{type:"uint32"}] },
+    ],
+  },
+
+  // 7. PossessioRail — the trader's swap + custody engine
+  {
+    key:"RAIL", label:"Trader Rail", title:"PossessioRail",
+    chain:"Base", chainId:8453,
+    desc:"The hand of the Base trader. Buys the token when capital is drawn from the Funding Vault, holds it, and sells it ONLY on an AutoTarget-authorized exit — proceeds hardcoded home to the vault. It is the vault's trader + tradeDestination. enter/exit are the bounded keeper's (the desk); the surface that matters to you as operator is ownerExit — your un-removable force-close — plus sweep and the position views.",
+    access:"onlyKeeper (enter/exit) · onlyVaultOwner (ownerExit/sweep). No admin; the wiring is immutable.",
+    categories:[
+      { id:"owner", label:"Owner Controls", blurb:"Your safety net — force-close a position or rescue a stray token",
+        names:["ownerExit","sweep"] },
+      { id:"desk", label:"Keeper / Desk", blurb:"The bounded execution surface: open and close positions",
+        names:["enter","exit","getPosition"] },
+      { id:"positions", label:"Positions", blurb:"Look up any position by intent id",
+        names:["getPosition","positions"] },
+      { id:"wiring", label:"Wiring", blurb:"The immutable addresses this Rail is bound to",
+        names:["vault","autoTarget","keeper","usdc","dexRouter","CHAIN_BASE"] },
+    ],
+    functions:[
+      { kind:"write", name:"ownerExit", gated:["onlyVaultOwner"],
+        plain:{ label:"Force-Close a Position", desc:"Sell a position and bring the money home to your vault right now — no keeper, no rule needed. Your un-removable exit hatch: you are never trapped by a stuck or offline keeper.", inputHint:"The trade's intent id" },
+        desc:"Force-close an open position without a keeper or an AutoTarget resolution. Sells token->USDC and returns proceeds to the vault. Reverts NotOwner / PositionNotOpen / ZeroMinOut.",
+        inputs:[{name:"intentId",type:"uint256"},{name:"minUsdcOut",type:"uint256",hint:"slippage floor on the sell (USDC 6-dec, must be > 0)"},{name:"poolFee",type:"uint24",hint:"V3 pool fee tier (e.g. 500 / 3000)"}], outputs:[] },
+      { kind:"write", name:"sweep", gated:["onlyVaultOwner"],
+        desc:"Rescue a non-position token mistakenly sent to the Rail, to the vault owner. Reverts on USDC (ProtectedToken) and for a non-owner caller.",
+        inputs:[{name:"token",type:"address"}], outputs:[] },
+      { kind:"write", name:"enter", gated:["onlyKeeper"],
+        desc:"Open a position: draw `size` USDC from the vault (within its caps) and swap to `token`. Bound to the authored AutoTarget intent (Base-tagged, Open, tokenRef==token). Normally the keeper/desk. Reverts NotKeeper/PositionExists/IntentNotOpen/WrongChain/TokenMismatch/Zero*.",
+        inputs:[{name:"intentId",type:"uint256"},{name:"token",type:"address"},{name:"size",type:"uint256",hint:"USDC to draw (6-dec; the vault caps are the hard bound)"},{name:"minTokenOut",type:"uint256",hint:"slippage floor on the buy (must be > 0)"},{name:"poolFee",type:"uint24",hint:"V3 pool fee tier"}], outputs:[] },
+      { kind:"write", name:"exit", gated:["onlyKeeper"],
+        desc:"Close a position on an AUTHORIZED exit: requires AutoTarget to have Resolved the intent (target or -10% stop crossed). Sells token->USDC and returns proceeds to the vault. Reverts ExitNotAuthorized if the rule has not fired.",
+        inputs:[{name:"intentId",type:"uint256"},{name:"minUsdcOut",type:"uint256"},{name:"poolFee",type:"uint24"}], outputs:[] },
+      { kind:"read", name:"getPosition", gated:["read"],
+        plain:{ label:"Position", blurb:"What a trade holds: token, USDC drawn, token amount, status." },
+        desc:"Per-intent position. status: 0=None, 1=Open, 2=Closed.",
+        inputs:[{name:"intentId",type:"uint256"}], outputs:[{name:"token",type:"address"},{name:"usdcIn",type:"uint256"},{name:"tokenAmount",type:"uint256"},{name:"status",type:"uint8"}] },
+      { kind:"read", name:"positions", gated:["read"], desc:"Raw position mapping (same fields as getPosition).",
+        inputs:[{name:"",type:"uint256"}], outputs:[{name:"token",type:"address"},{name:"usdcIn",type:"uint256"},{name:"tokenAmount",type:"uint256"},{name:"status",type:"uint8"}] },
+      { kind:"read", name:"vault", gated:["read"], desc:"The FundingVault this Rail draws from (immutable).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"autoTarget", gated:["read"], desc:"The AutoTarget that authorizes exits (immutable, read-only to the Rail).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"keeper", gated:["read"], desc:"The bounded keeper allowed to enter/exit (immutable).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"usdc", gated:["read"], desc:"The settlement token (USDC).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"dexRouter", gated:["read"], desc:"The DEX router used for swaps (Uniswap V3 SwapRouter02).", inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"CHAIN_BASE", gated:["read"], desc:"Base chainId (8453) — the only chainTag this Rail serves.", inputs:[], outputs:[{type:"uint32"}] },
+    ],
+  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -990,7 +1297,7 @@ const state = {
 };
 
 // Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
-const TAB_ORDER = ["PAY", "HOOK"];
+const TAB_ORDER = ["PAY", "HOOK", "X402", "VAULT", "AUTOTARGET", "RAIL"];
 
 function loadAddresses() {
   try {
@@ -2254,10 +2561,11 @@ refreshTreasury();
   var C={
     v3:{name:"POSSESSIO V3",short:"V3",net:"base",desc:"Your own token, fee engine, and council vault — the full protocol in one contract.",config:"token"},
     pay:{name:"Payments",short:"PAY",net:"base",desc:"Inbound payment rails with a working reserve. Take payments, hold a stable buffer.",config:"payments"},
+    vault:{name:"Funding Vault",short:"VAULT",net:"base",desc:"A hard-capped wallet for an automated trading desk. You fund it and can always withdraw; the desk only draws within limits you set.",config:"vault"},
   };
   var NET={ base:{main:"Base",test:"Base Sepolia",cls:"base"}, eth:{main:"Ethereum",test:"Ethereum Sepolia",cls:"eth"} };
   var STEPS=["Choose","Own","Set up","Deploy"], TITLES=["What do you want to launch?","How do you want to own it?","Set it up","Deploy"];
-  var L={env:"test",step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+  var L={env:"test",step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:"",perTrade:"",outstanding:"",daily:"",trader:""},dep:"ready",addr:""};
 
   function esc(x){return String(x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
   function isAddr(a){return /^0x[a-fA-F0-9]{40}$/.test(a);}
@@ -2273,7 +2581,7 @@ refreshTreasury();
     return '<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function sumF(i){ if(i===0){return esc(C[L.contract].name)+" \u00b7 "+nlabel(L.contract);}
     if(i===1)return L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
-    if(i===2){var c=C[L.contract]; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
+    if(i===2){var c=C[L.contract]; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); if(c.config==="vault")return "Caps $"+esc(L.cfg.perTrade||"\u2014")+" / $"+esc(L.cfg.outstanding||"\u2014")+" / $"+esc(L.cfg.daily||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
     return ""; }
   function tcls(){return L.env==="test"?"t":"";}
 
@@ -2294,6 +2602,15 @@ refreshTreasury();
     var c=C[L.contract],t=tcls();
     if(c.config==="payments")
       return '<div class="lr-field"><label>Stable reserve ceiling (USD)</label><input inputmode="numeric" placeholder="e.g. 2280" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">Working capital the contract holds as a buffer.</div></div>'+lockedP([["Token / oracle / router","Set for you"],["Sweep slippage guard","Set for you"]],"lr-lp")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(L.cfg.supply.trim()?"":"disabled")+'>Continue</button>';
+    if(c.config==="vault"){
+      var vok=L.cfg.perTrade.trim()&&L.cfg.outstanding.trim()&&L.cfg.daily.trim()&&isAddr(L.cfg.trader);
+      return '<div class="lr-field"><label>Most per trade (USDC)</label><input inputmode="numeric" placeholder="e.g. 3500" value="'+esc(L.cfg.perTrade)+'" oninput="LaunchRail.setCfg(\'perTrade\',this.value)"><div class="lr-hint">The biggest single position the desk can open.</div></div>'
+        +'<div class="lr-field"><label>Most out at once (USDC)</label><input inputmode="numeric" placeholder="e.g. 10000" value="'+esc(L.cfg.outstanding)+'" oninput="LaunchRail.setCfg(\'outstanding\',this.value)"><div class="lr-hint">The most that can be live across all open trades at the same time.</div></div>'
+        +'<div class="lr-field"><label>Most per day (USDC)</label><input inputmode="numeric" placeholder="e.g. 20000" value="'+esc(L.cfg.daily)+'" oninput="LaunchRail.setCfg(\'daily\',this.value)"><div class="lr-hint">The most the desk can draw in any rolling 24 hours.</div></div>'
+        +'<div class="lr-field"><label>Trading desk address</label><input placeholder="0x… your keeper / trading agent" value="'+esc(L.cfg.trader)+'" oninput="LaunchRail.setCfg(\'trader\',this.value)" autocomplete="off" spellcheck="false"><div class="lr-hint">The only address allowed to draw. It can never reach your main wallet — worst case is bounded to what\'s in the vault.</div></div>'
+        +lockedP([["Token","USDC — set for you"],["Where draws go","Your own account"],["Raising a cap","24h delay · lowering is instant"]],"lr-lvt")
+        +'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(vok?"":"disabled")+'>Continue</button>';
+    }
     var ok=L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim();
     return '<div class="lr-in2"><div class="lr-field"><label>Token name</label><input placeholder="e.g. Riverside Dollar" value="'+esc(L.cfg.name)+'" oninput="LaunchRail.setCfg(\'name\',this.value)" maxlength="32"></div><div class="lr-field" style="max-width:120px"><label>Ticker</label><input placeholder="RIV" value="'+esc(L.cfg.ticker)+'" oninput="LaunchRail.setCfg(\'ticker\',this.value.toUpperCase())" maxlength="6"></div></div><div class="lr-field"><label>Total supply</label><input inputmode="numeric" placeholder="1,000,000,000" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">All minted to you at launch.</div></div><div class="lr-field"><label>Starting liquidity (ETH)</label><input inputmode="decimal" placeholder="0.05" value="'+esc(L.cfg.liq)+'" oninput="LaunchRail.setCfg(\'liq\',this.value)"><div class="lr-hint">Seeds the pool so people can trade it.</div></div>'+lockedP([["Fee","2% L.A.T.E."],["Split","25% LP \u00b7 75% \u2192 cbETH"],["Hook flags","0x08C8 (mined for you)"]],"lr-lv")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(ok?"":"disabled")+'>Continue</button>';
   }
@@ -2336,14 +2653,14 @@ refreshTreasury();
   window.LaunchRail={
     askEnv:function(){document.getElementById("lr-envmodal").hidden=false;},
     closeEnv:function(){document.getElementById("lr-envmodal").hidden=true;},
-    open:function(env){L={env:env,step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+    open:function(env){L={env:env,step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:"",perTrade:"",outstanding:"",daily:"",trader:""},dep:"ready",addr:""};
       document.getElementById("lr-envmodal").hidden=true;document.getElementById("lr-view").hidden=false;document.body.style.overflow="hidden";render();},
     close:function(){document.getElementById("lr-view").hidden=true;document.body.style.overflow="";},
     info:function(id){var p=document.getElementById(id);if(p)p.classList.toggle("open");},
     pickC:function(k){L.contract=k;render();},
     pickO:function(o){L.owner=o;render();},
     setSafe:function(v){L.safe=v.trim();goOk(isAddr(L.safe));},
-    setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
+    setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":c.config==="vault"?(L.cfg.perTrade.trim()&&L.cfg.outstanding.trim()&&L.cfg.daily.trim()&&isAddr(L.cfg.trader)):(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
     edit:function(i){L.step=i;if(i<3)L.dep="ready";render();scrollA();},
     next:function(){L.step++;render();scrollA();},
     deploy:function(){
@@ -2792,7 +3109,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     <p class="sub">Pick a network - opens DexScreener in a new tab.</p>
     <a class="mkts-choice base" href="https://dexscreener.com/base" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Base</span><span class="arw">DexScreener &#8599;</span></a>
     <a class="mkts-choice sol" href="https://dexscreener.com/solana" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Solana</span><span class="arw">DexScreener &#8599;</span></a>
-    <a class="mkts-choice sol" href="https://possessio-radar.jonb89201.workers.dev/feed" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd" style="background:#3ddc84"></span>AI Live Selection</span><span class="arw">Autonomous trader feed &#8599;</span></a>
+    <button class="mkts-choice" id="mkts-desk" type="button" style="cursor:pointer"><span class="net"><span class="nd" style="background:#3ddc84"></span>AI Assisted Trading</span><span class="arw">Trading desk &#8594;</span></button>
     <button class="mkts-cancel" id="mkts-cancel" type="button">Cancel</button>
   </div>
 </div>
@@ -2809,7 +3126,530 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   if(cancel)cancel.addEventListener("click",hide);
   modal.addEventListener("click",function(e){if(e.target===modal)hide();});
   Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
+  var deskBtn=document.getElementById("mkts-desk");
+  if(deskBtn)deskBtn.addEventListener("click",function(){hide();if(window.Desk)window.Desk.open();});
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
+})();
+</script>
+
+<!-- ============================================================
+     AI ASSISTED TRADING — in-console desk (the prototype), opened
+     from Markets > "AI Assisted Trading". The coin list is ungated
+     (watch freely). The BUY buttons are gated by the Connect Contract
+     bar: connect your chain's trader and the targets go live. Preview-
+     honest — nothing is signed/spent until a real trader is connected.
+     ============================================================ -->
+<style>
+  #desk-view{position:fixed;inset:0;z-index:160;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    --ground:#F2F4F8;--card:#FFFFFF;--dink:#0B1220;--dink-dim:#5A6576;--dink-faint:#8A93A3;
+    --dline:#E6E9F0;--dline-soft:#EEF1F6;--dacc:#2F55F7;--dacc-ink:#FFFFFF;--dacc-soft:#EAEEFE;
+    --up:#12A150;--up-soft:#E4F5EC;--down:#E5484D;--down-soft:#FCE9E9;
+    --cockpit:#0E1424;--cockpit-ink:#F3F6FF;--cockpit-dim:#8FA0C8;--cockpit-line:#232C44;
+    --stop:#E5484D;--stop-soft:#FCECEC;--dmono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --dshadow:0 1px 2px rgba(11,18,32,.04),0 4px 16px rgba(11,18,32,.05);
+    background:var(--ground);color:var(--dink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.4}
+  #desk-view[hidden]{display:none}
+  @media (prefers-color-scheme:dark){#desk-view{
+    --ground:#080B12;--card:#0F141F;--dink:#EAEFF7;--dink-dim:#9AA6B8;--dink-faint:#69748A;
+    --dline:#1C2434;--dline-soft:#161D2A;--dacc:#5D7BFF;--dacc-ink:#0A0E16;--dacc-soft:#18203A;
+    --up:#3ED07E;--up-soft:#122A1E;--down:#FF6168;--down-soft:#2C1618;
+    --cockpit:#05070C;--cockpit-ink:#EAF0FF;--cockpit-dim:#7C8CB4;--cockpit-line:#161E31;
+    --stop:#FF6168;--stop-soft:#2C1618;--dshadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35)}}
+  #desk-view .dk-wrap{max-width:560px;margin:0 auto;padding:0 12px calc(env(safe-area-inset-bottom) + 40px)}
+  #desk-view .dk-mono{font-family:var(--dmono);font-variant-numeric:tabular-nums}
+  #desk-view button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  /* top bar */
+  #desk-view .dk-top{position:sticky;top:0;z-index:8;background:var(--ground);border-bottom:1px solid var(--dline);padding:calc(env(safe-area-inset-top) + 10px) 0 8px}
+  #desk-view .dk-top .dk-wrap{display:flex;align-items:center;gap:10px}
+  #desk-view .dk-back{font-size:22px;color:var(--dink-dim);width:26px;line-height:1}
+  #desk-view .dk-brand{font-weight:800;letter-spacing:-.02em;font-size:15px}
+  #desk-view .dk-brand small{font-weight:600;color:var(--dink-dim);font-size:11px}
+  #desk-view .dk-spacer{flex:1}
+  #desk-view .dk-chip{font-size:11px;font-weight:600;color:var(--dink-dim);background:var(--dline-soft);padding:4px 9px;border-radius:999px;white-space:nowrap}
+  #desk-view .dk-chip.live{color:var(--up)}
+  /* connect bar */
+  #desk-view .dk-connect{background:var(--card);border:1px solid var(--dline);border-radius:14px;box-shadow:var(--dshadow);padding:13px 14px;margin:12px 0 4px}
+  #desk-view .dk-connect .cl{font-size:11px;color:var(--dink-faint);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+  #desk-view .dk-connect .cl .lock{font-size:12px}
+  #desk-view .dk-connect .crow{display:flex;gap:8px}
+  #desk-view .dk-connect input{flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:12px;color:var(--dink)}
+  #desk-view .dk-connect input:focus{border-color:var(--dacc);outline:none}
+  #desk-view .dk-connect .cbtn{padding:10px 16px;background:var(--dacc);color:var(--dacc-ink);border-radius:9px;font-weight:700;font-size:13px;white-space:nowrap}
+  #desk-view .dk-connect .cbtn:disabled{opacity:.5}
+  #desk-view .dk-connect .cstat{margin-top:8px;font-size:12px;line-height:1.4}
+  #desk-view .dk-connect .cstat.ok{color:var(--up)}#desk-view .dk-connect .cstat.err{color:var(--down)}#desk-view .dk-connect .cstat.info{color:var(--dink-faint)}
+  #desk-view .dk-connect.on{border-color:color-mix(in srgb,var(--up) 45%,var(--dline))}
+  /* cockpit */
+  #desk-view .dk-cockpit{background:var(--cockpit);border-radius:14px;margin:12px 0;padding:10px 4px;box-shadow:var(--dshadow);overflow:hidden}
+  #desk-view .dk-ch{display:flex;align-items:center;gap:8px;padding:0 10px 8px;color:var(--cockpit-dim);font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  #desk-view .dk-ch .dot{width:7px;height:7px;border-radius:50%;background:var(--up)}
+  #desk-view .dk-ticks{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+  #desk-view .dk-tick{padding:6px 10px;border-left:1px solid var(--cockpit-line)}#desk-view .dk-tick:first-child{border-left:none}
+  #desk-view .dk-tick .sym{color:var(--cockpit-dim);font-size:10.5px;font-weight:700}
+  #desk-view .dk-tick .px{color:var(--cockpit-ink);font-size:15px;font-weight:600;margin-top:2px;transition:color .25s}
+  #desk-view .dk-tick .px.up{color:var(--up)}#desk-view .dk-tick .px.down{color:var(--down)}
+  #desk-view .dk-tick .d{font-size:10.5px;font-weight:600;margin-top:1px}#desk-view .dk-tick .d.up{color:var(--up)}#desk-view .dk-tick .d.down{color:var(--down)}
+  #desk-view .dk-tide{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:.02em}
+  #desk-view .dk-tide.green{background:rgba(22,163,74,.22);color:#86efac}#desk-view .dk-tide.red{background:rgba(220,38,38,.22);color:#fca5a5}#desk-view .dk-tide.flat{background:rgba(148,163,184,.18);color:#cbd5e1}
+  #desk-view .dk-slope{font-size:10px;color:var(--cockpit-dim);font-family:var(--dmono)}
+  #desk-view #dk-wsconn{font-size:10px;color:var(--cockpit-dim)}#desk-view #dk-wsconn.on{color:#4ade80}
+  /* intro */
+  #desk-view .dk-h h1{font-size:20px;font-weight:800;letter-spacing:-.02em;margin:8px 2px 4px}
+  #desk-view .dk-h p{color:var(--dink-dim);font-size:13px;margin:0 2px 12px}
+  #desk-view .dk-how{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}
+  #desk-view .dk-how .step{font-size:11px;color:var(--dink-dim);background:var(--card);border:1px solid var(--dline);padding:6px 10px;border-radius:999px;font-weight:600}
+  #desk-view .dk-how .step b{color:var(--dink)}#desk-view .dk-how .step.stop b{color:var(--stop)}
+  #desk-view .dk-sl{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:var(--dink-faint);letter-spacing:.06em;text-transform:uppercase;margin:16px 2px 8px}
+  #desk-view .dk-sl .count{color:var(--dacc);background:var(--dacc-soft);padding:1px 8px;border-radius:999px}
+  #desk-view .dk-sl .rt{flex:1;text-align:right;color:var(--dink-faint);text-transform:none;letter-spacing:0;font-weight:600}
+  /* coin rows */
+  #desk-view .dk-list{display:flex;flex-direction:column;gap:8px}
+  #desk-view .coin{background:var(--card);border:1px solid var(--dline);border-radius:14px;padding:12px;box-shadow:var(--dshadow);display:grid;grid-template-columns:1fr auto;gap:10px}
+  #desk-view .coin.hot{border-color:color-mix(in srgb,var(--dacc) 45%,var(--dline))}
+  #desk-view .coin-top{display:flex;align-items:center;gap:8px}
+  #desk-view .ico{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;font-size:15px;background:var(--dline-soft)}
+  #desk-view .cn .s{font-weight:700;font-size:14px}
+  #desk-view .cn .n{color:var(--dink-faint);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+  #desk-view .ctag{font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:5px;text-transform:uppercase}
+  #desk-view .ctag.sol{background:#E9E2FB;color:#6B3FD6}#desk-view .ctag.base{background:#DEE6FF;color:#1D46E0}
+  #desk-view .cmeta{margin-top:7px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  #desk-view .mc{font-family:var(--dmono);font-size:13px;font-weight:600}#desk-view .mc .arw{color:var(--dink-faint);font-weight:400}
+  #desk-view .pct{font-family:var(--dmono);font-size:12px;font-weight:700}#desk-view .pct.up{color:var(--up)}#desk-view .pct.down{color:var(--down)}
+  #desk-view .age{color:var(--dink-faint);font-size:10.5px;font-family:var(--dmono)}
+  #desk-view .read{margin-top:6px;font-size:10.5px;font-weight:700;display:inline-block}
+  #desk-view .read.go{color:var(--dacc)}#desk-view .read.fast{color:var(--down)}#desk-view .read.slow,#desk-view .read.reading{color:var(--dink-faint)}#desk-view .read.flow{color:var(--up)}
+  #desk-view .act{display:flex;flex-direction:column;align-items:flex-end;gap:6px;justify-content:center}
+  #desk-view .targets{display:flex;gap:5px}
+  #desk-view .tbtn{font-family:var(--dmono);font-weight:700;font-size:12.5px;padding:8px 11px;border-radius:10px;border:1px solid var(--dline);background:var(--card);color:var(--dink);min-width:44px;text-align:center;transition:transform .08s,border-color .15s}
+  #desk-view .tbtn:hover{border-color:var(--dacc);color:var(--dacc)}#desk-view .tbtn:active{transform:scale(.94)}
+  #desk-view .tbtn.t50{background:var(--dacc);color:var(--dacc-ink);border-color:var(--dacc)}
+  #desk-view .tbtn.t25{background:var(--dacc-soft);color:var(--dacc);border-color:transparent}
+  #desk-view .stopchip{font-family:var(--dmono);font-size:10px;font-weight:700;color:var(--stop);background:var(--stop-soft);padding:3px 8px;border-radius:999px}
+  #desk-view .stopchip::before{content:"● ";font-size:8px}
+  #desk-view .lockmini{font-size:9.5px;font-weight:700;color:var(--dink-faint);letter-spacing:.02em}
+  /* positions */
+  #desk-view .pos{background:var(--card);border:1px solid var(--dline);border-radius:14px;box-shadow:var(--dshadow);overflow:hidden}
+  #desk-view .pos-empty{padding:20px 14px;text-align:center;color:var(--dink-faint);font-size:12.5px}
+  #desk-view .prow{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:12px 13px;border-top:1px solid var(--dline-soft)}#desk-view .prow:first-child{border-top:none}#desk-view .prow.done{opacity:.78}
+  #desk-view .psym{font-weight:700;font-size:13.5px}#desk-view .pmeta{font-size:10.5px;color:var(--dink-faint);font-family:var(--dmono);margin-top:2px}
+  #desk-view .pstate{font-family:var(--dmono);font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px}
+  #desk-view .pstate.armed{color:var(--dacc);background:var(--dacc-soft)}#desk-view .pstate.hit{color:var(--up);background:var(--up-soft)}#desk-view .pstate.stopped{color:var(--down);background:var(--down-soft)}
+  #desk-view .ptarget{font-family:var(--dmono);font-size:11px;color:var(--dink-dim);text-align:right}
+  /* sheet */
+  #desk-view .dk-scrim{position:fixed;inset:0;background:rgba(6,10,20,.5);z-index:12;display:none;align-items:flex-end;justify-content:center}
+  #desk-view .dk-scrim.on{display:flex}
+  #desk-view .dk-sheet{background:var(--card);width:100%;max-width:560px;border-radius:20px 20px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -8px 40px rgba(0,0,0,.3)}
+  #desk-view .dk-sheet h3{margin:2px 0;font-size:18px;font-weight:800}
+  #desk-view .dk-sheet .sub{color:var(--dink-dim);font-size:12.5px;margin:0 0 14px}
+  #desk-view .terms{border:1px solid var(--dline);border-radius:12px;overflow:hidden;margin-bottom:12px}
+  #desk-view .trow{display:flex;justify-content:space-between;align-items:center;padding:11px 13px;font-size:13px;border-top:1px solid var(--dline-soft)}#desk-view .trow:first-child{border-top:none}
+  #desk-view .trow .k{color:var(--dink-dim)}#desk-view .trow .v{font-family:var(--dmono);font-weight:700}#desk-view .trow .v.up{color:var(--up)}#desk-view .trow .v.stop{color:var(--stop)}
+  #desk-view .note-h{font-size:11.5px;color:var(--dink-dim);background:var(--dline-soft);border-radius:10px;padding:10px 12px;margin-bottom:14px;line-height:1.45}#desk-view .note-h b{color:var(--dink)}
+  #desk-view .sh-act{display:flex;gap:8px}
+  #desk-view .b-sec{flex:0 0 auto;padding:14px 18px;border-radius:12px;border:1px solid var(--dline);background:var(--card);font-weight:700;font-size:14px;color:var(--dink-dim)}
+  #desk-view .b-pri{flex:1;padding:14px;border-radius:12px;background:var(--dacc);color:var(--dacc-ink);font-weight:800;font-size:14.5px}
+  #desk-view .previewbar{position:sticky;bottom:0;z-index:6;margin-top:14px;background:var(--dacc-soft);color:var(--dacc);border:1px solid color-mix(in srgb,var(--dacc) 30%,transparent);border-radius:12px;padding:9px 13px;font-size:11.5px;font-weight:600;text-align:center}
+  #desk-view .foot{margin:16px 2px 0;font-size:11px;color:var(--dink-faint);line-height:1.5}#desk-view .foot b{color:var(--dink-dim)}
+  #desk-view .dk-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);z-index:14;background:var(--dink);color:var(--ground);padding:11px 16px;border-radius:12px;font-size:13px;font-weight:600;opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;max-width:90vw}
+  #desk-view .dk-toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+<div id="desk-view" hidden>
+  <div class="dk-top"><div class="dk-wrap">
+    <button class="dk-back" onclick="Desk.close()" aria-label="Back to console">&#8249;</button>
+    <div class="dk-brand">Possessio <small>AI Assisted Trading</small></div>
+    <div class="dk-spacer"></div>
+    <span class="dk-chip live" id="dk-regime">&#9679; regime</span>
+  </div></div>
+  <div class="dk-wrap">
+    <!-- CONNECT CONTRACT BAR — gates the buy buttons (list stays open) -->
+    <div class="dk-connect" id="dk-connect">
+      <div class="cl"><span class="lock">&#128274;</span> Connect your trader to enable buys</div>
+      <div class="crow">
+        <input id="dk-addr" placeholder="0x… your Base trading vault (chain 8453)" autocomplete="off" spellcheck="false">
+        <button class="cbtn" id="dk-cbtn" onclick="Desk.connect()">Connect Contract</button>
+      </div>
+      <div class="cstat info" id="dk-cstat">Watching is open to everyone. To place a trade, connect your deployed trader here — same as any contract on the console.</div>
+    </div>
+
+    <div class="dk-cockpit">
+      <div class="dk-ch"><span class="dot"></span> LIVE &middot; 4-CHAIN TAPE <span id="dk-tide" class="dk-tide flat">&#9679; tide</span><span id="dk-slope" class="dk-slope"></span><span style="flex:1"></span><span id="dk-wsconn">connecting&hellip;</span></div>
+      <div class="dk-ticks" id="dk-ticks"></div>
+    </div>
+
+    <div class="dk-h">
+      <h1>You pick. The desk holds the exit.</h1>
+      <p>AI screens coins in real time, across chains. You choose one and how much upside you want. A hard <b style="color:var(--stop)">&minus;10% stop is always on</b>. The keeper fires the exit the instant it crosses.</p>
+      <div class="dk-how">
+        <span class="step"><b>1.</b> pick a coin</span>
+        <span class="step"><b>2.</b> tap a target</span>
+        <span class="step stop"><b>3.</b> &minus;10% stop, always</span>
+        <span class="step"><b>4.</b> keeper exits it</span>
+      </div>
+    </div>
+
+    <div class="dk-sl">Live selection &middot; in the window now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
+    <div class="dk-list" id="dk-list"></div>
+
+    <div class="dk-sl">Your open trades <span class="rt" id="dk-posnote"></span></div>
+    <div class="pos" id="dk-pos"><div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div></div>
+
+    <div class="previewbar" id="dk-preview">Preview &middot; no trader connected &mdash; nothing is signed or spent. This is the button flow.</div>
+
+    <div class="foot"><p><b>The stop is a threshold, not a fill guarantee.</b> On a real rug the market fills worse than &minus;10% &mdash; the desk cuts your decision lag and enforces discipline, it can't beat gapping liquidity. Most picks fail by design; the asymmetry (small capped losses vs the occasional runner) is what carries it. Not financial advice.</p></div>
+  </div>
+  <div class="dk-scrim" id="dk-scrim" onclick="if(event.target===this)Desk.closeSheet()"><div class="dk-sheet" id="dk-sheet"></div></div>
+  <div class="dk-toast" id="dk-toast"></div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var CHAIN_ID=8453; // the Base trader; Solana picks route to a Solana desk (not yet launched)
+  var FEED_URL="/api/radar/candidates"; // same-origin proxy -> possessio-radar /radar/candidates
+  var $=function(s){return document.querySelector(s);};
+  var fmt=function(n){ if(n>=1e6) return "$"+(n/1e6).toFixed(2)+"M"; if(n>=1e3) return "$"+(n/1e3).toFixed(1)+"k"; return "$"+Number(n).toFixed(0); };
+  var pctStr=function(a,b){ var p=(b-a)/a*100; return (p>=0?"+":"")+p.toFixed(0)+"%"; };
+  var money=function(p){ return p>=100? p.toLocaleString(undefined,{maximumFractionDigits:0}) : p>=1? p.toFixed(2) : p.toFixed(4); };
+
+  var chains=[{sym:"BTC",px:66270,d24:0.4},{sym:"ETH",px:1920,d24:1.1},{sym:"SOL",px:88.5,d24:2.3},{sym:"DOGE",px:0.132,d24:-0.9}];
+  // Screened pool — shape mirrors /radar/candidates. Multi-chain by design.
+  var POOL=[
+    {s:"FARTCOON",n:"The Fart Raccoon",ch:"sol",ico:"🦝",entry:15700,read:["reading","reading…"]},
+    {s:"DISABULL",n:"DISABULL",ch:"sol",ico:"🐮",entry:4100,read:["fast","too fast"]},
+    {s:"$LOW",n:"low iq club",ch:"sol",ico:"🧢",entry:4500,read:["slow","slow grind"]},
+    {s:"RACCBIT",n:"Raccbit",ch:"sol",ico:"🐰",entry:9100,read:["go","◆ GO"]},
+    {s:"CASHCAT",n:"Cash Cat",ch:"base",ico:"🐱",entry:22000,read:["flow","● flow in"]},
+    {s:"NIETZ",n:"Nietzschean Jimothy",ch:"sol",ico:"🥸",entry:8600,read:["go","◆ GO"]},
+    {s:"DOLLY",n:"Dolly The Megamind",ch:"base",ico:"🧠",entry:11300,read:["fast","too fast"]},
+    {s:"WIBBIT",n:"Wibbit Wibbit",ch:"base",ico:"🐸",entry:11300,read:["slow","slow grind"]},
+    {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
+  ];
+  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:""};
+
+  function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
+    return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
+      '<div class="d '+(c.d24>=0?"up":"down")+' dk-mono">'+(c.d24>=0?"+":"")+c.d24.toFixed(2)+'% 24h</div></div>';
+  }).join(""); }
+  function driftTicks(){ if(S.wsLive)return; chains.forEach(function(c){ var mv=(Math.random()-0.5)*c.px*0.0006; c.px=Math.max(c.px+mv,0.0001);
+    var el=$("#dk-px-"+c.sym); if(!el)return; el.textContent="$"+money(c.px); el.classList.remove("up","down"); void el.offsetWidth; el.classList.add(mv>=0?"up":"down"); }); }
+  // Real 4-chain tape — Coinbase's keyless ticker WS (pushes on every trade),
+  // the same source the radar feed uses. Drift above is only the pre-connect
+  // fallback (stops the moment a live tick lands).
+  function setTick(sym,px,up){ var c=chains.filter(function(x){return x.sym===sym;})[0]; if(c)c.px=px; var el=$("#dk-px-"+sym); if(!el)return;
+    el.textContent="$"+money(px); el.classList.remove("up","down"); void el.offsetWidth; el.classList.add(up?"up":"down"); }
+  function connectWS(){
+    var conn=$("#dk-wsconn"), last={};
+    try{ S.ws=new WebSocket("wss://ws-feed.exchange.coinbase.com"); }catch(e){ scheduleWS(); return; }
+    S.ws.onopen=function(){ S.wsRetry=0; if(conn){conn.textContent="● live";conn.className="on";}
+      try{ S.ws.send(JSON.stringify({type:"subscribe",channels:[{name:"ticker",product_ids:["BTC-USD","ETH-USD","SOL-USD","DOGE-USD"]}]})); }catch(e){} };
+    S.ws.onmessage=function(m){ var d; try{ d=JSON.parse(m.data); }catch(e){ return; }
+      if(d.type==="ticker"&&d.price&&d.product_id){ var sym=d.product_id.split("-")[0], p=parseFloat(d.price);
+        S.wsLive=true; var up=(last[sym]==null||p>=last[sym]); last[sym]=p; setTick(sym,p,up); } };
+    S.ws.onclose=function(){ S.wsLive=false; if(conn){conn.textContent="reconnecting…";conn.className="";} scheduleWS(); };
+    S.ws.onerror=function(){ try{ S.ws.close(); }catch(e){} };
+  }
+  function scheduleWS(){ var v=$("#desk-view"); if(!v||v.hidden)return;
+    var t=setTimeout(function(){ var vv=$("#desk-view"); if(vv&&!vv.hidden)connectWS(); },Math.min(30000,1500*Math.pow(2,S.wsRetry++))); S.timers.push(t); }
+  // BTC macro tide — 15m/1h slope from the feed's own Chainlink-on-Base oracle
+  // read (d.btc.now/m15/h1). Entries into a red tide underperform (measured), so
+  // this is live enter/hold context, not decoration.
+  function updateTide(btc){ if(!btc||btc.now==null)return; var el=$("#dk-tide"),sl=$("#dk-slope");
+    var s15=btc.m15?((btc.now-btc.m15)/btc.m15*100):null, s1h=btc.h1?((btc.now-btc.h1)/btc.h1*100):null;
+    if(el&&s15!=null){ var t=s15>0.05?"green":(s15<-0.05?"red":"flat"); el.className="dk-tide "+t; el.innerHTML=(t==="red"?"▼ red tide":(t==="green"?"▲ green tide":"● flat")); }
+    if(sl){ var sgn=function(p){return (p>=0?"+":"")+p.toFixed(2)+"%";}; sl.textContent=(s15!=null?("15m "+sgn(s15)):"")+(s1h!=null?(" · 1h "+sgn(s1h)):""); } }
+
+  function makeCoin(){ var t=POOL[Math.floor(Math.random()*POOL.length)]; var drift=(Math.random()*1.9-0.5);
+    var now=Math.max(t.entry*(1+drift),t.entry*0.15);
+    return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
+  // Map a real /radar/candidates `live` row into a desk coin. Radar screens
+  // Solana/pump.fun, so ch="sol" — these route to the Solana-trader gate until
+  // that desk ships; Base coins appear here only once the radar screens Base.
+  function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
+  function mapRow(c){
+    var entry=Number(c.entry_mc)||0, now=Number(c.last_mc!=null?c.last_mc:c.entry_mc)||entry;
+    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1;
+    var read=rug?["fast","rug-gate"]:(take?["go","◆ pick"]:["reading","screening"]);
+    return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
+      ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
+      born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"" }; }
+  function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
+  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id);
+    var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
+    return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
+      icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
+      '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
+      '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
+      '<span class="age">'+ago(c.born)+'</span></div>'+
+      '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div></div>'+
+      '<div class="act"><div class="targets">'+
+        '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">+10</button>'+
+        '<button class="tbtn t25" onclick="Desk.pick(\''+qid+'\',2500)">+25</button>'+
+        '<button class="tbtn t50" onclick="Desk.pick(\''+qid+'\',5000)">+50</button>'+
+      '</div>'+(S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+'</div></div>';
+  }
+  function renderList(){ $("#dk-list").innerHTML=S.live.map(coinHTML).join(""); $("#dk-livecount").textContent=S.live.length; }
+  // Preview-only drift/drop (fallback when the live feed is unreachable).
+  function driftCoins(){ if(S.source!=="preview")return; S.live.forEach(function(c){ var mv=(Math.random()-0.47)*c.now*0.03; c.now=Math.max(c.now+mv,c.entry*0.1); c.peak=Math.max(c.peak,c.now); }); renderList(); }
+  function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
+    $("#dk-dropnote").textContent="preview · demo data · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+
+  // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
+  // pool with actual /radar/candidates `live` rows. On any failure, stays in (or
+  // falls back to) preview — never a fabricated "live" state.
+  function pollFeed(){
+    fetch(FEED_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("feed "+r.status); return r.json(); })
+      .then(function(d){
+        var rows=(d&&d.live&&d.live.length)? d.live.slice(0,7).map(mapRow):[];
+        S.source="live"; S.live=rows; renderList();
+        var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
+        var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
+        updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
+        $("#dk-dropnote").textContent=rows.length? ("live · "+rows.length+" in the window · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}))
+                                                 : "live · nothing in the entry window right now";
+      })
+      .catch(function(){
+        if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
+          $("#dk-dropnote").textContent="preview · demo data (live feed unreachable)"; }
+      });
+  }
+
+  /* pick — GATED. Base needs the connected Base trader; Solana needs its own desk. */
+  var pending=null;
+  function pick(id,bps){ var c=S.live.filter(function(x){return x.id===id;})[0]; if(!c)return;
+    if(c.ch==="sol"){ sheetGate("sol"); return; }
+    if(!S.connected){ sheetGate("base"); return; }
+    pending={c:c,bps:bps};
+    var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
+    var capU=(mptU<availU?mptU:availU), defUsd=Number(capU)/1e6;
+    var canDraw=v&&v.role==="trader"&&!v.paused;
+    var tgt=(bps/100),tgtPx=c.now*(1+bps/10000),stopPx=c.now*0.9;
+    var act=canDraw
+      ? '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Draw &amp; open</button>'
+      : '<button class="b-pri" style="opacity:.5" disabled>'+(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault'))+'</button>';
+    $("#dk-sheet").innerHTML=
+      '<h3>Open '+esc(c.s)+' <span class="ctag base" style="vertical-align:2px">BASE</span></h3>'+
+      '<p class="sub">'+esc(c.n)+' · you set the upside, the desk holds the exit.</p>'+
+      '<div class="terms">'+
+        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
+        '<div class="trow"><span class="k">Target</span><span class="v up">+'+tgt+'% · sell at '+fmt(tgtPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Hard stop</span><span class="v stop">−10% · sell at '+fmt(stopPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Available</span><span class="v">'+(v?usd(v.available):'—')+' · max/trade '+(v?usd(v.maxPerTrade):'—')+'</span></div>'+
+      '</div>'+
+      '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC drawn from your vault</label>'+
+        '<input id="dk-size" inputmode="decimal" value="'+(defUsd>0?defUsd.toFixed(2):"")+'" placeholder="e.g. 500" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
+      '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>). The stop is a trigger, not a guaranteed fill.</div>'+
+      '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+act+'</div>';
+    $("#dk-scrim").classList.add("on");
+  }
+  function sheetGate(chain){
+    var isSol=chain==="sol";
+    $("#dk-sheet").innerHTML='<h3>'+(isSol?"Solana trade":"Connect your Base trader")+'</h3>'+
+      '<p class="sub">The list is open to watch. Placing a trade needs a trader.</p>'+
+      '<div class="note-h">'+(isSol
+        ? 'This is a <b>Solana</b> pick. A Solana trade routes through a Solana trader (its own capped vault + Jupiter rail) — <b>not launched yet</b>. Base picks work today once you connect your Base vault.'
+        : 'To place a <b>Base</b> trade, connect your deployed Base trading vault in the bar at the top — the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds.')+'</div>'+
+      '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button>'+
+      (isSol?'':'<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button>')+'</div>';
+    $("#dk-scrim").classList.add("on");
+  }
+  function closeSheet(){ $("#dk-scrim").classList.remove("on"); pending=null; }
+  // REAL drawForTrade — releases capital from the connected vault to the rail.
+  // Strict preconditions; nothing is faked. (The DEX swap at the rail and the
+  // keeper's automated exit are the next contracts — a live draw parks capital
+  // at the rail, which is exactly what drawForTrade does.)
+  async function confirmOpen(){ var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return; var v=S.vault;
+    if(!v||v.role!=="trader"||v.paused){ toast("Buys need the trader key on an unpaused vault."); return; }
+    var sizeUsd=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
+    if(!(sizeUsd>0)){ toast("Enter a position size."); return; }
+    var units; try{ units=BigInt(Math.round(sizeUsd*1e6)); }catch(e){ toast("Bad size."); return; }
+    if(units>v.maxPerTrade){ toast("Over per-trade cap ("+usd(v.maxPerTrade)+")."); return; }
+    if(units>v.available){ toast("Over available capital ("+usd(v.available)+")."); return; }
+    if(!window.ethereum){ toast("No wallet to sign with."); return; }
+    var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
+    try{
+      var bp=new ethers.BrowserProvider(window.ethereum); var signer=await bp.getSigner();
+      var vc=new ethers.Contract(v.addr,VAULT_ABI,signer);
+      var rb=new Uint8Array(32); crypto.getRandomValues(rb); var intentId=ethers.toBigInt(ethers.hexlify(rb));
+      var tx=await vc.drawForTrade(intentId,units); toast("Drawing "+usd(units)+" · "+esc(c.s)+"…");
+      var rcpt=await tx.wait();
+      if(rcpt&&rcpt.status===1){
+        S.positions.unshift({s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString()});
+        v.available=v.available-units; v.outstanding=v.outstanding+units;
+        renderPos(); closeSheet(); toast("✓ "+c.s+" · "+usd(units)+" drawn to the rail"); }
+      else { closeSheet(); toast("✕ draw reverted — nothing drawn."); }
+    }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
+      if(/user rejected|ACTION_REJECTED/i.test(m)) toast("Cancelled — nothing drawn.");
+      else toast("Draw failed: "+m.slice(0,90));
+      if(btn){ btn.disabled=false; btn.textContent="🔑 Draw & open"; } }
+  }
+  // Simulated keeper drives PREVIEW positions only. Live (real-draw) positions
+  // are never fake-resolved — their exit is the real keeper (not yet built).
+  function driftPositions(){ var any=false;
+    S.positions.forEach(function(p){ if(p.state!=="armed"||p.live)return; any=true; var mv=(Math.random()-0.44)*p.now*0.05; p.now=Math.max(p.now+mv,p.entry*0.05);
+      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
+      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; toast("✕ "+p.s+" stopped −10% — keeper sold"); }
+      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); } });
+    if(any) renderPos(); }
+  function renderPos(){ var el=$("#dk-pos");
+    if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
+    var liveN=S.positions.filter(function(p){return p.live&&p.state==="armed";}).length;
+    var armedN=S.positions.filter(function(p){return !p.live&&p.state==="armed";}).length;
+    $("#dk-posnote").textContent=liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed");
+    el.innerHTML=S.positions.map(function(p){ var armed=p.state==="armed";
+      if(p.live){ return '<div class="prow"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">BASE</span></div>'+
+        '<div class="pmeta">drawn '+usd(p.units)+' · +'+(p.bps/100)+'% / −10% · exit pending (keeper)</div></div>'+
+        '<div class="ptarget"><span style="color:var(--dink-faint)">at rail</span></div><div class="pstate armed">◆ open</div></div>'; }
+      var pnl=armed?(p.now-p.entry)/p.entry*100:p.exitPnl; var pnlStr=(pnl>=0?"+":"")+pnl.toFixed(0)+"%";
+      var stCls=armed?"armed":(p.state==="hit"?"hit":"stopped"); var stTxt=armed?"◆ live":(p.state==="hit"?"✓ "+pnlStr:"✕ "+pnlStr);
+      var mid=armed?'now <b class="dk-mono">'+fmt(p.now)+'</b> <span class="pct '+(pnl>=0?"up":"down")+'">'+pnlStr+'</span>':'<span style="color:var(--dink-faint)">out</span> <b class="dk-mono">'+fmt(p.now)+'</b>';
+      return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">'+(p.ch==="sol"?"SOL":"BASE")+'</span></div>'+
+        '<div class="pmeta">in '+fmt(p.entry)+' · +'+(p.bps/100)+'% / −10%</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
+  function toast(m){ var t=$("#dk-toast"); t.textContent=m; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(function(){t.classList.remove("on");},2600); }
+  function setRegime(){ if(S.source==="live")return; var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
+
+  var VAULT_ABI=[
+    "function trader() view returns (address)","function owner() view returns (address)",
+    "function payToken() view returns (address)","function maxPerTrade() view returns (uint256)",
+    "function available() view returns (uint256)","function outstanding() view returns (uint256)",
+    "function drawableToday() view returns (uint256)","function paused() view returns (bool)",
+    "function drawForTrade(uint256 intentId, uint256 amount)"
+  ];
+  function usd(x){ return "$"+(Number(x)/1e6).toLocaleString(undefined,{maximumFractionDigits:2}); }
+
+  /* CONNECT CONTRACT — the buy gate. Verifies the address is a real Funding
+     Vault (reads its surface), reads live caps/available, and resolves the
+     connected wallet's role. drawForTrade is onlyTrader, so buys need the
+     trader wallet. Nothing is faked — a non-vault or a read failure is said so. */
+  async function connect(){
+    var addr=($("#dk-addr").value||"").trim(); var stat=$("#dk-cstat"), box=$("#dk-connect");
+    function set(m,cls){ stat.className="cstat "+cls; stat.textContent=m; }
+    if(!addr){ set("Enter your trading vault address first.","err"); return; }
+    if(!window.ethers||!ethers.isAddress(addr)){ set("Invalid address (bad checksum or format).","err"); return; }
+    set("Connecting to vault…","info"); S.connected=false; S.vault=null; box.classList.remove("on");
+    try{
+      var prov=(typeof getReadProvider==="function")? await getReadProvider(CHAIN_ID) : new ethers.JsonRpcProvider("https://mainnet.base.org");
+      var code=await prov.getCode(addr);
+      if(!code||code==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
+      var v=new ethers.Contract(addr,VAULT_ABI,prov);
+      var trader,owner,mpt,avail,outs,paused;
+      try{ trader=await v.trader(); owner=await v.owner(); mpt=await v.maxPerTrade();
+        avail=await v.available(); outs=await v.outstanding(); paused=await v.paused(); }
+      catch(_){ set("Contract found, but it isn't a Funding Vault (no vault surface). Buys need a Funding Vault.","err"); renderList(); return; }
+      var wallet=""; try{ if(window.ethereum){ var a=await window.ethereum.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
+      S.wallet=wallet;
+      var role=wallet? (wallet.toLowerCase()===String(trader).toLowerCase()?"trader":(wallet.toLowerCase()===String(owner).toLowerCase()?"owner":"other")) : "none";
+      S.vault={ addr:addr, trader:String(trader), owner:String(owner), maxPerTrade:BigInt(mpt), available:BigInt(avail), outstanding:BigInt(outs), paused:!!paused, role:role };
+      S.connected=true; box.classList.add("on"); $("#dk-cbtn").textContent="Connected ✓";
+      var roleMsg = role==="trader" ? "you hold the trader key — Base buys are live."
+                   : role==="none"  ? "connect your wallet to buy (drawForTrade needs the trader key)."
+                   : "this wallet is the "+role+", not the trader — buys need the trader key.";
+      set("Funding Vault ✓ · available "+usd(avail)+" · max/trade "+usd(mpt)+(paused?" · PAUSED":"")+" — "+roleMsg, "ok");
+      $("#dk-preview").textContent = paused ? "Vault connected but PAUSED — the desk can't draw until the owner unpauses."
+                     : (role==="trader" ? "Vault connected · you're the trader — a Base pick draws real capital via drawForTrade."
+                        : "Vault connected (read-only) · buys need the trader key. Watching stays open.");
+      renderList();
+    }catch(e){ set("Connect failed: "+((e&&e.message)||e),"err"); }
+  }
+
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(driftPositions,650));
+    if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
+  function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
+
+  window.Desk={
+    open:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=false; document.body.style.overflow="hidden";
+      S.reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
+      renderTicks(); setRegime();
+      if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
+      renderList(); renderPos();
+      stopTimers(); startTimers(); pollFeed(); connectWS(); },
+    close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
+      if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
+    pick:pick, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
+  };
+})();
+</script>
+<!-- ============================================================
+     COUNCIL LEDGER — the read view of the council's communication feed
+     (/api/council/ledger, D1-backed). Every message is a signed statement
+     attributable to a seat address; seats POST via the council-signer MCP,
+     this is the human-readable mirror. Read-only here — posting needs a seat
+     key, which only the seat's own connector holds.
+     ============================================================ -->
+<style>
+  #council-view{position:fixed;inset:0;z-index:160;overflow-y:auto;background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif}
+  #council-view[hidden]{display:none}
+  #council-view .cl-wrap{max-width:760px;margin:0 auto;padding:0 14px calc(env(safe-area-inset-bottom) + 40px)}
+  #council-view .cl-top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+    padding:calc(env(safe-area-inset-top) + 12px) 14px 12px;display:flex;align-items:center;gap:11px}
+  #council-view .cl-back{font-size:22px;color:var(--ink-dim);background:none;border:none;cursor:pointer;line-height:1;width:26px}
+  #council-view .cl-title{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  #council-view .cl-status{margin-left:auto;font-size:11px;color:var(--ink-faint)}
+  #council-view .cl-intro{color:var(--ink-dim);font-size:12.5px;margin:14px 2px 10px;line-height:1.5}
+  #council-view .cl-list{display:flex;flex-direction:column;gap:9px}
+  #council-view .cl-msg{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:12px 13px;box-shadow:var(--shadow)}
+  #council-view .cl-h{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+  #council-view .cl-seat{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--ink)}
+  #council-view .cl-kind{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 8px;border-radius:999px}
+  #council-view .cl-kind.statement{background:var(--oxide-faint);color:var(--oxide-dim)}
+  #council-view .cl-kind.proposal{background:var(--council-faint);color:var(--council-dim)}
+  #council-view .cl-kind.note{background:var(--surface-3);color:var(--ink-dim)}
+  #council-view .cl-time{margin-left:auto;font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono',monospace}
+  #council-view .cl-body{font-size:13.5px;color:var(--ink);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  #council-view .cl-ref{margin-top:6px;font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono',monospace;word-break:break-all}
+  #council-view .cl-empty{color:var(--ink-faint);font-size:13px;padding:20px 4px;text-align:center}
+  #council-view .cl-foot{margin:16px 2px 0;font-size:11px;color:var(--ink-faint);line-height:1.5}
+</style>
+<div id="council-view" hidden>
+  <div class="cl-top">
+    <button class="cl-back" onclick="Council.close()" aria-label="Back to console">&#8249;</button>
+    <span class="cl-title">Council Ledger</span>
+    <span class="cl-status" id="cl-status">&hellip;</span>
+  </div>
+  <div class="cl-wrap">
+    <p class="cl-intro">The council's communication feed. Every message is an EIP-712-signed statement, attributable to a seat address &mdash; seats post through their own scoped MCP connector; this is the read mirror. Proposals carry the F3 preimage so anyone can recompute the on-chain hash.</p>
+    <div class="cl-list" id="cl-list"><div class="cl-empty">Loading&hellip;</div></div>
+    <p class="cl-foot">Read-only here. Posting requires a seat key, which only that seat's connector holds (SPEC_CouncilSigner_v3). An unsigned message never lands.</p>
+  </div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var URL_="/api/council/ledger";
+  var $=function(s){return document.querySelector(s);};
+  var timer=null, seen=0;
+  function esc(x){return (x==null?"":String(x)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function shortSeat(a){return a&&a.length>12?a.slice(0,6)+"…"+a.slice(-4):(a||"?");}
+  function ago(ms){var s=Math.max(0,Math.round((Date.now()-Number(ms))/1000)); return s<90?s+"s ago":s<5400?Math.round(s/60)+"m ago":Math.round(s/3600)+"h ago";}
+  function row(m){
+    var kind=(m.kind||"statement").toLowerCase();
+    var body=m.body||"";
+    if(kind==="proposal"){ try{var j=JSON.parse(body); body="proposal "+ (j.proposalHash||"") + "\namount: "+(j.amount||"?")+"  metadata: "+(j.metadata||"0x");}catch(e){} }
+    return '<div class="cl-msg"><div class="cl-h"><span class="cl-seat">'+esc(shortSeat(m.seat))+'</span>'+
+      '<span class="cl-kind '+esc(kind)+'">'+esc(kind)+'</span>'+
+      '<span class="cl-time">'+ago(m.ts_ms)+'</span></div>'+
+      '<div class="cl-body">'+esc(body)+'</div>'+
+      (m.ref&&kind!=="proposal"?'<div class="cl-ref">ref '+esc(m.ref)+'</div>':'')+'</div>';
+  }
+  function render(rows){
+    var L=$("#cl-list");
+    if(!rows.length){ L.innerHTML='<div class="cl-empty">No council messages yet. When a seat posts through its connector, it appears here.</div>'; return; }
+    // newest first
+    rows.sort(function(a,b){return Number(b.ts_ms)-Number(a.ts_ms);});
+    L.innerHTML=rows.map(row).join("");
+  }
+  function poll(){
+    fetch(URL_+"?since=0",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
+      var rows=(d&&d.rows)||[]; seen=rows.length; render(rows);
+      $("#cl-status").textContent=rows.length+" signed · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    }).catch(function(){ $("#cl-status").textContent="ledger unreachable"; if(!seen)$("#cl-list").innerHTML='<div class="cl-empty">Ledger not reachable yet. It goes live when the console worker deploys.</div>'; });
+  }
+  window.Council={
+    open:function(){var v=$("#council-view");if(!v)return;v.hidden=false;document.body.style.overflow="hidden";poll();if(timer)clearInterval(timer);timer=setInterval(poll,10000);},
+    close:function(){var v=$("#council-view");if(!v)return;v.hidden=true;document.body.style.overflow="";if(timer){clearInterval(timer);timer=null;}}
+  };
+  var btn=document.getElementById("council-link");
+  if(btn)btn.addEventListener("click",function(){Council.open();});
 })();
 </script>
 <script type="module">
