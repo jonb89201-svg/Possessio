@@ -7,6 +7,30 @@ manifest / disclosure pattern in `SPEC_CouncilSigner.md` §5a–5b.
 
 ---
 
+## 0a. Disclosure doctrine (governs EVERY launch-page disclosure)
+
+Every disclosure on every launch page — proxy, immutable fields, tier choice, all
+of them — is **informative, never advisory.** The purpose is to teach the customer
+what their choice *does* and what it *permanently determines about the contract's
+future*, so they can choose as a sovereign actor. It states facts and
+consequences; it never recommends a choice.
+
+- **Informative, not financial advice.** "Here is what this does and what it
+  permanently sets — you decide." Never "you should pick X." Advice would
+  contradict the protocol's own posture (non-custodial, no post-deploy access,
+  you own it); disclosure completes it.
+- **Educational.** A good disclosure leaves the customer understanding the
+  sovereignty they're exercising — their choices (tier, immutable addresses,
+  wiring, caps) determine the contract's whole future, and the disclosure is
+  where they learn that *before* it's permanent.
+- **Respects the customer as capable.** Not a warning that protects them from a
+  choice — an explanation that equips them to make it. That is the right
+  relationship for a product whose entire value is "you own the real thing."
+
+Everything below is one application of this doctrine.
+
+---
+
 ## 0. The decision (Architect, 2026-07-20)
 
 Two launch tiers. **The real contract is the default and the premium** — a paying
