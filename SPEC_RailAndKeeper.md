@@ -115,7 +115,12 @@ desk copy must say which mode a given deployment is in.
 **Keeper-driven writes:**
 - `enter(uint256 intentId, address token, uint256 minTokenOut)` — `onlyKeeper`
   1. bind to the authored intent: read AutoTarget `getIntent(intentId)`; require it
-     is `Open` and its `token == token` (the human authorized *this* coin).
+     is `Open`, its `chainTag == CHAIN_BASE (8453)`, and its `tokenRef` (bytes32)
+     decodes to `token` — i.e. `address(uint160(uint256(tokenRef))) == token` (the
+     human authorized *this* coin, on Base). (AutoTarget is chain-agnostic:
+     `tokenRef` is a padded EVM address or a Solana mint; the Base Rail only ever
+     serves `chainTag == 8453` intents, so a Solana-tagged intent is rejected here
+     and handled by the Solana rail.)
   2. `amt = vault.getTrade(intentId).drawn` **must be 0** and `Position.status ==
      None` (fresh id); then `vault.drawForTrade(intentId, size)` pulls `size` USDC
      to the Rail. `size` = min(authorized size, vault caps) — see §7.1.
@@ -193,7 +198,8 @@ only**; every fund movement it can cause is gated by the Rail + vault + AutoTarg
    AutoTarget intent is `Resolved`. Only `ownerExit` (the human) bypasses it.
    (Mutation: drop the gate → adversarial test red.)
 3. **Authorized coin only.** `enter` reverts unless the drawn position's `token`
-   equals the human's authored intent token.
+   equals the human's authored intent `tokenRef` decoded on `chainTag == 8453` —
+   the Rail can only buy the exact Base coin the human authored.
 4. **Caps are the vault's, not the Rail's.** The Rail never re-implements a cap; it
    calls `drawForTrade`, which enforces per-trade / outstanding / daily. A draw
    over any cap reverts and no position opens.
