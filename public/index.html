@@ -972,6 +972,146 @@ const CONTRACTS = [
     ],
   },
 
+  // 4. PossessioFundingVault — the trader's hard-capped, closed-loop capital source
+  {
+    key:"VAULT", label:"Funding Vault", title:"PossessioFundingVault",
+    chain:"Base", chainId:8453,
+    desc:"The trader's hard-capped, closed-loop capital source. You (owner) fund it and can ALWAYS withdraw idle capital — even while trades are open or the vault is paused. The desk (trader) can only draw within three immutable caps (per-trade, concurrent-outstanding, daily) and only to a hardcoded trading rail; sale proceeds route back in via returnProceeds. No admin, no upgrade path, no arbitrary-recipient path: withdraw always goes to you, draws always go to the one fixed rail. Everything the desk can ever touch is bounded, on-chain, and auditable.",
+    access:"Two immutable roles — owner (fund / withdraw-to-self / pause / caps) + trader (drawForTrade / returnProceeds). Recipients hardcoded.",
+    categories:[
+      { id:"funds", label:"Fund & Withdraw", blurb:"Put capital in, take idle capital out — you can always exit",
+        names:["fund","withdraw","pause","unpause","available","outstanding","paused"] },
+      { id:"caps", label:"Risk Caps", blurb:"The three hard limits on the desk — tighten now, raise on a 24h delay",
+        names:["decreaseCap","queueCapIncrease","executeCapIncrease","cancelCapIncrease","maxPerTrade","maxOutstanding","dailyDrawCap","drawableToday","queuedRaise"] },
+      { id:"desk", label:"Trading Desk", blurb:"The bounded surface: draw capital for a trade, return the proceeds",
+        names:["drawForTrade","returnProceeds","getTrade","available","outstanding","drawableToday"] },
+      { id:"setup", label:"Roles & Setup", blurb:"The immutable wiring — who owns it, who trades, where draws go",
+        names:["owner","trader","tradeDestination","payToken","LIMIT_DELAY","WINDOW_SIZE","windowStart","dailyDrawn"] },
+    ],
+    functions:[
+
+      // ── Owner — fund / exit / pause ──
+      { kind:"write", name:"fund", gated:["anyone"],
+        plain:{ label:"Add Money", desc:"Put trading capital into the vault. Anyone can top it up, but only you can ever take it out. Approve the vault to spend your USDC first.", inputHint:"USDC amount to deposit" },
+        desc:"Deposit USDC into the vault. Not owner-gated (top-ups are harmless — only owner withdraws). Caller must have approved `amount` to this vault first. Reverts ZeroAmount if 0.",
+        inputs:[{name:"amount",type:"uint256",hint:"USDC, 6 decimals (1000000000 = 1,000 USDC). Approve this vault to spend it first."}], outputs:[] },
+      { kind:"write", name:"withdraw", gated:["onlyOwner"],
+        plain:{ label:"Take Money Out", desc:"Move idle capital back to your own wallet. You can always exit — this works even while trades are open and even while the vault is paused. You just can't pull capital that's currently out in a live trade (it isn't here — it returns when the trade closes).", inputHint:"USDC amount to withdraw to yourself" },
+        desc:"Withdraw idle capital to the owner (hardcoded recipient). Bounded only by available() (the vault's idle balance). Capital out in open trades physically sits at tradeDestination, so it is inherently un-withdrawable until returnProceeds brings it home. NOT blocked by pause. Reverts ExceedsAvailable if amount > available(), ZeroAmount if 0.",
+        inputs:[{name:"amount",type:"uint256",hint:"USDC 6-dec; must be <= available()"}], outputs:[] },
+      { kind:"write", name:"pause", gated:["onlyOwner"], danger:true,
+        plain:{ label:"Freeze Trading", desc:"Stop the desk from drawing any new capital, right away. Your own withdrawals keep working — freezing the desk never traps your money." },
+        desc:"Freeze drawForTrade. Does NOT freeze withdraw (owner can always exit). Instant.",
+        inputs:[], outputs:[] },
+      { kind:"write", name:"unpause", gated:["onlyOwner"],
+        plain:{ label:"Resume Trading", desc:"Let the desk draw capital again." },
+        desc:"Resume drawForTrade.",
+        inputs:[], outputs:[] },
+
+      // ── Owner — asymmetric caps (lower instant · raise +24h) ──
+      { kind:"write", name:"decreaseCap", gated:["onlyOwner"],
+        plain:{ label:"Tighten a Limit", desc:"Lower one of the three limits on the desk. Tightening risk always takes effect immediately — no waiting. Pick which limit (0 = biggest single trade, 1 = most out at once, 2 = most per day).", inputHint:"Which limit, and the new lower value" },
+        desc:"Lower a cap. Applies immediately — tightening is always instant. newValue must be strictly below the current value. Reverts InvalidCap otherwise, ZeroAmount if 0.",
+        inputs:[
+          {name:"cap",type:"uint8",hint:"0 = per-trade cap · 1 = concurrent-outstanding cap · 2 = daily-draw cap"},
+          {name:"newValue",type:"uint256",hint:"USDC 6-dec; must be LOWER than the current cap"},
+        ], outputs:[] },
+      { kind:"write", name:"queueCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Raise a Limit — Step 1", desc:"Request a higher limit. Raises don't take effect for 24 hours — a safety delay so that even if your key were stolen, no one could widen a limit and drain the vault in one move. Come back after the wait to apply it (Step 2).", inputHint:"Which limit, and the new higher value" },
+        desc:"Queue a cap raise. Takes effect only after LIMIT_DELAY (24h). newValue must be strictly above the current value. Reverts InvalidCap otherwise.",
+        inputs:[
+          {name:"cap",type:"uint8",hint:"0 = per-trade cap · 1 = concurrent-outstanding cap · 2 = daily-draw cap"},
+          {name:"newValue",type:"uint256",hint:"USDC 6-dec; must be HIGHER than the current cap"},
+        ], outputs:[] },
+      { kind:"write", name:"executeCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Raise a Limit — Step 2", desc:"Apply a higher limit once its 24-hour safety wait has passed. If the wait isn't up yet, this safely does nothing.", inputHint:"Which limit to apply the queued raise for" },
+        desc:"Execute a queued cap raise after LIMIT_DELAY elapsed. Reverts NoIncreaseQueued if none pending, TimelockNotPassed if the 24h hasn't elapsed.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[] },
+      { kind:"write", name:"cancelCapIncrease", gated:["onlyOwner"],
+        plain:{ label:"Cancel a Queued Raise", desc:"Call off a pending limit increase before it applies. Immediate." },
+        desc:"Cancel a queued cap raise. Applies immediately (tightening). Reverts NoIncreaseQueued if none pending.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[] },
+
+      // ── Trader — bounded surface ──
+      { kind:"write", name:"drawForTrade", gated:["onlyTrader","notPaused"],
+        plain:{ label:"Draw for a Trade", desc:"The desk pulls capital to open a position. It can only ever draw within all three of your limits and only to the one fixed trading rail — never to an arbitrary address. Each trade needs its own unique id.", inputHint:"A unique trade id, and the amount to draw" },
+        desc:"Release trading capital to tradeDestination, within ALL three caps AND the idle balance: amount<=maxPerTrade, outstanding+amount<=maxOutstanding, dailyDrawn+amount<=dailyDrawCap (rolling 24h), amount<=available(). CEI + nonReentrant. intentId is single-use. Reverts IsPaused / PerTradeCapExceeded / OutstandingCapExceeded / DailyCapExceeded / InsufficientAvailable / TradeAlreadyOpen.",
+        inputs:[
+          {name:"intentId",type:"uint256",hint:"unique id for this trade (single-use — a reused id reverts)"},
+          {name:"amount",type:"uint256",hint:"USDC 6-dec; must pass per-trade, outstanding, daily caps AND be <= available()"},
+        ], outputs:[] },
+      { kind:"write", name:"returnProceeds", gated:["onlyTrader"],
+        plain:{ label:"Return Proceeds", desc:"The desk sends a position's sale proceeds back into the vault and closes out that trade. Whether it made a profit or took a loss, the trade's exposure is cleared exactly — and any profit stays in the vault, growing your war chest.", inputHint:"The trade id being closed, and the USDC coming back" },
+        desc:"Close a trade: pull `amount` proceeds from tradeDestination (must have approved this vault) and clear the exposure. Clears exactly the ORIGINAL draw from outstanding regardless of P&L (a total loss returns 0 and still clears). Realized P&L stays in the vault. Reverts TradeNotOpen if the intent isn't currently open.",
+        inputs:[
+          {name:"intentId",type:"uint256",hint:"the open trade's id"},
+          {name:"amount",type:"uint256",hint:"USDC 6-dec coming back; tradeDestination must approve the vault to pull it (0 allowed = total loss)"},
+        ], outputs:[] },
+
+      // ── Reads — live money ──
+      { kind:"read", name:"available", gated:["read"],
+        plain:{ label:"Idle Capital", blurb:"Money sitting in the vault right now, free to draw or withdraw." },
+        desc:"Idle capital physically held by the vault (== token balance). Because draws transfer USDC OUT to the rail, the balance already nets out at-rail capital. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"outstanding", gated:["read"],
+        plain:{ label:"Out in Trades", blurb:"Capital currently out in open trades, not yet returned." },
+        desc:"Sum of the original draws of all currently-open trades. Cleared exactly on returnProceeds. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"drawableToday", gated:["read"],
+        plain:{ label:"Drawable Today", blurb:"How much the desk can still draw in the current 24-hour window." },
+        desc:"USDC still drawable in the current rolling 24h window (accounts for a window that has already elapsed, which resets the counter). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"getTrade", gated:["read"],
+        plain:{ label:"Trade Receipt", blurb:"Look up one trade by id — what was drawn, what came back, and its status." },
+        desc:"Per-intent trade record. status: 0 = none, 1 = open, 2 = closed.",
+        inputs:[{name:"intentId",type:"uint256"}], outputs:[
+          {name:"drawn",type:"uint256"},
+          {name:"returned",type:"uint256"},
+          {name:"status",type:"uint8"},
+        ] },
+
+      // ── Reads — caps ──
+      { kind:"read", name:"maxPerTrade", gated:["read"],
+        plain:{ label:"Per-Trade Limit", blurb:"The most the desk can pull in a single trade." },
+        desc:"Cap 0 — most USDC a single draw can pull. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"maxOutstanding", gated:["read"],
+        plain:{ label:"Concurrent Limit", blurb:"The most that can be out across open trades at once." },
+        desc:"Cap 1 — most USDC out in open trades at once (concurrency). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"dailyDrawCap", gated:["read"],
+        plain:{ label:"Daily Limit", blurb:"The most the desk can draw in any rolling 24-hour window." },
+        desc:"Cap 2 — most USDC drawn per rolling 24h window (rate). USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"queuedRaise", gated:["read"],
+        desc:"A queued cap raise for the given cap (0/1/2). executeAfter == 0 means none queued.",
+        inputs:[{name:"cap",type:"uint8",hint:"0 = per-trade · 1 = outstanding · 2 = daily-draw"}], outputs:[
+          {name:"newValue",type:"uint256"},
+          {name:"executeAfter",type:"uint256"},
+        ] },
+
+      // ── Reads — immutable wiring ──
+      { kind:"read", name:"owner", gated:["read"], desc:"The operator's account — the sovereign role (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"trader", gated:["read"], desc:"The desk + keeper — the bounded role, only address that can draw (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"tradeDestination", gated:["read"], desc:"Hardcoded recipient of every draw / approved source of every return (immutable). No setter exists.",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"payToken", gated:["read"], desc:"The settlement asset — USDC on Base (immutable).",
+        inputs:[], outputs:[{type:"address"}] },
+      { kind:"read", name:"paused", gated:["read"], desc:"True while drawForTrade is frozen. withdraw is never frozen.",
+        inputs:[], outputs:[{type:"bool"}] },
+      { kind:"read", name:"LIMIT_DELAY", gated:["read"], desc:"Delay before a cap RAISE takes effect. Constant 24 hours.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"WINDOW_SIZE", gated:["read"], desc:"Rolling window for the daily draw cap. Constant 24 hours.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"windowStart", gated:["read"], desc:"Start timestamp of the current daily-draw window.",
+        inputs:[], outputs:[{type:"uint256"}] },
+      { kind:"read", name:"dailyDrawn", gated:["read"], desc:"USDC drawn so far in the current window. USDC 6-dec.",
+        inputs:[], outputs:[{type:"uint256"}] },
+    ],
+  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -990,7 +1130,7 @@ const state = {
 };
 
 // Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
-const TAB_ORDER = ["PAY", "HOOK"];
+const TAB_ORDER = ["PAY", "HOOK", "VAULT"];
 
 function loadAddresses() {
   try {
@@ -2254,10 +2394,11 @@ refreshTreasury();
   var C={
     v3:{name:"POSSESSIO V3",short:"V3",net:"base",desc:"Your own token, fee engine, and council vault — the full protocol in one contract.",config:"token"},
     pay:{name:"Payments",short:"PAY",net:"base",desc:"Inbound payment rails with a working reserve. Take payments, hold a stable buffer.",config:"payments"},
+    vault:{name:"Funding Vault",short:"VAULT",net:"base",desc:"A hard-capped wallet for an automated trading desk. You fund it and can always withdraw; the desk only draws within limits you set.",config:"vault"},
   };
   var NET={ base:{main:"Base",test:"Base Sepolia",cls:"base"}, eth:{main:"Ethereum",test:"Ethereum Sepolia",cls:"eth"} };
   var STEPS=["Choose","Own","Set up","Deploy"], TITLES=["What do you want to launch?","How do you want to own it?","Set it up","Deploy"];
-  var L={env:"test",step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+  var L={env:"test",step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:"",perTrade:"",outstanding:"",daily:"",trader:""},dep:"ready",addr:""};
 
   function esc(x){return String(x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
   function isAddr(a){return /^0x[a-fA-F0-9]{40}$/.test(a);}
@@ -2273,7 +2414,7 @@ refreshTreasury();
     return '<svg class="lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function sumF(i){ if(i===0){return esc(C[L.contract].name)+" \u00b7 "+nlabel(L.contract);}
     if(i===1)return L.owner==="safe"?("Safe \u00b7 "+shrt(L.safe)):"Base Account";
-    if(i===2){var c=C[L.contract]; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
+    if(i===2){var c=C[L.contract]; if(c.config==="payments")return "Reserve $"+esc(L.cfg.supply||"\u2014"); if(c.config==="vault")return "Caps $"+esc(L.cfg.perTrade||"\u2014")+" / $"+esc(L.cfg.outstanding||"\u2014")+" / $"+esc(L.cfg.daily||"\u2014"); return esc(L.cfg.name||"\u2014")+(L.cfg.ticker?(" \u00b7 "+esc(L.cfg.ticker)):"");}
     return ""; }
   function tcls(){return L.env==="test"?"t":"";}
 
@@ -2294,6 +2435,15 @@ refreshTreasury();
     var c=C[L.contract],t=tcls();
     if(c.config==="payments")
       return '<div class="lr-field"><label>Stable reserve ceiling (USD)</label><input inputmode="numeric" placeholder="e.g. 2280" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">Working capital the contract holds as a buffer.</div></div>'+lockedP([["Token / oracle / router","Set for you"],["Sweep slippage guard","Set for you"]],"lr-lp")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(L.cfg.supply.trim()?"":"disabled")+'>Continue</button>';
+    if(c.config==="vault"){
+      var vok=L.cfg.perTrade.trim()&&L.cfg.outstanding.trim()&&L.cfg.daily.trim()&&isAddr(L.cfg.trader);
+      return '<div class="lr-field"><label>Most per trade (USDC)</label><input inputmode="numeric" placeholder="e.g. 3500" value="'+esc(L.cfg.perTrade)+'" oninput="LaunchRail.setCfg(\'perTrade\',this.value)"><div class="lr-hint">The biggest single position the desk can open.</div></div>'
+        +'<div class="lr-field"><label>Most out at once (USDC)</label><input inputmode="numeric" placeholder="e.g. 10000" value="'+esc(L.cfg.outstanding)+'" oninput="LaunchRail.setCfg(\'outstanding\',this.value)"><div class="lr-hint">The most that can be live across all open trades at the same time.</div></div>'
+        +'<div class="lr-field"><label>Most per day (USDC)</label><input inputmode="numeric" placeholder="e.g. 20000" value="'+esc(L.cfg.daily)+'" oninput="LaunchRail.setCfg(\'daily\',this.value)"><div class="lr-hint">The most the desk can draw in any rolling 24 hours.</div></div>'
+        +'<div class="lr-field"><label>Trading desk address</label><input placeholder="0x… your keeper / trading agent" value="'+esc(L.cfg.trader)+'" oninput="LaunchRail.setCfg(\'trader\',this.value)" autocomplete="off" spellcheck="false"><div class="lr-hint">The only address allowed to draw. It can never reach your main wallet — worst case is bounded to what\'s in the vault.</div></div>'
+        +lockedP([["Token","USDC — set for you"],["Where draws go","Your own account"],["Raising a cap","24h delay · lowering is instant"]],"lr-lvt")
+        +'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(vok?"":"disabled")+'>Continue</button>';
+    }
     var ok=L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim();
     return '<div class="lr-in2"><div class="lr-field"><label>Token name</label><input placeholder="e.g. Riverside Dollar" value="'+esc(L.cfg.name)+'" oninput="LaunchRail.setCfg(\'name\',this.value)" maxlength="32"></div><div class="lr-field" style="max-width:120px"><label>Ticker</label><input placeholder="RIV" value="'+esc(L.cfg.ticker)+'" oninput="LaunchRail.setCfg(\'ticker\',this.value.toUpperCase())" maxlength="6"></div></div><div class="lr-field"><label>Total supply</label><input inputmode="numeric" placeholder="1,000,000,000" value="'+esc(L.cfg.supply)+'" oninput="LaunchRail.setCfg(\'supply\',this.value)"><div class="lr-hint">All minted to you at launch.</div></div><div class="lr-field"><label>Starting liquidity (ETH)</label><input inputmode="decimal" placeholder="0.05" value="'+esc(L.cfg.liq)+'" oninput="LaunchRail.setCfg(\'liq\',this.value)"><div class="lr-hint">Seeds the pool so people can trade it.</div></div>'+lockedP([["Fee","2% L.A.T.E."],["Split","25% LP \u00b7 75% \u2192 cbETH"],["Hook flags","0x08C8 (mined for you)"]],"lr-lv")+'<button class="lr-go '+t+'" id="lr-go" onclick="LaunchRail.next()" '+(ok?"":"disabled")+'>Continue</button>';
   }
@@ -2336,14 +2486,14 @@ refreshTreasury();
   window.LaunchRail={
     askEnv:function(){document.getElementById("lr-envmodal").hidden=false;},
     closeEnv:function(){document.getElementById("lr-envmodal").hidden=true;},
-    open:function(env){L={env:env,step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:""},dep:"ready",addr:""};
+    open:function(env){L={env:env,step:0,contract:null,owner:"baseAccount",safe:"",cfg:{name:"",ticker:"",supply:"",liq:"",perTrade:"",outstanding:"",daily:"",trader:""},dep:"ready",addr:""};
       document.getElementById("lr-envmodal").hidden=true;document.getElementById("lr-view").hidden=false;document.body.style.overflow="hidden";render();},
     close:function(){document.getElementById("lr-view").hidden=true;document.body.style.overflow="";},
     info:function(id){var p=document.getElementById(id);if(p)p.classList.toggle("open");},
     pickC:function(k){L.contract=k;render();},
     pickO:function(o){L.owner=o;render();},
     setSafe:function(v){L.safe=v.trim();goOk(isAddr(L.safe));},
-    setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
+    setCfg:function(k,v){L.cfg[k]=v;var c=C[L.contract];var ok=c.config==="payments"?L.cfg.supply.trim()!=="":c.config==="vault"?(L.cfg.perTrade.trim()&&L.cfg.outstanding.trim()&&L.cfg.daily.trim()&&isAddr(L.cfg.trader)):(L.cfg.name.trim()&&L.cfg.ticker.trim()&&L.cfg.supply.trim()&&L.cfg.liq.trim());goOk(!!ok);},
     edit:function(i){L.step=i;if(i<3)L.dep="ready";render();scrollA();},
     next:function(){L.step++;render();scrollA();},
     deploy:function(){
