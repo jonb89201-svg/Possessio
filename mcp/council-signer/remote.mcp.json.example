@@ -1,0 +1,13 @@
+{
+  "//": "REMOTE transport (SPEC_CouncilSigner_v3). The OPERATOR self-hosts remote.js; Possessio never runs it and never holds a seat key. Two DIFFERENT secrets: COUNCIL_MCP_TOKEN gates the URL (the bearer header below), COUNCIL_SEAT_KEY is the seat (host env only, NEVER in this file, NEVER in a web form). One connector = one seat = one host.",
+  "//claude.ai-web": "In claude.ai -> Settings -> Connectors -> Add custom connector: set the URL to https://your-host/mcp and add a Request header `Authorization: Bearer <COUNCIL_MCP_TOKEN>`. That UI is the equivalent of the block below.",
+  "mcpServers": {
+    "council-signer-remote": {
+      "type": "http",
+      "url": "https://your-host.example/mcp",
+      "headers": {
+        "Authorization": "Bearer <the COUNCIL_MCP_TOKEN you set on the host>"
+      }
+    }
+  }
+}

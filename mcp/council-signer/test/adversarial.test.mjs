@@ -41,7 +41,8 @@ test("§7.2/§7.8 — the ABI allowlist is exactly the council selectors; no sav
 });
 
 test("server surface (§2/§7): exactly the seven council_* tools, and NEVER a burn or raw-call tool", () => {
-  const src = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  // The surface is single-sourced in tools.js and shared by BOTH transports.
+  const src = readFileSync(new URL("../tools.js", import.meta.url), "utf8");
   const tools = [...src.matchAll(/server\.tool\("([a-z_]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual(tools, [
     "council_approve", "council_approve_by_sig", "council_post", "council_propose",
@@ -49,6 +50,23 @@ test("server surface (§2/§7): exactly the seven council_* tools, and NEVER a b
   ]);
   assert.ok(!tools.some((t) => /burn/i.test(t)), "no burn tool in the surface");
   assert.ok(!/server\.tool\("[a-z_]*(?:transfer|approve_token|call|send|burn)[a-z_]*"/i.test(src), "no transfer/raw-call/send/burn tool");
+});
+
+test("no transport smuggles its own tool: server.js and remote.js only register via tools.js", () => {
+  // If a transport declared its own server.tool(...), it could widen the surface
+  // past the single source. Neither may — they both go through registerTools.
+  for (const f of ["../server.js", "../remote.js"]) {
+    const src = readFileSync(new URL(f, import.meta.url), "utf8");
+    assert.ok(!/\.tool\(/.test(src), `${f} must not declare tools directly; it must use registerTools`);
+    assert.ok(/registerTools/.test(src), `${f} must register the shared surface`);
+  }
+});
+
+test("remote transport is fail-closed: it wires the auth gate on the MCP path", () => {
+  const src = readFileSync(new URL("../remote.js", import.meta.url), "utf8");
+  assert.ok(/auth\.fromEnv\(\)/.test(src), "remote.js must build the gate via auth.fromEnv (throws if token unset)");
+  assert.ok(/gate\.check\(/.test(src), "remote.js must check the bearer token before serving");
+  assert.ok(/401/.test(src), "remote.js must reject unauthorized callers");
 });
 
 test("redact masks the exact seat key but leaves bytes32 hashes and 65-byte sigs intact", () => {

@@ -8,7 +8,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "start": "node server.js",
-    "check": "node --check server.js && node --check config.js && node --check preimage.js && node --check signer.js && node --check feed.js"
+    "start:remote": "node remote.js",
+    "check": "node --check server.js && node --check remote.js && node --check tools.js && node --check auth.js && node --check config.js && node --check preimage.js && node --check signer.js && node --check feed.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
