@@ -294,7 +294,9 @@ export function buildTolledApp(env: Env) {
               peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
               ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share,
               graduated_ms, dex_mc, dex_peak_mc, dex_liq_usd, dex_vol_h1, dex_last_ms,
-              ${imgCol("earlies")}
+              ${imgCol("earlies")},
+              (SELECT creator FROM births b WHERE b.token_address=earlies.token_address) AS creator,
+              (SELECT dev_prior_launches FROM candidates cc WHERE cc.token_address=earlies.token_address) AS dev_prior_launches
          FROM earlies WHERE status='watching'
         ORDER BY first_hit_ms DESC LIMIT 40`
     ).all();
