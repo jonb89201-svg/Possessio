@@ -17,7 +17,12 @@
   "vars": {
     "POOL_ADDRESS": "0x0000000000000000000000000000000000000000", // placeholder -> fill with the deployed PossessioTestnetLaunchPool; endpoint answers POOL_NOT_DEPLOYED until then
     "USDC_ADDRESS": "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia test USDC (verified live 2026-07-06)
-    "BASE_SEPOLIA_RPC": "https://sepolia.base.org"
+    "BASE_SEPOLIA_RPC": "https://sepolia.base.org",
+    // Council-ledger allowlist (N-1): the four SAV seat addresses. /api/council/ledger
+    // POST fails CLOSED — with this unset it rejects every write; only these seats can
+    // post. Public addresses (README Council table), so committed here, not a secret.
+    // If a seat's connector signs with a different key, update its address here.
+    "COUNCIL_SEATS": "0x65841AFCE25f2064C0850c412634A72445a2c4C9,0xEE9369d614ff97838B870ff3BF236E3f15885314,0xbd4d550E57faf40Ed828b4D8f9642C99A50e2D4f,0x00490E3332eF93f5A7B4102D1380D1b17D0454D2"
   }
   // Secret (Architect, terminal only): wrangler secret put TESTNET_OPERATOR_PK
 }

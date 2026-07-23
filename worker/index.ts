@@ -225,16 +225,36 @@ export default {
         } catch { return json({ error: "BAD_SIGNATURE" }, 400); }
         if (getAddress(recovered) !== getAddress(seat)) return json({ error: "SIGNER_MISMATCH" }, 401);
 
+        // Fail CLOSED (N-1, audit 2026-07-23): an unset/empty allowlist rejects
+        // every write. A valid signature only proves *some* key signed — not that
+        // it is a council seat — so without the gate any address could post and
+        // grow the shared radar D1 unbounded. The endpoint refuses to accept until
+        // COUNCIL_SEATS is configured (set in wrangler.jsonc).
         const allow = (env.COUNCIL_SEATS || "").split(",").map((s) => s.trim()).filter(Boolean)
-          .map((s) => { try { return getAddress(s); } catch { return ""; } });
-        if (allow.length && !allow.includes(getAddress(seat))) return json({ error: "NOT_A_SEAT" }, 403);
+          .map((s) => { try { return getAddress(s); } catch { return ""; } }).filter(Boolean);
+        if (!allow.length) return json({ error: "ALLOWLIST_UNCONFIGURED" }, 503);
+        if (!allow.includes(getAddress(seat))) return json({ error: "NOT_A_SEAT" }, 403);
 
+        // Replay is dead at the DB (N-1): UNIQUE(seat, nonce) (migration 0025) lets
+        // a seat commit any nonce at most once, so a statement harvested from the
+        // public GET can never be re-POSTed. The signature stays public on GET so
+        // the ledger remains independently verifiable — replay is blocked by the
+        // index, not by hiding the material. The nonce is stored as its CANONICAL
+        // decimal (BigInt) — the signature only binds the numeric value, so "42"
+        // and "0x2a" are the same nonce and must collide in the index, not slip
+        // past it as distinct strings.
         const ts = Date.now();
-        const r = await db
-          .prepare("INSERT INTO council_ledger (ts_ms, seat, kind, body, nonce, signature, ref) VALUES (?1,?2,?3,?4,?5,?6,?7)")
-          .bind(ts, getAddress(seat), kind, body, String(nonce), signature, ref)
-          .run();
-        return json({ ok: true, id: r.meta.last_row_id, ts_ms: ts });
+        const nonceCanon = BigInt(nonce).toString();
+        try {
+          const r = await db
+            .prepare("INSERT INTO council_ledger (ts_ms, seat, kind, body, nonce, signature, ref) VALUES (?1,?2,?3,?4,?5,?6,?7)")
+            .bind(ts, getAddress(seat), kind, body, nonceCanon, signature, ref)
+            .run();
+          return json({ ok: true, id: r.meta.last_row_id, ts_ms: ts });
+        } catch (e: any) {
+          if (/UNIQUE|constraint/i.test(String(e?.message || e))) return json({ error: "NONCE_ALREADY_USED" }, 409);
+          throw e;
+        }
       }
       return json({ error: "METHOD" }, 405);
     }
