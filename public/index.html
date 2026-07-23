@@ -3381,13 +3381,16 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // Solana/pump.fun, so ch="sol" — these route to the Solana-trader gate until
   // that desk ships; Base coins appear here only once the radar screens Base.
   function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
+  // Normalizes a candidates row (live/recent: entry_mc/last_mc/qualified_ms) OR an
+  // earlies row (early: first_hit_mc/dex_mc/first_hit_ms) into one desk coin shape.
   function mapRow(c){
-    var entry=Number(c.entry_mc)||0, now=Number(c.last_mc!=null?c.last_mc:c.entry_mc)||entry;
+    var entry=Number(c.entry_mc!=null?c.entry_mc:c.first_hit_mc)||0;
+    var now=Number(c.last_mc!=null?c.last_mc:(c.dex_mc!=null?c.dex_mc:(c.first_hit_mc!=null?c.first_hit_mc:c.entry_mc)))||entry;
     var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1, oc=c.outcome||c.play_outcome||"";
     var read=rug?["fast","rug-gate"]:take?["go","◆ pick"]:oc==="target"?["go","▲ target"]:(oc==="stop"||oc==="timestop")?["fast","exited"]:oc==="live"?["flow","live"]:["reading","screening"];
     return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
       ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
-      born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"",
+      born:Number(c.qualified_ms!=null?c.qualified_ms:c.first_hit_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"",
       dev:(c.creator||""), devN:(c.dev_prior_launches!=null?Number(c.dev_prior_launches):null) }; }
   function shortAddr(a){ return a?(a.slice(0,4)+"…"+a.slice(-4)):""; }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
@@ -3442,8 +3445,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // the 'recent' screen fills below so the feed is never blank when the
         // narrow window is empty (which is most of the time). Per-row buttons are
         // gated on TAP (pick()); the list itself is not.
-        var live=(d&&d.live)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
-        live.concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
+        // FRESH first: live (entry window) then early (the 0-4min radar — these are
+        // current AND carry images; their raw_birth_json is still around). recent is
+        // resolved history (old, image already space-cleaned) — last-resort fill only,
+        // so the list is never blank in a quiet market.
+        var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
+        live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
         S.source="live"; S.live=rows; S.inWindow=live.length; renderList();
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
