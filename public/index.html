@@ -3236,6 +3236,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .sellbtn{font-family:var(--dmono);font-weight:700;font-size:12px;padding:7px 13px;border-radius:10px;border:1px solid var(--stop);background:var(--stop-soft);color:var(--stop);transition:transform .08s,opacity .15s}
   #desk-view .sellbtn:active{transform:scale(.94)}
   #desk-view .sellbtn:disabled{opacity:.35;cursor:not-allowed;border-color:var(--dline);background:transparent;color:var(--dink-faint)}
+  #desk-view .exitpct{font-family:var(--dmono);font-size:11px;font-weight:700}
+  #desk-view .exitpct.up{color:var(--up)}#desk-view .exitpct.down{color:var(--down)}
   /* positions */
   #desk-view .pos{background:var(--card);border:1px solid var(--dline);border-radius:14px;box-shadow:var(--dshadow);overflow:hidden}
   #desk-view .pos-empty{padding:20px 14px;text-align:center;color:var(--dink-faint);font-size:12.5px}
@@ -3333,7 +3335,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:""};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{}};
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3386,13 +3388,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // activates it (you hold this coin). Matches the prototype: the whole button set
   // ships on the bar; only the state changes.
   function hasPos(c){ return S.positions.some(function(p){return p.state==="armed"&&(p.id===c.id||p.s===c.s);}); }
+  // On close the greyed Sell flashes the exit %gain/loss (green/red) beside it,
+  // then clears after 30s.
+  function scheduleExitClear(id){ if(id==null)return; var t=setTimeout(function(){ delete S.exits[id]; renderList(); },30000); S.timers.push(t); }
+  function flashExit(id,pct){ if(id==null)return; S.exits[id]={pct:pct}; scheduleExitClear(id); renderList(); }
   function sell(id){ var c=(S.live.filter(function(x){return x.id===id;})[0])||null;
     var p=S.positions.filter(function(x){return x.state==="armed"&&(x.id===id||(c&&x.s===c.s));})[0];
     if(!p)return; // button is disabled without a position; this is the guard
     if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
     p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
-    renderPos(); renderList(); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
-  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id); var hp=hasPos(c);
+    renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
+  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id); var hp=hasPos(c); var ex=S.exits[c.id];
     var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
     return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
       icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
@@ -3406,6 +3412,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         '<button class="tbtn t50" onclick="Desk.pick(\''+qid+'\',5000)">+50</button>'+
       '</div><div class="act2">'+
         '<button class="sellbtn" onclick="Desk.sell(\''+qid+'\')"'+(hp?'':' disabled')+' title="'+(hp?'Sell — bring proceeds home':'Sell activates once you hold this coin')+'">Sell</button>'+
+        (ex?'<span class="exitpct '+(ex.pct>=0?"up":"down")+'">'+(ex.pct>=0?"+":"")+ex.pct+'%</span>':'')+
         (S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+
       '</div></div></div>';
   }
@@ -3516,9 +3523,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // are never fake-resolved — their exit is the real keeper (not yet built).
   function driftPositions(){ var any=false;
     S.positions.forEach(function(p){ if(p.state!=="armed"||p.live)return; any=true; var mv=(Math.random()-0.44)*p.now*0.05; p.now=Math.max(p.now+mv,p.entry*0.05);
-      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
-      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; toast("✕ "+p.s+" stopped −10% — keeper sold"); }
-      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); } });
+      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
+      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✕ "+p.s+" stopped −10% — keeper sold"); }
+      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); } });
     if(any){ renderPos(); renderList(); } }
   function renderPos(){ var el=$("#dk-pos");
     if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
