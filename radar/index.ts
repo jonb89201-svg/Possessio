@@ -33,6 +33,36 @@ async function tapeWatchdog(env: WatcherEnv): Promise<void> {
   }
 }
 
+// feed-status (2026-07-23): the CAUSE, captured. Each cron scan ran as
+// `scan(env).catch(console.error)` — a failure went to the logs and nowhere the
+// console could see it, so a ~10h birthScan/screenScan stall read as an unexplained
+// "births frozen". `tracked` keeps the exact same fire-and-forget + log behavior,
+// but also records each scan's last-ok / last-error into feed_status (D1), which
+// /api/radar/health surfaces so the MIB DEBUG "feed" readout names which scan is
+// failing and why. Never throws (so ctx.waitUntil stays safe); its own write is
+// best-effort.
+async function recordScan(env: WatcherEnv, scan: string, ms: number, err: unknown): Promise<void> {
+  try {
+    if (err == null) {
+      await env.RADAR_DB.prepare(
+        "INSERT INTO feed_status (scan,last_ok_ms) VALUES (?1,?2) ON CONFLICT(scan) DO UPDATE SET last_ok_ms=?2",
+      ).bind(scan, ms).run();
+    } else {
+      const msg = String((err as any)?.message || err).slice(0, 300);
+      await env.RADAR_DB.prepare(
+        "INSERT INTO feed_status (scan,last_err_ms,last_err) VALUES (?1,?2,?3) ON CONFLICT(scan) DO UPDATE SET last_err_ms=?2, last_err=?3",
+      ).bind(scan, ms, msg).run();
+    }
+  } catch (e) { console.error("recordScan", scan, e); }
+}
+function tracked(name: string, env: WatcherEnv, p: Promise<unknown>): Promise<void> {
+  const ms = Date.now();
+  return p.then(
+    () => recordScan(env, name, ms, null),
+    (e) => { console.error(name, e); return recordScan(env, name, ms, e); },
+  );
+}
+
 let app: ReturnType<typeof buildTolledApp> | null = null;
 let armedFor: string | null = null;
 
@@ -42,32 +72,32 @@ export default {
   // screen/tape, post-grad tracking, the BTC regime read, the staleness
   // watchdog, and the Layer 3 keepalive. Keyless, read-only, each isolated.
   async scheduled(_event: ScheduledEvent, env: WatcherEnv, ctx: ExecutionContext) {
-    ctx.waitUntil(birthScan(env).catch((e) => console.error("birthScan", e)));
-    ctx.waitUntil(discoveryScan(env).catch((e) => console.error("discoveryScan", e)));
-    ctx.waitUntil(dexTrackScan(env).catch((e) => console.error("dexTrackScan", e)));
-    ctx.waitUntil(btcScan(env).catch((e) => console.error("btcScan", e)));
+    ctx.waitUntil(tracked("birthScan", env, birthScan(env)));
+    ctx.waitUntil(tracked("discoveryScan", env, discoveryScan(env)));
+    ctx.waitUntil(tracked("dexTrackScan", env, dexTrackScan(env)));
+    ctx.waitUntil(tracked("btcScan", env, btcScan(env)));
     // §0 SESSION GATE: compute the regime reading (births/hr vs its 7d avg) and
     // write it to `sessions`. Self-cadenced (hourly by default — it no-ops the
     // other ~59 ticks/hr via a cheap freshest-reading read) and fail-soft, so
     // it's cheap to fire every tick. This is what lifts xtrade's §0 refusal:
     // /radar/session-gate now serves a real reading instead of NO_READING_YET.
-    ctx.waitUntil(sessionGateScan(env).catch((e) => console.error("sessionGateScan", e)));
+    ctx.waitUntil(tracked("sessionGateScan", env, sessionGateScan(env)));
     // Tape scan: SINGLE-PASS per cron. One screenScan per minute uses ~1/4 the
     // CPU the old 4×15s sub-tick loop did, staying well under the 30s cron CPU
     // ceiling that was killing it. No Durable Object — the DO alarm approach
     // wouldn't deploy (build/migration failure), so we ship the simple verified
     // fix: reliable 60s, never blind. (15s via DO is a future task, with the
     // real deploy error in hand.)
-    ctx.waitUntil(screenScan(env).catch((e) => console.error("screenScan", e)));
+    ctx.waitUntil(tracked("screenScan", env, screenScan(env)));
     // R-7: the staleness self-check (see tapeWatchdog above).
-    ctx.waitUntil(tapeWatchdog(env).catch((e) => console.error("tapeWatchdog", e)));
+    ctx.waitUntil(tracked("tapeWatchdog", env, tapeWatchdog(env)));
     // Layer 3 keepalive: poke the DO every minute so the WS engine (re)connects
     // even after eviction. The DO's own alarm is the fast watchdog in between.
-    ctx.waitUntil((async () => {
+    ctx.waitUntil(tracked("pumptapeEnsure", env, (async () => {
       if (!env.PUMPTAPE) return;
       const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
       await stub.fetch("https://pumptape/ensure");
-    })().catch((e) => console.error("pumptape ensure", e)));
+    })()));
   },
 
   async fetch(request: Request, env: WatcherEnv, ctx: ExecutionContext): Promise<Response> {

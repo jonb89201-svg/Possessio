@@ -112,6 +112,30 @@ export default {
       const birthsFlat = births_5min === 0;
       const tapeFrozen = tape_age_ms == null || tape_age_ms > TAPE_STALL;
 
+      // Which scan is actually failing — feed_status is written by the radar cron
+      // (radar/index.ts `tracked`), turning "births frozen" into the CAUSE:
+      // "birthScan failing: <error>". A scan is failing now iff its last error is
+      // newer than its last success. Best-effort — a missing table (pre radar
+      // deploy) or read error never blocks the verdict.
+      const scans: Record<string, { ok_age_ms: number | null; err_age_ms: number | null; err: string | null; failing: boolean }> = {};
+      const failing: string[] = [];
+      try {
+        const fs: any = await db.prepare("SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status").all();
+        const nowMs = Date.now();
+        for (const r of (fs?.results || [])) {
+          const okMs = r.last_ok_ms == null ? null : Number(r.last_ok_ms);
+          const errMs = r.last_err_ms == null ? null : Number(r.last_err_ms);
+          const isFailing = errMs != null && (okMs == null || errMs > okMs);
+          scans[r.scan] = {
+            ok_age_ms: okMs == null ? null : nowMs - okMs,
+            err_age_ms: errMs == null ? null : nowMs - errMs,
+            err: isFailing ? (r.last_err ?? null) : null,
+            failing: isFailing,
+          };
+          if (isFailing) failing.push(r.scan);
+        }
+      } catch { /* feed_status not present yet — omit */ }
+
       // Best-effort on-chain cross-check — only when births look flat, since that
       // is exactly when "our WS dropped" vs "pump.fun itself is quiet" is the open
       // question. Short timeout; a failure never blocks the verdict.
@@ -170,6 +194,19 @@ export default {
         action = null;
       }
 
+      // Name the cause: if a scan is throwing during a stall, append which one and
+      // why — the WHY, live, instead of guessing between upstream/limit/code bug.
+      if (failing.length && status !== "healthy" && status !== "market_quiet") {
+        const detail = failing.map((s) => {
+          const sc = scans[s];
+          const age = sc.err_age_ms == null ? "" : " (" + Math.round(sc.err_age_ms / 1000) + "s ago)";
+          return s + " failing" + age + (sc.err ? ": " + sc.err : "");
+        }).join("; ");
+        diagnosis += "  CAUSE — " + detail + ".";
+        if (status === "ingest_stalled" || status === "radar_down")
+          action = "Fix the failing scan (see cause) — a redeploy only helps for a transient/socket issue, not a code or upstream error.";
+      }
+
       return json({
         ts: Date.now(),
         status,
@@ -181,6 +218,7 @@ export default {
           btc: { age_ms: btc_age_ms, usd: btc_usd },
         },
         pumpfun_program,
+        scans,
         db_mb,
       });
     }
