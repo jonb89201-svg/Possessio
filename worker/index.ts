@@ -65,6 +65,126 @@ export default {
       }
     }
 
+    // Radar feed HEALTH — the console's self-diagnosis, the "mobile F12 for the
+    // feed". Reads the same radar D1 the feed writes to and returns, in plain
+    // language, WHAT is wrong when births go quiet — encoding the split that
+    // actually cracked the 2026-07-22 stall: if the BTC regime writer is fresh
+    // but births AND the minute-tape are frozen, the worker is alive and the
+    // pumpportal websocket dropped (redeploy fixes it); if everything is stale
+    // the worker itself is down; and a best-effort on-chain check of pump.fun's
+    // own program tells a dropped-WS ("our bug, redeploy") apart from a genuine
+    // market lull ("stand down"). Read-only; never mutates.
+    if (pathname === "/api/radar/health") {
+      const db = env.COUNCIL_DB;
+      if (!db) return json({ status: "unknown", error: "COUNCIL_DB_UNBOUND" }, 503);
+
+      let row: any;
+      let db_mb: number | null = null;
+      try {
+        // .all() (not .first()) so we also get meta.size_after — D1 hands back the
+        // DB file size for free, and pragma_page_count is blocked (SQLITE_AUTH).
+        const res: any = await db.prepare(
+          "SELECT " +
+          "(strftime('%s','now')*1000 - (SELECT MAX(pumpfun_first_seen_ms) FROM births)) AS births_age_ms, " +
+          "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-300000) AS births_5min, " +
+          "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-3600000) AS births_1h, " +
+          "(strftime('%s','now')*1000 - (SELECT MAX(ms) FROM mc_ticks)) AS tape_age_ms, " +
+          "(strftime('%s','now')*1000 - (SELECT MAX(ts_ms) FROM regime_ticks)) AS btc_age_ms, " +
+          "(SELECT btc_usd FROM regime_ticks ORDER BY ts_ms DESC LIMIT 1) AS btc_usd"
+        ).all();
+        row = res?.results?.[0] || {};
+        const bytes = res?.meta?.size_after;
+        if (bytes) db_mb = Math.round((Number(bytes) / 1048576) * 10) / 10;
+      } catch (e: any) {
+        return json({ status: "unknown", diagnosis: "Radar DB query failed: " + (e?.message || e), action: "Check the COUNCIL_DB binding / radar DB." });
+      }
+
+      const num = (x: any) => (x == null ? null : Number(x));
+      const births_age_ms = num(row?.births_age_ms);
+      const births_5min = num(row?.births_5min) ?? 0;
+      const births_1h = num(row?.births_1h) ?? 0;
+      const tape_age_ms = num(row?.tape_age_ms);
+      const btc_age_ms = num(row?.btc_age_ms);
+      const btc_usd = num(row?.btc_usd);
+
+      const BTC_STALE = 120000, TAPE_STALL = 600000;
+      const btcFresh = btc_age_ms != null && btc_age_ms <= BTC_STALE;
+      const birthsFlat = births_5min === 0;
+      const tapeFrozen = tape_age_ms == null || tape_age_ms > TAPE_STALL;
+
+      // Best-effort on-chain cross-check — only when births look flat, since that
+      // is exactly when "our WS dropped" vs "pump.fun itself is quiet" is the open
+      // question. Short timeout; a failure never blocks the verdict.
+      let pumpfun_program: { checked: boolean; alive: boolean; age_s: number | null } | null = null;
+      if (birthsFlat) {
+        pumpfun_program = { checked: true, alive: false, age_s: null };
+        try {
+          const ac = new AbortController();
+          const t = setTimeout(() => ac.abort(), 3000);
+          const rr = await fetch("https://api.mainnet-beta.solana.com", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: ["6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", { limit: 1 }] }),
+            signal: ac.signal,
+          });
+          clearTimeout(t);
+          const jj: any = await rr.json();
+          const bt = jj?.result?.[0]?.blockTime;
+          if (bt) {
+            const age_s = Math.max(0, Math.floor(Date.now() / 1000) - Number(bt));
+            pumpfun_program = { checked: true, alive: age_s < 120, age_s };
+          }
+        } catch { /* leave alive:false, age_s:null — unknown, not proven-quiet */ }
+      }
+
+      let status: string, diagnosis: string, action: string | null;
+      if (!btcFresh && birthsFlat) {
+        status = "radar_down";
+        diagnosis = "Radar worker down — the BTC and pump.fun feeds are both stale.";
+        action = "Redeploy the radar worker.";
+      } else if (btcFresh && birthsFlat && tapeFrozen) {
+        if (pumpfun_program?.alive) {
+          status = "ws_dropped";
+          diagnosis = "pump.fun is LIVE on-chain (" + pumpfun_program.age_s + "s ago) but births + tape are frozen while the worker is alive (BTC fresh) — the pumpportal websocket dropped.";
+          action = "Redeploy the radar worker to reconnect the WS.";
+        } else if (pumpfun_program && pumpfun_program.age_s == null) {
+          status = "ingest_stalled";
+          diagnosis = "Births + tape frozen, worker alive (BTC fresh); couldn't reach Solana to confirm whether pump.fun itself is live.";
+          action = "Likely a dropped WS — redeploy the radar worker; if births stay flat, verify pump.fun isn't halted.";
+        } else {
+          status = "market_quiet";
+          diagnosis = "Births + tape frozen, worker alive (BTC fresh), and pump.fun's program looks quiet on-chain — a market lull, not our bug.";
+          action = "Stand down; births resume when pump.fun does.";
+        }
+      } else if (btcFresh && birthsFlat && !tapeFrozen) {
+        status = "quiet";
+        diagnosis = "No new births in 5 min but the tape is recent — likely a brief lull.";
+        action = "Watch; no action unless it persists.";
+      } else if (!btcFresh && !birthsFlat) {
+        status = "btc_lagging";
+        diagnosis = "Births are flowing but the BTC regime feed is lagging.";
+        action = "Minor — watch the BTC source.";
+      } else {
+        status = "healthy";
+        diagnosis = "Feed live — births and tape current.";
+        action = null;
+      }
+
+      return json({
+        ts: Date.now(),
+        status,
+        diagnosis,
+        action,
+        streams: {
+          births: { age_ms: births_age_ms, last_5min: births_5min, last_1h: births_1h },
+          tape: { age_ms: tape_age_ms },
+          btc: { age_ms: btc_age_ms, usd: btc_usd },
+        },
+        pumpfun_program,
+        db_mb,
+      });
+    }
+
     // Council communication ledger (SPEC_CouncilSigner_v3 §8). The end-to-end
     // channel: a seat POSTs a signed statement (over MCP or the console) -> we
     // verify the EIP-712 signature recovers to the claimed seat (and, if a seat

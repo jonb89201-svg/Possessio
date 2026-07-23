@@ -110,3 +110,17 @@ The radar's screened-candidate feed. Ratified public (Architect, Amendment IV Cl
 > All of it — every contract, test, and deploy — was architected and shipped from a phone, by one person directing a council of AI models under strict verification discipline. That's not a slogan: the console carries its own on-device debug inspector (raw JSON-RPC payloads, exact wallet error codes — desktop-F12-grade, on a phone), because mobile browsers give you no F12, and you can't build on-chain from a phone without one. Open it yourself.
 >
 > A normal person, not just a crypto native, holding and moving money on-chain from their pocket — and truly owning it. That's the on-ramp.
+
+---
+
+## Console follow-ups (2026-07-22 session)
+
+**DONE — Feed health in MIB DEBUG ("F12 for the feed"):** `GET /api/radar/health` (`worker/index.ts`) reads the radar D1 (via the `COUNCIL_DB` binding) and returns a plain-language diagnosis of the birth feed — encoding the exact split that cracked the 2026-07-22 pump.fun stall: BTC regime writer fresh **and** births + minute-tape frozen ⇒ the pumpportal websocket dropped ⇒ redeploy the radar worker. Includes a best-effort on-chain pump.fun-program liveness check so the verdict distinguishes "our WS dropped" (`ws_dropped` → redeploy) from "market quiet" (`market_quiet` → stand down). Surfaced in the DBG panel: a **feed** button + auto-run when the panel opens. **Provable:** open possessio.io → tap DBG → feed.
+
+**Transactions page — UNIFIED, staged (decided 2026-07-22):** header **Transactions** button opens `#tx-view`, a 3-tab overlay.
+- [x] **Stage 1 — Console tab (DONE):** records every write this console sends (hooked in `handleSend` → `TxHistory`, localStorage, device-local, 200 cap), with status pill (pending/success/reverted) and explorer link per chain (Base/Sepolia/Eth/Solana).
+- [ ] **Stage 2 — Wallet tab:** connected wallet's on-chain history vs POSSESSIO contracts. Needs a worker proxy to a BaseScan/indexer read keyed to deployed addresses.
+- [ ] **Stage 3 — Desk tab:** Rail enter/exit, FundingVault fund/draw/return, AutoTarget intents — reads their events; activates on trading-contract deploy + keeper.
+- [ ] **Follow-on:** also record the testnet drip (`/api/testnet/drip`), payment, and deploy tx paths into `TxHistory` (only the main `handleSend` write path is hooked so far).
+
+**VISION — Council social layer ("Moltbook for web3, dev-focused"):** when customers run their own councils via their own connectors, extend the signed council ledger (`SPEC_CouncilSigner.md` §8) into a cross-council social network, dev/web3/blockchain focused. Every post is already attributable to a seat address via EIP-712, so identity + integrity are native — the ledger is the seed, the network is the product. Not designed yet; earns its own design pass when the connector has real users. Idea captured 2026-07-22.

@@ -361,9 +361,11 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
 </style>
 </head>
 <body>
-<div id="mib-debug" style="position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow:auto;background:#1a1a1a;color:#0f0;font:11px/1.4 monospace;padding:8px;z-index:2147483647;pointer-events:auto;border-top:2px solid #0f0;display:none;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><strong style="color:#0f0;">MIB DEBUG</strong><span><button onclick="document.getElementById('mib-log').innerHTML='';" style="background:#333;color:#0f0;border:1px solid #0f0;padding:2px 8px;font:11px monospace;">clear</button><button onclick="document.getElementById('mib-debug').style.display='none';" style="background:#333;color:#f55;border:1px solid #f55;padding:2px 8px;font:11px monospace;margin-left:4px;">x</button></span></div><div id="mib-log"></div></div>
-<button onclick="document.getElementById('mib-debug').style.display='block';" style="position:fixed;bottom:70px;right:8px;z-index:2147483647;background:#0f0;color:#000;border:3px solid #000;border-radius:50%;width:52px;height:52px;font:bold 14px monospace;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,.4);">DBG</button>
-<script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});mibLog('MIB bridge active.','#0ff');})();</script>
+<div id="mib-debug" style="position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow:auto;background:#1a1a1a;color:#0f0;font:11px/1.4 monospace;padding:8px;z-index:2147483647;pointer-events:auto;border-top:2px solid #0f0;display:none;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><strong style="color:#0f0;">MIB DEBUG</strong><span><button onclick="window.mibFeedHealth&&window.mibFeedHealth();" style="background:#333;color:#0ff;border:1px solid #0ff;padding:2px 8px;font:11px monospace;margin-right:4px;">feed</button><button onclick="document.getElementById('mib-log').innerHTML='';" style="background:#333;color:#0f0;border:1px solid #0f0;padding:2px 8px;font:11px monospace;">clear</button><button onclick="document.getElementById('mib-debug').style.display='none';" style="background:#333;color:#f55;border:1px solid #f55;padding:2px 8px;font:11px monospace;margin-left:4px;">x</button></span></div><div id="mib-log"></div></div>
+<button onclick="document.getElementById('mib-debug').style.display='block';window.mibFeedHealth&&window.mibFeedHealth();" style="position:fixed;bottom:70px;right:8px;z-index:2147483647;background:#0f0;color:#000;border:3px solid #000;border-radius:50%;width:52px;height:52px;font:bold 14px monospace;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,.4);">DBG</button>
+<script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});function fmtAge(ms){if(ms==null)return'n/a';var s=Math.round(ms/1000);if(s<90)return s+'s';var m=Math.floor(s/60);if(m<90)return m+'m';return(Math.round(m/6)/10)+'h';}
+window.mibFeedHealth=function(){mibLog('FEED HEALTH … /api/radar/health','#0ff');fetch('/api/radar/health',{cache:'no-store'}).then(function(r){return r.json();}).then(function(h){var col={healthy:'#0f0',quiet:'#fa0',btc_lagging:'#fa0',market_quiet:'#fa0',ingest_stalled:'#f55',ws_dropped:'#f55',radar_down:'#f55',unknown:'#fa0'}[h.status]||'#0ff';mibLog('FEED: '+String(h.status||'?').toUpperCase().replace(/_/g,' '),col);var s=h.streams||{},b=s.births||{},tp=s.tape||{},bt=s.btc||{};mibLog('  births '+fmtAge(b.age_ms)+'   5m:'+(b.last_5min||0)+'  1h:'+(b.last_1h||0),'#9f9');mibLog('  tape   '+fmtAge(tp.age_ms),'#9f9');mibLog('  btc    '+fmtAge(bt.age_ms)+(bt.usd?'   $'+Math.round(bt.usd):''),'#9f9');var pp=h.pumpfun_program;if(pp&&pp.checked)mibLog('  pump.fun program: '+(pp.alive?('LIVE '+pp.age_s+'s ago'):(pp.age_s==null?'unreachable':'quiet')),pp.alive?'#0f0':'#fa0');if(h.db_mb!=null)mibLog('  db '+h.db_mb+'MB','#888');if(h.diagnosis)mibLog('  → '+h.diagnosis,col);if(h.action)mibLog('  ⇒ '+h.action,'#ff0');}).catch(function(e){mibLog('FEED health error: '+(e&&e.message?e.message:e),'#f55');});};
+mibLog('MIB bridge active.','#0ff');})();</script>
 
 
 <header class="console-head">
@@ -379,6 +381,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
     <button class="btn oxide" id="lr-launch-btn">Launch</button>
     <button class="btn" id="markets-link" type="button">Markets</button>
     <button class="btn" id="council-link" type="button">Council</button>
+    <button class="btn" id="tx-link" type="button">Transactions</button>
   </div>
   <div class="row" style="margin-top:10px">
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
@@ -1906,8 +1909,10 @@ async function handleSend(c, fn, el) {
 
     setOutput(el, "ok", "SUBMITTING", "awaiting wallet confirmation…");
     const tx = await state.signer.sendTransaction({ to: addr, data, value });
+    try { window.TxHistory && TxHistory.add({ chainId: c.chainId, contract: c.label || c.key, method: fn.name, to: addr, hash: tx.hash, status: "pending" }); } catch (_) {}
     setOutput(el, "ok", "BROADCAST", escapeHtml(`tx: ${tx.hash}\n\nwaiting for confirmation…`));
     const r = await tx.wait();
+    try { window.TxHistory && TxHistory.update(tx.hash, { status: r.status === 1 ? "success" : "reverted", block: r.blockNumber }); } catch (_) {}
     setOutput(el, "ok", "CONFIRMED", escapeHtml(`tx: ${tx.hash}\nblock: ${r.blockNumber}\nstatus: ${r.status === 1 ? "success" : "reverted"}`));
   } catch (e) {
     var __pe = plainError(e); setOutput(el, "err", __pe.title, escapeHtml(__pe.msg)); console.error("[send raw]", e && (e.message||e.shortMessage||String(e)));
@@ -3650,6 +3655,93 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   };
   var btn=document.getElementById("council-link");
   if(btn)btn.addEventListener("click",function(){Council.open();});
+})();
+</script>
+<style>
+  #tx-view{position:fixed;inset:0;z-index:161;overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--bg);color:var(--ink);font-family:inherit}
+  #tx-view[hidden]{display:none}
+  #tx-view .tx-wrap{max-width:760px;margin:0 auto;padding:0 14px calc(env(safe-area-inset-bottom) + 40px)}
+  #tx-view .tx-top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 0 10px}
+  #tx-view .tx-top .tx-wrap{display:flex;align-items:center;gap:10px}
+  #tx-view .tx-back{font-size:22px;color:var(--ink-dim);background:none;border:none;cursor:pointer;line-height:1;width:26px}
+  #tx-view .tx-title{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  #tx-view .tx-status{margin-left:auto;font-size:11px;color:var(--ink-faint)}
+  #tx-view .tx-tabs{display:flex;gap:6px;margin:14px 0 6px}
+  #tx-view .tx-tab{flex:1;padding:9px 6px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink-dim);font:600 12.5px/1 inherit;cursor:pointer;text-align:center}
+  #tx-view .tx-tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  #tx-view .tx-row{display:flex;gap:10px;align-items:center;padding:11px 2px;border-bottom:1px solid var(--line)}
+  #tx-view .tx-meta{flex:1;min-width:0}
+  #tx-view .tx-m1{font-size:13px;font-weight:600}
+  #tx-view .tx-m2{font-size:11px;color:var(--ink-faint);font-family:var(--dmono,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  #tx-view .tx-pill{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap;border:1px solid currentColor}
+  #tx-view .tx-pill.ok{color:var(--up)} #tx-view .tx-pill.err{color:var(--down)} #tx-view .tx-pill.pend{color:var(--ink-faint)}
+  #tx-view .tx-empty{color:var(--ink-faint);font-size:12.5px;padding:26px 8px;text-align:center;line-height:1.6}
+</style>
+<div id="tx-view" hidden>
+  <div class="tx-top"><div class="tx-wrap">
+    <button class="tx-back" type="button" onclick="TxView.close()" aria-label="Back">‹</button>
+    <div class="tx-title">Transactions</div>
+    <div class="tx-status" id="tx-status"></div>
+  </div></div>
+  <div class="tx-wrap">
+    <div class="tx-tabs">
+      <button class="tx-tab on" type="button" data-tab="console" onclick="TxView.tab('console')">Console</button>
+      <button class="tx-tab" type="button" data-tab="wallet" onclick="TxView.tab('wallet')">Wallet</button>
+      <button class="tx-tab" type="button" data-tab="desk" onclick="TxView.tab('desk')">Desk</button>
+    </div>
+    <div id="tx-body"></div>
+  </div>
+</div>
+<script>
+// Transactions view (unified, staged — SPEC in TODO.md "Console follow-ups"). Stage 1:
+// the Console tab records every write this console sends (hooked in handleSend), kept on
+// the device in localStorage. Wallet (explorer/indexer read) and Desk (Rail/FundingVault/
+// AutoTarget events) tabs are stubbed until their data sources exist.
+(function(){
+  var $=function(s){return document.querySelector(s);};
+  var KEY="possessio.txhistory", CAP=200, curTab="console";
+  function load(){try{return JSON.parse(localStorage.getItem(KEY)||"[]");}catch(e){return [];}}
+  function save(a){try{localStorage.setItem(KEY,JSON.stringify(a.slice(0,CAP)));}catch(e){}}
+  function open_(){return $("#tx-view")&&!$("#tx-view").hidden;}
+  function explorer(chainId,hash){
+    if(!hash)return null; var n=Number(chainId);
+    if(n===8453)return "https://basescan.org/tx/"+hash;
+    if(n===84532)return "https://sepolia.basescan.org/tx/"+hash;
+    if(n===1)return "https://etherscan.io/tx/"+hash;
+    if(n===101)return "https://solscan.io/tx/"+hash;
+    return null;
+  }
+  window.TxHistory={
+    add:function(rec){var a=load();rec.ts=rec.ts||Date.now();rec.id=rec.hash||("local-"+rec.ts);a.unshift(rec);save(a);if(curTab==="console"&&open_())render();return rec.id;},
+    update:function(hash,patch){if(!hash)return;var a=load();for(var i=0;i<a.length;i++){if(a[i].hash===hash){for(var k in patch)a[i][k]=patch[k];break;}}save(a);if(curTab==="console"&&open_())render();},
+    all:load
+  };
+  function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function short(h){return h?(h.slice(0,10)+"…"+h.slice(-6)):"";}
+  function pill(st){var c=st==="success"?"ok":(st==="reverted"||st==="failed")?"err":"pend";return '<span class="tx-pill '+c+'">'+esc(st||"pending")+'</span>';}
+  function ago(ts){var s=Math.round((Date.now()-ts)/1000);if(s<60)return s+"s";var m=Math.round(s/60);if(m<60)return m+"m";var h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
+  function consoleRows(){
+    var a=load();
+    if(!a.length)return '<div class="tx-empty">No console transactions yet.<br>Every write this console sends — contract calls, and soon the drip and desk buys — is recorded here, on your device.</div>';
+    return a.map(function(t){
+      var url=explorer(t.chainId,t.hash);
+      var h=t.hash?(url?'<a href="'+esc(url)+'" target="_blank" rel="noopener" style="color:inherit">'+esc(short(t.hash))+' ↗</a>':esc(short(t.hash))):"(no hash)";
+      return '<div class="tx-row"><div class="tx-meta"><div class="tx-m1">'+esc(t.contract||t.to||"tx")+' · '+esc(t.method||"")+'</div><div class="tx-m2">'+h+'  ·  '+ago(t.ts)+' ago  ·  chain '+esc(t.chainId||"?")+'</div></div>'+pill(t.status)+'</div>';
+    }).join("");
+  }
+  function render(){
+    var body=$("#tx-body");if(!body)return;
+    if(curTab==="console"){body.innerHTML=consoleRows();$("#tx-status").textContent=load().length+" recorded";}
+    else if(curTab==="wallet"){body.innerHTML='<div class="tx-empty"><b>Wallet ↔ POSSESSIO contracts</b><br>The connected wallet’s on-chain history against our contracts.<br><br>Pending: a BaseScan/indexer read (worker proxy) keyed to the deployed addresses.</div>';$("#tx-status").textContent="";}
+    else{body.innerHTML='<div class="tx-empty"><b>AI desk trade ledger</b><br>Rail enter/exit, FundingVault fund/draw/return, AutoTarget intents.<br><br>Activates when the trading contracts deploy and the keeper runs — reads their on-chain events.</div>';$("#tx-status").textContent="";}
+  }
+  window.TxView={
+    open:function(){var v=$("#tx-view");if(!v)return;v.hidden=false;document.body.style.overflow="hidden";render();},
+    close:function(){var v=$("#tx-view");if(!v)return;v.hidden=true;document.body.style.overflow="";},
+    tab:function(t){curTab=t;var ts=document.querySelectorAll("#tx-view .tx-tab");for(var i=0;i<ts.length;i++)ts[i].classList.toggle("on",ts[i].getAttribute("data-tab")===t);render();}
+  };
+  var btn=document.getElementById("tx-link");
+  if(btn)btn.addEventListener("click",function(){TxView.open();});
 })();
 </script>
 <script type="module">
