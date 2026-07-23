@@ -3292,7 +3292,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       </div>
     </div>
 
-    <div class="dk-sl">Live selection &middot; in the window now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
+    <div class="dk-sl">Screen &middot; on screen now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
     <div class="dk-list" id="dk-list"></div>
 
     <div class="dk-sl">Your open trades <span class="rt" id="dk-posnote"></span></div>
@@ -3372,8 +3372,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
   function mapRow(c){
     var entry=Number(c.entry_mc)||0, now=Number(c.last_mc!=null?c.last_mc:c.entry_mc)||entry;
-    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1;
-    var read=rug?["fast","rug-gate"]:(take?["go","◆ pick"]:["reading","screening"]);
+    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1, oc=c.outcome||c.play_outcome||"";
+    var read=rug?["fast","rug-gate"]:take?["go","◆ pick"]:oc==="target"?["go","▲ target"]:(oc==="stop"||oc==="timestop")?["fast","exited"]:oc==="live"?["flow","live"]:["reading","screening"];
     return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
       ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
       born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"" }; }
@@ -3404,13 +3404,21 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function pollFeed(){
     fetch(FEED_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("feed "+r.status); return r.json(); })
       .then(function(d){
-        var rows=(d&&d.live&&d.live.length)? d.live.slice(0,7).map(mapRow):[];
-        S.source="live"; S.live=rows; renderList();
+        // THE SCREEN LIST is open to everyone — a tourist watches it without any
+        // wallet or contract. Actionable 'live' coins (in the entry window) lead;
+        // the 'recent' screen fills below so the feed is never blank when the
+        // narrow window is empty (which is most of the time). Per-row buttons are
+        // gated on TAP (pick()); the list itself is not.
+        var live=(d&&d.live)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
+        live.concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
+        var rows=picks.slice(0,15).map(mapRow);
+        S.source="live"; S.live=rows; S.inWindow=live.length; renderList();
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
-        $("#dk-dropnote").textContent=rows.length? ("live · "+rows.length+" in the window · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}))
-                                                 : "live · nothing in the entry window right now";
+        var t=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+        $("#dk-dropnote").textContent=rows.length? ("live · "+live.length+" in the entry window · "+rows.length+" on screen · "+t)
+                                                 : "live · screen is quiet right now · "+t;
       })
       .catch(function(){
         if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
