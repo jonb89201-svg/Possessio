@@ -3232,6 +3232,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .stopchip{font-family:var(--dmono);font-size:10px;font-weight:700;color:var(--stop);background:var(--stop-soft);padding:3px 8px;border-radius:999px}
   #desk-view .stopchip::before{content:"● ";font-size:8px}
   #desk-view .lockmini{font-size:9.5px;font-weight:700;color:var(--dink-faint);letter-spacing:.02em}
+  #desk-view .act2{display:flex;align-items:center;gap:6px}
+  #desk-view .sellbtn{font-family:var(--dmono);font-weight:700;font-size:12px;padding:7px 13px;border-radius:10px;border:1px solid var(--stop);background:var(--stop-soft);color:var(--stop);transition:transform .08s,opacity .15s}
+  #desk-view .sellbtn:active{transform:scale(.94)}
+  #desk-view .sellbtn:disabled{opacity:.35;cursor:not-allowed;border-color:var(--dline);background:transparent;color:var(--dink-faint)}
+  #desk-view .exitpct{font-family:var(--dmono);font-size:11px;font-weight:700}
+  #desk-view .exitpct.up{color:var(--up)}#desk-view .exitpct.down{color:var(--down)}
   /* positions */
   #desk-view .pos{background:var(--card);border:1px solid var(--dline);border-radius:14px;box-shadow:var(--dshadow);overflow:hidden}
   #desk-view .pos-empty{padding:20px 14px;text-align:center;color:var(--dink-faint);font-size:12.5px}
@@ -3292,7 +3298,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       </div>
     </div>
 
-    <div class="dk-sl">Live selection &middot; in the window now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
+    <div class="dk-sl">Screen &middot; on screen now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
     <div class="dk-list" id="dk-list"></div>
 
     <div class="dk-sl">Your open trades <span class="rt" id="dk-posnote"></span></div>
@@ -3329,7 +3335,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:""};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{}};
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3372,13 +3378,27 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
   function mapRow(c){
     var entry=Number(c.entry_mc)||0, now=Number(c.last_mc!=null?c.last_mc:c.entry_mc)||entry;
-    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1;
-    var read=rug?["fast","rug-gate"]:(take?["go","◆ pick"]:["reading","screening"]);
+    var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1, oc=c.outcome||c.play_outcome||"";
+    var read=rug?["fast","rug-gate"]:take?["go","◆ pick"]:oc==="target"?["go","▲ target"]:(oc==="stop"||oc==="timestop")?["fast","exited"]:oc==="live"?["flow","live"]:["reading","screening"];
     return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
       ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
       born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"" }; }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
-  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id);
+  // The Sell button is a STANDARD control on every coin bar — greyed until a buy
+  // activates it (you hold this coin). Matches the prototype: the whole button set
+  // ships on the bar; only the state changes.
+  function hasPos(c){ return S.positions.some(function(p){return p.state==="armed"&&(p.id===c.id||p.s===c.s);}); }
+  // On close the greyed Sell flashes the exit %gain/loss (green/red) beside it,
+  // then clears after 30s.
+  function scheduleExitClear(id){ if(id==null)return; var t=setTimeout(function(){ delete S.exits[id]; renderList(); },30000); S.timers.push(t); }
+  function flashExit(id,pct){ if(id==null)return; S.exits[id]={pct:pct}; scheduleExitClear(id); renderList(); }
+  function sell(id){ var c=(S.live.filter(function(x){return x.id===id;})[0])||null;
+    var p=S.positions.filter(function(x){return x.state==="armed"&&(x.id===id||(c&&x.s===c.s));})[0];
+    if(!p)return; // button is disabled without a position; this is the guard
+    if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
+    p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
+    renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
+  function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id); var hp=hasPos(c); var ex=S.exits[c.id];
     var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
     return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
       icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
@@ -3390,7 +3410,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">+10</button>'+
         '<button class="tbtn t25" onclick="Desk.pick(\''+qid+'\',2500)">+25</button>'+
         '<button class="tbtn t50" onclick="Desk.pick(\''+qid+'\',5000)">+50</button>'+
-      '</div>'+(S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+'</div></div>';
+      '</div><div class="act2">'+
+        '<button class="sellbtn" onclick="Desk.sell(\''+qid+'\')"'+(hp?'':' disabled')+' title="'+(hp?'Sell — bring proceeds home':'Sell activates once you hold this coin')+'">Sell</button>'+
+        (ex?'<span class="exitpct '+(ex.pct>=0?"up":"down")+'">'+(ex.pct>=0?"+":"")+ex.pct+'%</span>':'')+
+        (S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+
+      '</div></div></div>';
   }
   function renderList(){ $("#dk-list").innerHTML=S.live.map(coinHTML).join(""); $("#dk-livecount").textContent=S.live.length; }
   // Preview-only drift/drop (fallback when the live feed is unreachable).
@@ -3404,13 +3428,21 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function pollFeed(){
     fetch(FEED_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("feed "+r.status); return r.json(); })
       .then(function(d){
-        var rows=(d&&d.live&&d.live.length)? d.live.slice(0,7).map(mapRow):[];
-        S.source="live"; S.live=rows; renderList();
+        // THE SCREEN LIST is open to everyone — a tourist watches it without any
+        // wallet or contract. Actionable 'live' coins (in the entry window) lead;
+        // the 'recent' screen fills below so the feed is never blank when the
+        // narrow window is empty (which is most of the time). Per-row buttons are
+        // gated on TAP (pick()); the list itself is not.
+        var live=(d&&d.live)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
+        live.concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
+        var rows=picks.slice(0,15).map(mapRow);
+        S.source="live"; S.live=rows; S.inWindow=live.length; renderList();
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
-        $("#dk-dropnote").textContent=rows.length? ("live · "+rows.length+" in the window · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}))
-                                                 : "live · nothing in the entry window right now";
+        var t=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+        $("#dk-dropnote").textContent=rows.length? ("live · "+live.length+" in the entry window · "+rows.length+" on screen · "+t)
+                                                 : "live · screen is quiet right now · "+t;
       })
       .catch(function(){
         if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
@@ -3478,9 +3510,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       var tx=await vc.drawForTrade(intentId,units); toast("Drawing "+usd(units)+" · "+esc(c.s)+"…");
       var rcpt=await tx.wait();
       if(rcpt&&rcpt.status===1){
-        S.positions.unshift({s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString()});
+        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString()});
         v.available=v.available-units; v.outstanding=v.outstanding+units;
-        renderPos(); closeSheet(); toast("✓ "+c.s+" · "+usd(units)+" drawn to the rail"); }
+        renderPos(); renderList(); closeSheet(); toast("✓ "+c.s+" · "+usd(units)+" drawn to the rail"); }
       else { closeSheet(); toast("✕ draw reverted — nothing drawn."); }
     }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
       if(/user rejected|ACTION_REJECTED/i.test(m)) toast("Cancelled — nothing drawn.");
@@ -3491,10 +3523,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // are never fake-resolved — their exit is the real keeper (not yet built).
   function driftPositions(){ var any=false;
     S.positions.forEach(function(p){ if(p.state!=="armed"||p.live)return; any=true; var mv=(Math.random()-0.44)*p.now*0.05; p.now=Math.max(p.now+mv,p.entry*0.05);
-      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
-      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; toast("✕ "+p.s+" stopped −10% — keeper sold"); }
-      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); } });
-    if(any) renderPos(); }
+      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
+      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✕ "+p.s+" stopped −10% — keeper sold"); }
+      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); } });
+    if(any){ renderPos(); renderList(); } }
   function renderPos(){ var el=$("#dk-pos");
     if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
     var liveN=S.positions.filter(function(p){return p.live&&p.state==="armed";}).length;
@@ -3569,7 +3601,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       stopTimers(); startTimers(); pollFeed(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
+    pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
   };
 })();
 </script>
