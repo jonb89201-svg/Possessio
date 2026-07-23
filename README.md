@@ -30,6 +30,8 @@ Every commit, every test, every architectural decision in POSSESSIO was routed t
 
 That fact is load-bearing. Mobile-only forces a specific operational discipline that desktop development doesn't demand: one command at a time, fresh terminal every session, atomic commits, verification after every push. The discipline shows up in the code -- tight architecture, no bloat, deterministic logic, comprehensive adversarial testing. Mobile origin isn't a constraint POSSESSIO worked around. It's the operating mode that produced the architecture.
 
+**The tool that makes it real -- an on-device inspector.** Mobile browsers give you no F12, and you cannot build on-chain from a phone without one, so the console carries its own: **MIB DEBUG** -- a live, on-screen inspector (tap `DBG` on [possessio.io](https://possessio.io)) that captures every console log, error, and raw JSON-RPC transaction payload a desktop developer would read in DevTools: `eth_sendTransaction` calldata, `to`, gas, and exact wallet revert / `ACTION_REJECTED` codes. It now also **self-diagnoses the radar feed** on demand -- a plain-language verdict (feed live / pump.fun WS dropped / radar down) computed live from the data, which is how a real ingestion outage was pinned in minutes rather than guessed at. Desktop-F12-grade inspection, on a phone -- the enabling tooling, not a boast.
+
 ---
 
 ## Test Status
@@ -76,6 +78,10 @@ POSSESSIO has shipped across multiple phases. Each phase generated architectural
 **PossessioPayments -- LIVE on Base mainnet** at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453, verifiable on BaseScan). Phase 2 council product, now deployed. The clean mainnet deploy is itself a proof: the constructor's decimals checks on all Chainlink feeds passed, confirming every feed/venue address is real and correct. The proof that the production system can ship in a second product domain. Different architectural shape than PLATE -- non-custodial merchant payment processor, sold as one-time software, POSSESSIO retains zero on-chain authority post-deployment, no protocol fee extraction at any layer. The SAL (Service Accountability Layer) framework that informs SAV's accountability primitive traces to ChatGPT (council seat).
 
 The arc is the work. Multiple products, one production system, no team scaling, no capital infusion between phases.
+
+### Pre-wired constellations -- the CREATE3 deploy architecture
+
+Interdependent contracts create a chicken-and-egg at deploy: the trader's **PossessioFundingVault** must be born knowing its execution **PossessioRail** -- the Rail is the vault's immutable `trader` *and* `tradeDestination` -- while the Rail must be born knowing the vault. Neither address exists before the other is deployed. POSSESSIO breaks the cycle with the same primitive that earns repeatable launches: **CREATE3 address prediction.** Because a CreateX CREATE3 address depends only on deployer + salt (not bytecode), the Rail's address is *known before it exists* -- so the vault is deployed with `trader == tradeDestination ==` the predicted Rail address, then the Rail is deployed pointing back at the vault. Two contracts, each wired to the other through immutables (no admin setter, no post-deploy patching), launched as one **pre-wired constellation.** The deploy scripts pin the predicted address and revert on any `PredictionMismatch` / `DeployedMismatch`, so a constellation either lands exactly as computed or not at all. The same primitive that gives PLATE its version-continuity address gives the trading desk its atomically-wired topology -- and generalizes to any future set of contracts that must reference each other at birth.
 
 ---
 
