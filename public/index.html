@@ -3238,6 +3238,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .sellbtn:disabled{opacity:.35;cursor:not-allowed;border-color:var(--dline);background:transparent;color:var(--dink-faint)}
   #desk-view .exitpct{font-family:var(--dmono);font-size:11px;font-weight:700}
   #desk-view .exitpct.up{color:var(--up)}#desk-view .exitpct.down{color:var(--down)}
+  #desk-view .devline{font-family:var(--dmono);font-size:10px;color:var(--dink-faint);margin-top:5px;display:flex;align-items:center;gap:6px}
+  #desk-view .devline a{color:var(--dink-faint);text-decoration:none}#desk-view .devline a:hover{color:var(--dacc)}
+  #desk-view .devtag{font-weight:700;font-size:9px;padding:1px 6px;border-radius:6px}
+  #desk-view .devtag.fresh{color:var(--up);background:var(--up-soft,transparent)}
+  #desk-view .devtag.prior{color:var(--stop);background:var(--stop-soft)}
   /* positions */
   #desk-view .pos{background:var(--card);border:1px solid var(--dline);border-radius:14px;box-shadow:var(--dshadow);overflow:hidden}
   #desk-view .pos-empty{padding:20px 14px;text-align:center;color:var(--dink-faint);font-size:12.5px}
@@ -3382,7 +3387,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var read=rug?["fast","rug-gate"]:take?["go","◆ pick"]:oc==="target"?["go","▲ target"]:(oc==="stop"||oc==="timestop")?["fast","exited"]:oc==="live"?["flow","live"]:["reading","screening"];
     return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
       ch:"sol", ico:"🛰", img:c.img||null, entry:entry, now:now, peak:Number(c.peak_mc)||now,
-      born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"" }; }
+      born:Number(c.qualified_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"",
+      dev:(c.creator||""), devN:(c.dev_prior_launches!=null?Number(c.dev_prior_launches):null) }; }
+  function shortAddr(a){ return a?(a.slice(0,4)+"…"+a.slice(-4)):""; }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
@@ -3405,7 +3412,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
       '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
       '<span class="age">'+ago(c.born)+'</span></div>'+
-      '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div></div>'+
+      '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div>'+
+      (c.dev?('<div class="devline"><a href="https://solscan.io/account/'+esc(c.dev)+'" target="_blank" rel="noopener">👤 '+esc(shortAddr(c.dev))+'</a>'+(c.devN!=null?'<span class="devtag '+(c.devN===0?"fresh":"prior")+'">'+(c.devN===0?"fresh":c.devN+"× prior")+'</span>':'')+'</div>'):'')+
+      '</div>'+
       '<div class="act"><div class="targets">'+
         '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">+10</button>'+
         '<button class="tbtn t25" onclick="Desk.pick(\''+qid+'\',2500)">+25</button>'+

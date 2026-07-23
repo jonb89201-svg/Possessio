@@ -254,12 +254,14 @@ export function buildTolledApp(env: Env) {
     const live = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, entry_age_sec,
               peak_mc, last_mc, last_tracked_ms, gate_rug, gate_session,
-              strat_take, entry_vel, gate_dev, top_holder_share, ${imgCol("candidates")}, ${dexCols}
+              strat_take, entry_vel, gate_dev, top_holder_share, creator, dev_prior_launches,
+              ${imgCol("candidates")}, ${dexCols}
          FROM candidates WHERE outcome='live' ORDER BY qualified_ms DESC LIMIT 40`
     ).all();
     const recent = await db.prepare(
       `SELECT token_address, symbol, name, qualified_ms, entry_mc, peak_mc,
-              last_mc, outcome, outcome_ms, ${dexCols}
+              last_mc, outcome, outcome_ms, creator, dev_prior_launches, top_holder_share,
+              ${imgCol("candidates")}, ${dexCols}
          FROM candidates WHERE outcome!='live' ORDER BY outcome_ms DESC LIMIT 40`
     ).all();
     const tally = await db.prepare(
