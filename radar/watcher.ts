@@ -165,8 +165,20 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
   // indexed delete, self-cadenced every discovery tick. (mc_ticks self-prunes in
   // screen.ts; this closes the last unbounded table.)
   const birthsKeepMs = parseInt(env.BIRTHS_KEEP_HOURS || "48", 10) * 3600_000;
+  // FK-SAFE + BATCHED (2026-07-23): candidates.token_address REFERENCES
+  // births(token_address), so deleting an expired birth a candidate still tracks
+  // throws FOREIGN KEY constraint failed — and ~737 such rows failed the WHOLE
+  // delete EVERY tick (silently, until feed_status surfaced it), stranding ~93k
+  // stale births AND blocking the raw_birth_json cleanup below (the space-cap
+  // protection). Exclude candidate-referenced births (the qualified coins are
+  // worth keeping anyway), and LIMIT so draining the backlog can't blow the cron
+  // budget in one tick — it bleeds down over a few ticks, then holds at steady state.
   await env.RADAR_DB.prepare(
-    `DELETE FROM births WHERE status='expired' AND pumpfun_first_seen_ms < ?1`
+    `DELETE FROM births WHERE token_address IN (
+       SELECT token_address FROM births
+        WHERE status='expired' AND pumpfun_first_seen_ms < ?1
+          AND token_address NOT IN (SELECT token_address FROM candidates)
+        LIMIT 5000)`
   ).bind(now - birthsKeepMs).run();
 
   // SPACE CAP (2026-07-16 incident): raw_birth_json (up to 4KB/row) is the DB's
