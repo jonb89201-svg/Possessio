@@ -30,6 +30,8 @@ Every commit, every test, every architectural decision in POSSESSIO was routed t
 
 That fact is load-bearing. Mobile-only forces a specific operational discipline that desktop development doesn't demand: one command at a time, fresh terminal every session, atomic commits, verification after every push. The discipline shows up in the code -- tight architecture, no bloat, deterministic logic, comprehensive adversarial testing. Mobile origin isn't a constraint POSSESSIO worked around. It's the operating mode that produced the architecture.
 
+**The tool that makes it real -- an on-device inspector.** Mobile browsers give you no F12, and you cannot build on-chain from a phone without one, so the console carries its own: **MIB DEBUG** -- a live, on-screen inspector (tap `DBG` on [possessio.io](https://possessio.io)) that captures every console log, error, and raw JSON-RPC transaction payload a desktop developer would read in DevTools: `eth_sendTransaction` calldata, `to`, gas, and exact wallet revert / `ACTION_REJECTED` codes. It now also **self-diagnoses the radar feed** on demand -- a plain-language verdict (feed live / pump.fun WS dropped / radar down) computed live from the data, which is how a real ingestion outage was pinned in minutes rather than guessed at. Desktop-F12-grade inspection, on a phone -- the enabling tooling, not a boast.
+
 ---
 
 ## Test Status
@@ -77,6 +79,10 @@ POSSESSIO has shipped across multiple phases. Each phase generated architectural
 
 The arc is the work. Multiple products, one production system, no team scaling, no capital infusion between phases.
 
+### Pre-wired constellations -- the CREATE3 deploy architecture
+
+Interdependent contracts create a chicken-and-egg at deploy: the trader's **PossessioFundingVault** must be born knowing its execution **PossessioRail** -- the Rail is the vault's immutable `trader` *and* `tradeDestination` -- while the Rail must be born knowing the vault. Neither address exists before the other is deployed. POSSESSIO breaks the cycle with the same primitive that earns repeatable launches: **CREATE3 address prediction.** Because a CreateX CREATE3 address depends only on deployer + salt (not bytecode), the Rail's address is *known before it exists* -- so the vault is deployed with `trader == tradeDestination ==` the predicted Rail address, then the Rail is deployed pointing back at the vault. Two contracts, each wired to the other through immutables (no admin setter, no post-deploy patching), launched as one **pre-wired constellation.** The deploy scripts pin the predicted address and revert on any `PredictionMismatch` / `DeployedMismatch`, so a constellation either lands exactly as computed or not at all. The same primitive that gives PLATE its version-continuity address gives the trading desk its atomically-wired topology -- and generalizes to any future set of contracts that must reference each other at birth.
+
 ---
 
 ## Treasury Engine
@@ -115,6 +121,8 @@ What stops this from being a 3% giveaway: the contract permits exactly four coun
 - `savSlash()` -- burn entire SAV balance, mark permanently inert
 
 No transfer. No sale. No arbitrary movement. The allocation is structurally committed to protocol outcomes; the only path to value extraction is collective council consensus on legitimate work, which the architect's Treasury Safe ratifies. The `savSlash` nuclear option is the load-bearing trust primitive: the architect can permanently burn the entire council allocation at any moment if the council operates against protocol interest. This makes "Council Proof-of-Work" enforceable rather than rhetorical.
+
+**Operating the seats -- built, not promised.** The contract says the council holds 3%; the **Council Signer** is how an AI actually operates its seat. One per-seat MCP connector ([`mcp/council-signer/`](mcp/council-signer/)), frozen at process start to `(seatKey, hook, chainId)`, exposes exactly the council actions above -- `proposeInvent` / `approveInvent` / `approveInventBySig` -- and **nothing else**: no `savBurn`, no transfer, no raw call (§7-scoped, 22/22 adversarial + preimage tests green, with the F3 vote-amount preimage round-trip-proven against the contract's Solidity `abi.encode` byte-for-byte). Alongside it, a D1-backed **communication ledger** (`/api/council/ledger`, mirrored in the console's Council view) carries EIP-712-signed statements so every position is attributable to a seat address -- the deliberation layer, made verifiable, with a statement signature that can never replay as a vote. Adding this changes nothing about the safety floor: a leaked connector still reaches only `onlyCouncilMember`, and `savSlash` under `onlyTreasury` still caps the worst case at a bad vote, never a lost cent. What was a concept when SAV shipped -- connect four AIs to a governance vault -- is now a running bridge (stdio for local runtimes, a bearer-gated remote transport for claude.ai on the web). Full detail: [Council Signer & the communication ledger](#council-signer--the-communication-ledger).
 
 ---
 
