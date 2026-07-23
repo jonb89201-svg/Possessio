@@ -37,7 +37,7 @@
   --radius-pill:9999px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh;overscroll-behavior:none;letter-spacing:-0.005em}
+html,body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh;width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior:none;letter-spacing:-0.005em}
 button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit;background:transparent;border:1px solid var(--line);outline:none}
 button{cursor:pointer;-webkit-tap-highlight-color:transparent}
 a{color:var(--oxide);text-decoration:none;font-weight:500}
@@ -3145,7 +3145,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      honest — nothing is signed/spent until a real trader is connected.
      ============================================================ -->
 <style>
-  #desk-view{position:fixed;inset:0;z-index:160;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  #desk-view{position:fixed;inset:0;z-index:160;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
     --ground:#F2F4F8;--card:#FFFFFF;--dink:#0B1220;--dink-dim:#5A6576;--dink-faint:#8A93A3;
     --dline:#E6E9F0;--dline-soft:#EEF1F6;--dacc:#2F55F7;--dacc-ink:#FFFFFF;--dacc-soft:#EAEEFE;
     --up:#12A150;--up-soft:#E4F5EC;--down:#E5484D;--down-soft:#FCE9E9;
@@ -3186,12 +3186,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .dk-connect.on{border-color:color-mix(in srgb,var(--up) 45%,var(--dline))}
   /* cockpit */
   #desk-view .dk-cockpit{background:var(--cockpit);border-radius:14px;margin:12px 0;padding:10px 4px;box-shadow:var(--dshadow);overflow:hidden}
-  #desk-view .dk-ch{display:flex;align-items:center;gap:8px;padding:0 10px 8px;color:var(--cockpit-dim);font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  #desk-view .dk-ch{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 10px 8px;color:var(--cockpit-dim);font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
   #desk-view .dk-ch .dot{width:7px;height:7px;border-radius:50%;background:var(--up)}
-  #desk-view .dk-ticks{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
-  #desk-view .dk-tick{padding:6px 10px;border-left:1px solid var(--cockpit-line)}#desk-view .dk-tick:first-child{border-left:none}
-  #desk-view .dk-tick .sym{color:var(--cockpit-dim);font-size:10.5px;font-weight:700}
-  #desk-view .dk-tick .px{color:var(--cockpit-ink);font-size:15px;font-weight:600;margin-top:2px;transition:color .25s}
+  #desk-view .dk-ticks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px}
+  #desk-view .dk-tick{min-width:0;padding:6px 10px;border-left:1px solid var(--cockpit-line)}#desk-view .dk-tick:first-child{border-left:none}
+  #desk-view .dk-tick .sym{color:var(--cockpit-dim);font-size:10.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #desk-view .dk-tick .px{color:var(--cockpit-ink);font-size:15px;font-weight:600;margin-top:2px;transition:color .25s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #desk-view .dk-tick .px.up{color:var(--up)}#desk-view .dk-tick .px.down{color:var(--down)}
   #desk-view .dk-tick .d{font-size:10.5px;font-weight:600;margin-top:1px}#desk-view .dk-tick .d.up{color:var(--up)}#desk-view .dk-tick .d.down{color:var(--down)}
   #desk-view .dk-tide{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:.02em}
@@ -3210,6 +3210,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   /* coin rows */
   #desk-view .dk-list{display:flex;flex-direction:column;gap:8px}
   #desk-view .coin{background:var(--card);border:1px solid var(--dline);border-radius:14px;padding:12px;box-shadow:var(--dshadow);display:grid;grid-template-columns:1fr auto;gap:10px}
+  /* grid-blowout guard: the 1fr info column must be allowed to shrink below its
+     content (default is min-width:auto) so a long name ellipsizes instead of
+     shoving the .act button column off the right edge. */
+  #desk-view .coin>div:first-child,#desk-view .coin-top,#desk-view .cn{min-width:0}
   #desk-view .coin.hot{border-color:color-mix(in srgb,var(--dacc) 45%,var(--dline))}
   #desk-view .coin-top{display:flex;align-items:center;gap:8px}
   #desk-view .ico{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;font-size:15px;background:var(--dline-soft)}
