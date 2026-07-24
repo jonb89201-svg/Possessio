@@ -50,6 +50,10 @@ Thumbs.db
 compile.txt
 report.txt
 grep_v4api.txt
+# MIB verification runs: `... | tee tee_<name>.txt` on the phone, so terminal
+# truth lands on disk and can be read back without copy-pasting a wall of
+# output. Kept locally (Amendment VII evidence), never committed.
+tee_*.txt
 
 # =========================
 # Python (your models/)
