@@ -98,6 +98,29 @@ export default {
       const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
       await stub.fetch("https://pumptape/ensure");
     })()));
+    // THE DRAINING METER, surfaced (audit 2026-07-24). The DO's `connected` reads
+    // true when the PumpPortal key drains below 0.02 SOL — the socket stays up and
+    // births keep flowing, but the KEY-GATED trade stream dies, so the tape (the
+    // referee every forward claim is graded against) silently stops accruing.
+    // Read the DO's own verdict on the cron and land it in feed_status, which
+    // /api/radar/health already reads: the MIB panel then NAMES it, on the phone,
+    // the day it happens — instead of a hole in the tape discovered weeks later.
+    // Recorded here rather than fetched on the health request path, so this costs
+    // the request path nothing (see N-4).
+    ctx.waitUntil((async () => {
+      const ms = Date.now();
+      try {
+        if (!env.PUMPTAPE) return;
+        const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
+        const r = await stub.fetch("https://pumptape/status");
+        const j: any = await r.json();
+        const t = j && j.tape;
+        if (!t) return;
+        // "ok" clears the row; anything else is recorded as the CAUSE, verbatim
+        // from the DO, so the console shows the diagnosis and not a bare flag.
+        await recordScan(env, "pumptapeTrades", ms, t.status === "ok" ? null : new Error(`${t.status}: ${t.detail || ""}`));
+      } catch (e) { console.error("pumptapeTrades", e); }
+    })());
   },
 
   async fetch(request: Request, env: WatcherEnv, ctx: ExecutionContext): Promise<Response> {
