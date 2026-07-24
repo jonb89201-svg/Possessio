@@ -78,10 +78,11 @@
     }
   ],
   "deployOrder": [
-    "1. factory  (CREATE3, EOA-keyed)  -> extcodehash gate == expected(factory)",
-    "2. saltpool (CREATE3, EOA-keyed)  -> extcodehash gate",
-    "3. x402core (CREATE3, EOA-keyed)  -> extcodehash gate",
-    "4. pool     (CREATE3, EOA-keyed; authorizedSources=[factory,x402core]) -> extcodehash gate",
+    "ORDER REVISED (council 2026-07-20): POOL FIRST. Both x402Core AND factory constructors staticcall <sink>.isInfraSink() and revert FeeSinkInterfaceMismatch if the pool is not a live infra-sink — so the pool (Heart) MUST land before them. Authoritative runbook: RUNBOOK_DEPLOY.md / RUNBOOK_CONSTELLATION.md §2.",
+    "1. pool     (CREATE3, EOA-keyed; authorizedSources=[factory,x402core] baked as PREDICTED addrs, read only at runtime) -> extcodehash gate == expected(pool)",
+    "2. x402core (CREATE3, EOA-keyed; ctor verifies pool live via isInfraSink brick-guard; heartSink surplus routes to pool) -> extcodehash gate",
+    "3. factory  (CREATE3, EOA-keyed; ctor verifies pool live via isInfraSink brick-guard; feeSink=pool) -> extcodehash gate",
+    "4. saltpool (CREATE3, EOA-keyed; factory=live factory) -> extcodehash gate",
     "5. keeper refills saltpool with hookSalts (0x8C8, factory-keyed)",
     "NOTE: extcodehash 'expected' values are recorded at fork-test time from the compiled runtime code."
   ],
