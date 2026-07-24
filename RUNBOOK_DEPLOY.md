@@ -148,7 +148,18 @@ salt is not sender-locked, or if `HEART_POOL` is not a live infra-sink.
   POOL-first order) and the stale codehashes (`optimizer_pool.json` regenerated from
   the uniform runs=200 build). Always re-run `deploy/sync_optimizer_pool.sh` after the
   Phase-0 source freeze so the pin matches the exact frozen bytecode.
-- **DOC-6 (verify before Phase 2):** confirm the anchor EOA private key is NOT derivable
-  from the committed phrase. The phrase derives only salts (public, sender-locked); if
-  the key were also phrase-derived, anyone could occupy the constellation addresses.
-  Architect confirmation owed.
+- **DOC-6 (checked 2026-07-24 — PASS, with a caveat):** verified the anchor EOA private
+  key is NOT reproduced by any common phrase-derivation scheme. Tested ~25 schemes against
+  the anchor address `0xed5c1F…61eC` — `keccak256(phrase)`, `keccak256(phrase + "/"+tag)`
+  for many tags (the repo's own salt-derivation style), lowercase/whitespace/prefix
+  variants, double-keccak, `sha256(phrase)` brain-wallet forms, and `sha256→keccak` — with
+  a positive control (anvil key #0) confirming the matcher works. **No match.** The phrase
+  IS confirmed to derive the *salts* (`keccak256(phrase+"/factory")` and `.../pool` low-88
+  bits reproduce the committed salts exactly) — those are public and sender-locked, useless
+  without the key. BIP39 is not applicable (the phrase words are not in the wordlist). This
+  rules out the dangerous brain-wallet mistake. **Caveat:** this is strong evidence, not
+  proof — a bespoke/obscure KDF can't be brute-forced away. The key should have come from a
+  CSPRNG independent of the phrase (`cast wallet new`, hardware wallet, or `os.urandom`);
+  the Architect who generated it should confirm that origin. Reproduce this check:
+  `cast wallet address --private-key $(cast keccak 'TREGUNA_MEKOIDES_TRECORUM_SATIS_DEE')`
+  ≠ the anchor address.
