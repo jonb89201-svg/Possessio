@@ -2,9 +2,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # sync_optimizer_pool.sh — the optimizer pool's engine.
 #
-# The optimizer runs are HARDCODED PER CONTRACT in foundry.toml via
-# [[profile.default.compilation_restrictions]], so ONE `forge build` produces
-# every contract at its fixed setting. This script builds once, then records
+# The optimizer runs are UNIFORM (runs=200 + via_ir) in foundry.toml
+# [profile.default] (ratified 2026-07-20; the per-contract compilation_restrictions
+# were removed), so ONE `forge build` produces every contract at that setting.
+# This script builds once, then records
 # for each contract in deploy/optimizer_pool.json:
 #   · init_codehash      = keccak256(creation bytecode)  ← the value a codehash
 #                          factory (PossessioFactory) pins as templateCodehash

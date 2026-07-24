@@ -76,12 +76,17 @@ contract PossessioRail is ReentrancyGuard {
     struct Position { address token; uint256 usdcIn; uint256 tokenAmount; Status status; }
     /// @notice Per-intent position. intentId is the shared id across vault + AutoTarget.
     mapping(uint256 => Position) public positions;
+    /// @notice Count of currently-Open positions holding a given token. Guards
+    ///         `sweep` from stripping inventory that backs a live position (a
+    ///         count, since more than one intent can hold the same token).
+    mapping(address => uint256) public openByToken;
 
     // ── Events (the money-path receipts) ────────────────────────────────────
     event Entered(uint256 indexed intentId, address indexed token, uint256 usdcIn, uint256 tokenOut);
     event Exited(uint256 indexed intentId, uint256 usdcOut, int256 pnl);
     event OwnerExited(uint256 indexed intentId, uint256 usdcOut, int256 pnl);
     event Swept(address indexed token, address indexed to, uint256 amount);
+    event Abandoned(uint256 indexed intentId, address indexed token, uint256 tokenAmount);
 
     // ── Errors ──────────────────────────────────────────────────────────────
     error NotKeeper();
@@ -96,6 +101,7 @@ contract PossessioRail is ReentrancyGuard {
     error TokenMismatch();
     error ExitNotAuthorized();
     error ProtectedToken();
+    error TokenBacksOpenPosition();
 
     modifier onlyKeeper() { if (msg.sender != keeper) revert NotKeeper(); _; }
 
@@ -149,6 +155,7 @@ contract PossessioRail is ReentrancyGuard {
 
         // ── Effects ─────────────────────────────────────────────────────────
         p.token = token; p.usdcIn = size; p.status = Status.Open;
+        openByToken[token] += 1;
 
         // ── Interactions: draw (vault caps gate this) then buy ──────────────
         vault.drawForTrade(intentId, size);                    // USDC → this Rail
@@ -184,9 +191,11 @@ contract PossessioRail is ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice The operator can ALWAYS force-close an open position — no keeper,
+     * @notice The operator force-closes an open position via the DEX — no keeper,
      *         no AutoTarget resolution needed. The human's manual exit hatch
-     *         (SPEC §5.7; realizes AutoTarget F2). Same sell→return path.
+     *         (SPEC §5.7; realizes AutoTarget F2). Same sell→return path, so it
+     *         needs a sellable token; for a token that CANNOT be sold (honeypot /
+     *         zero-liquidity rug) use `abandon` instead, which closes without a swap.
      */
     function ownerExit(uint256 intentId, uint256 minUsdcOut, uint24 poolFee)
         external nonReentrant
@@ -199,13 +208,42 @@ contract PossessioRail is ReentrancyGuard {
     }
 
     /**
+     * @notice Owner escape hatch for a position whose token cannot be sold — a
+     *         honeypot that blocks the sell, or a zero-liquidity rug — where both
+     *         `exit` and `ownerExit` revert on the mandatory swap and the draw is
+     *         otherwise stranded in the vault's `outstanding` forever, permanently
+     *         consuming the outstanding cap. Closes the position WITHOUT a swap and
+     *         clears the exposure via a zero-proceeds return (the vault's
+     *         `returnProceeds` moves no USDC when amount == 0). The drawn capital is
+     *         already lost in the rug; this only stops the dead position from
+     *         ratcheting the cap. The now-worthless token stays in the Rail and is
+     *         `sweep`-able once the position is Closed.
+     */
+    function abandon(uint256 intentId) external nonReentrant {
+        if (msg.sender != vault.owner()) revert NotOwner();
+        Position storage p = positions[intentId];
+        if (p.status != Status.Open) revert PositionNotOpen();
+
+        // ── Effects (before interaction) ────────────────────────────────────
+        p.status = Status.Closed;
+        openByToken[p.token] -= 1;
+
+        // ── Interaction: zero-proceeds return clears vault `outstanding` ─────
+        vault.returnProceeds(intentId, 0);
+        emit Abandoned(intentId, p.token, p.tokenAmount);
+    }
+
+    /**
      * @notice Rescue a non-position token mistakenly sent to the Rail. Owner-only,
-     *         to the owner. Never USDC (mid-flow), never a currently-open token.
+     *         to the owner. Never USDC (mid-flow), and never a token that currently
+     *         backs an Open position — sweeping that would strip the inventory the
+     *         position needs to exit. Close (`exit`/`ownerExit`/`abandon`) first.
      */
     function sweep(address token) external nonReentrant {
         address owner_ = vault.owner();
-        if (msg.sender != owner_)     revert NotOwner();
-        if (token == address(usdc))   revert ProtectedToken();
+        if (msg.sender != owner_)        revert NotOwner();
+        if (token == address(usdc))      revert ProtectedToken();
+        if (openByToken[token] != 0)     revert TokenBacksOpenPosition();
         uint256 bal = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransfer(owner_, bal);
         emit Swept(token, owner_, bal);
@@ -237,6 +275,7 @@ contract PossessioRail is ReentrancyGuard {
 
         // ── Effects ─────────────────────────────────────────────────────────
         p.status = Status.Closed;
+        openByToken[token] -= 1;
 
         // ── Interactions: sell → return home ────────────────────────────────
         IERC20(token).forceApprove(address(dexRouter), amt);

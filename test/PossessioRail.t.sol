@@ -20,6 +20,16 @@ contract MockToken is ERC20 {
     constructor() ERC20("Meme","MEME") {}
     function mint(address to, uint256 a) external { _mint(to,a); }
 }
+/// @dev Honeypot: the buy (a plain `transfer` from the router to the Rail)
+///      succeeds, but every SELL — the router pulling via `transferFrom` — reverts.
+///      Models a token that can be bought but never sold, the case `abandon` exists for.
+contract HoneypotToken is ERC20 {
+    constructor() ERC20("Honeypot","HONEY") {}
+    function mint(address to, uint256 a) external { _mint(to,a); }
+    function transferFrom(address, address, uint256) public pure override returns (bool) {
+        revert("HONEYPOT: no sell");
+    }
+}
 
 /// @dev AutoTarget stand-in: exposes the flattened `intents` getter the Rail
 ///      reads. Test controls token/chainTag/status. Status: 1=Open,2=Resolved.
@@ -237,5 +247,100 @@ contract PossessioRailTest is Test {
         vm.prank(owner);
         vm.expectRevert(PossessioRail.ProtectedToken.selector);
         rail.sweep(address(usdc));
+    }
+
+    function test_sweep_blockedWhileTokenBacksOpenPosition() public {
+        _openIntent(1, 1); router.setOut(500e18);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        // the position token is live — sweeping it would strip the exit inventory
+        assertEq(rail.openByToken(address(token)), 1);
+        vm.prank(owner);
+        vm.expectRevert(PossessioRail.TokenBacksOpenPosition.selector);
+        rail.sweep(address(token));
+        // after a clean exit the guard releases
+        at.setStatus(1, 2); router.setOut(3_600e6);
+        vm.prank(keeper); rail.exit(1, 1, FEE);
+        assertEq(rail.openByToken(address(token)), 0);
+        vm.prank(owner); rail.sweep(address(token)); // no revert
+    }
+
+    // ─────────────── abandon — the un-sellable (honeypot) escape ─────────────
+
+    /// @dev Sets up an Open position in a token that cannot be sold, and returns
+    ///      the honeypot handle. 3,000 USDC drawn -> 500 HONEY bought.
+    function _openHoneypot(uint256 id) internal returns (HoneypotToken hp) {
+        hp = new HoneypotToken();
+        hp.mint(address(router), 1_000_000e18); // router can pay out the buy
+        at.setIntent(id, address(hp), 8453, 1);  // Open, Base-tagged
+        router.setOut(500e18);
+        vm.prank(keeper); rail.enter(id, address(hp), 3_000e6, 1e18, FEE);
+    }
+
+    function test_ownerExit_revertsOnHoneypot_provingTheTrap() public {
+        _openHoneypot(1);
+        // The documented "always force-close" bail runs the mandatory swap, which
+        // the honeypot blocks — so ownerExit CANNOT close it. This is why abandon exists.
+        vm.prank(owner);
+        vm.expectRevert(bytes("HONEYPOT: no sell"));
+        rail.ownerExit(1, 1, FEE);
+        assertEq(vault.outstanding(), 3_000e6); // still stuck without abandon
+    }
+
+    function test_abandon_closesUnsellablePosition_clearsOutstanding() public {
+        HoneypotToken hp = _openHoneypot(1);
+        assertEq(vault.outstanding(), 3_000e6);
+        assertEq(rail.openByToken(address(hp)), 1);
+
+        vm.expectEmit(true, true, false, true, address(rail));
+        emit PossessioRail.Abandoned(1, address(hp), 500e18);
+        vm.prank(owner); rail.abandon(1);
+
+        // exposure cleared WITHOUT any swap or USDC movement
+        assertEq(vault.outstanding(), 0);
+        assertEq(rail.openByToken(address(hp)), 0);
+        (, , , PossessioRail.Status st) = rail.getPosition(1);
+        assertEq(uint8(st), uint8(PossessioRail.Status.Closed));
+        assertEq(usdc.balanceOf(address(vault)), 7_000e6); // no proceeds returned; loss realized
+        // vault can draw again against the freed cap
+        assertEq(vault.maxOutstanding() - vault.outstanding(), MAX_OUTSTANDING);
+    }
+
+    function test_abandon_onlyOwner() public {
+        _openHoneypot(1);
+        vm.prank(keeper);
+        vm.expectRevert(PossessioRail.NotOwner.selector);
+        rail.abandon(1);
+        vm.prank(rando);
+        vm.expectRevert(PossessioRail.NotOwner.selector);
+        rail.abandon(1);
+    }
+
+    function test_abandon_requiresOpenPosition() public {
+        _openHoneypot(1);
+        vm.prank(owner); rail.abandon(1);
+        vm.prank(owner);
+        vm.expectRevert(PossessioRail.PositionNotOpen.selector);
+        rail.abandon(1); // already Closed
+    }
+
+    function test_abandon_cannotAbandonAfterCleanExit() public {
+        _openIntent(1, 1); router.setOut(500e18);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        at.setStatus(1, 2); router.setOut(3_600e6);
+        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(owner);
+        vm.expectRevert(PossessioRail.PositionNotOpen.selector);
+        rail.abandon(1);
+    }
+
+    function test_abandon_thenSweepRecoversDeadToken() public {
+        HoneypotToken hp = _openHoneypot(1);
+        vm.prank(owner); rail.abandon(1);
+        // the worthless token is now sweepable (position Closed, guard released)
+        assertEq(rail.openByToken(address(hp)), 0);
+        uint256 stuck = hp.balanceOf(address(rail));
+        assertEq(stuck, 500e18);
+        vm.prank(owner); rail.sweep(address(hp));
+        assertEq(hp.balanceOf(owner), stuck);
     }
 }
