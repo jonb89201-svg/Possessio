@@ -7,8 +7,11 @@
 -- 0006-0017 added (spends, regime_ticks, candidates, earlies, mc_ticks,
 -- early_cycles + the later ALTERs). 0018 (2026-07-15) then extended `sessions`
 -- with threshold_used + basis for the §0 session-gate writer. This file is the
--- TRUE cumulative schema as of migration 0018, verified by applying base + every
--- migration in
+-- TRUE cumulative schema as of migration 0026 (extended 2026-07-24, AUDIT N-5 —
+-- see the catch-up block at the foot of this file; the header said "as of 0018"
+-- while the body already carried 0019-0023 and was missing 0024-0026, so this
+-- line is now the FIRST thing to update when a migration lands), verified by
+-- applying base + every migration in
 -- order to a scratch SQLite DB and diffing table_info/index sets against this
 -- file's output. Convention (unchanged from the 0003-0005 fold): ALTER-added
 -- columns are inlined into their CREATE TABLE with a "migration NNNN" note, so
@@ -261,3 +264,42 @@ CREATE TABLE early_cycles (
   ms            INTEGER NOT NULL
 );
 CREATE INDEX idx_cycles_token ON early_cycles(token_address, level);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- MIRROR CATCH-UP 2026-07-24 (AUDIT N-5): the two tables below were added by
+-- migrations 0024-0026 and were missing from this mirror — the same drift class
+-- R-3 caught in July (a local file asserting a global fact, with nothing to
+-- notice when the global fact moved). Verified by diffing every CREATE TABLE
+-- across migrations/ against this file; council_ledger and feed_status were the
+-- only two absent. A fresh DB provisioned from this file previously failed every
+-- council-ledger write and every feed-health read.
+
+-- migration 0024 — the council communication ledger (SPEC_CouncilSigner §8).
+-- Lives in the radar DB's headroom. Every row is attributable: `seat` is the
+-- EIP-712 signer recovered server-side before insert (worker/index.ts).
+CREATE TABLE IF NOT EXISTS council_ledger (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts_ms     INTEGER NOT NULL,             -- server receive time (ms)
+  seat      TEXT    NOT NULL,             -- recovered signer (checksummed address)
+  kind      TEXT    NOT NULL DEFAULT 'statement', -- statement | proposal | note
+  body      TEXT    NOT NULL,             -- the message (or JSON preimage for a proposal)
+  nonce     TEXT    NOT NULL,             -- uint256-as-string, canonical decimal
+  signature TEXT    NOT NULL,             -- the EIP-712 Statement signature
+  ref       TEXT                          -- optional: a proposalHash this relates to
+);
+CREATE INDEX IF NOT EXISTS idx_council_ledger_ts ON council_ledger(ts_ms);
+-- migration 0025 (N-1): a (seat, nonce) pair may be committed AT MOST ONCE, so a
+-- statement harvested from the public GET can never be replayed. LOAD-BEARING:
+-- dropping this index reopens an unbounded write against the shared radar DB.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_council_ledger_seat_nonce
+  ON council_ledger (seat, nonce);
+
+-- migration 0026 — per-scan ingest health, so a stall names its CAUSE, not just
+-- its symptom. Read by /api/radar/health for the MIB DEBUG feed readout.
+-- One row per scan, upserted; never grows.
+CREATE TABLE IF NOT EXISTS feed_status (
+  scan        TEXT PRIMARY KEY,   -- 'birthScan' | 'screenScan' | 'btcScan' | …
+  last_ok_ms  INTEGER,            -- last completion without a throw
+  last_err_ms INTEGER,            -- last throw (compare vs last_ok_ms: err>ok => failing now)
+  last_err    TEXT                -- the throw message (truncated)
+);

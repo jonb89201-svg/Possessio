@@ -60,6 +60,12 @@ const STALE_SOCKET_MS  = 90_000;
 // obeys the same bounded-fetch law as watcher.ts/screen.ts — a hung upgrade
 // must throw, never hang the alarm handler that called it.
 const WS_CONNECT_TIMEOUT_MS = 10_000;
+// Trade-stream silence that counts as broken — but ONLY while births prove the
+// socket is genuinely live and we are tracking coins. A quiet market is not a
+// drained key, and this must never cry wolf: pump.fun coins always trade (the
+// create event carries the dev's own buy), so live births + tracked coins +
+// total trade silence is not a lull, it is the key-gated stream being gone.
+const TRADE_SILENCE_MS = 5 * 60_000;
 
 type Coin = {
   createdMs: number;
@@ -100,6 +106,16 @@ export class PumpTape {
     connects: 0, msgs: 0, parsed: 0, births: 0, trades: 0,
     hits: 0, targets: 0, exits: 0, gaps: 0, noPrice: 0,
     lastMsgMs: 0, lastConnectMs: 0, d1Errors: 0,
+    // THE DRAINING METER (audit 2026-07-24). subscribeNewToken is FREE and
+    // keyless; subscribeTokenTrade needs an API key funded >=0.02 SOL. When the
+    // key drains, the SOCKET STAYS UP and births keep arriving — only the trade
+    // stream stops. `connected` therefore reads true while the tape (the
+    // full-population referee for every trade claim) silently stops accruing.
+    // Timestamping the two streams SEPARATELY is what makes that visible:
+    // births flowing + trades silent is the fingerprint of an unfunded key.
+    // Behavioral by design — it also catches a revoked key or an upstream API
+    // change, which a balance read alone would miss.
+    lastBirthMs: 0, lastTradeMs: 0,
   };
 
   constructor(state: DurableObjectState, env: WatcherEnv) {
@@ -124,11 +140,61 @@ export class PumpTape {
         connected: this.ws !== null,
         solUsd: this.solUsd,
         tracked: this.coins.size,
+        tape: this.tapeHealth(),       // `connected` alone lies when the key drains
         stats: this.stats,
         rawSamples: this.rawSamples,   // the VERIFY-FIRST surface: pin the shape from these
       });
     }
     return new Response("not found", { status: 404 });
+  }
+
+  /**
+   * THE DRAINING METER, judged (audit 2026-07-24).
+   *
+   * `connected` answers "is the socket up", which is NOT the question that
+   * matters. subscribeNewToken is free and keyless; subscribeTokenTrade needs an
+   * API key funded >=0.02 SOL. Drain the key and the socket stays up, births
+   * keep flowing, and only the TRADE stream dies — so the tape (the
+   * full-population referee every trade claim is graded against) silently stops
+   * accruing while every readout says healthy. That is a False Green in the
+   * monitoring surface itself, and it fires hardest for an operator running the
+   * <=0.05 SOL hot-wallet ceiling the key's own threat model requires.
+   *
+   * Judged behaviorally, from the two streams' own timestamps, so it also catches
+   * a revoked key or an upstream API change — failures a balance read misses.
+   * Deliberately conservative: it only accuses when births prove the socket is
+   * live AND we are tracking coins that must be trading.
+   */
+  tapeHealth(now = Date.now()) {
+    const s = this.stats;
+    const connected = this.ws !== null;
+    // presence only — the key is a money credential, never read for its value
+    const keyed = !!(this.env as any).PUMPPORTAL_API_KEY;
+    const birth_age_ms = s.lastBirthMs ? now - s.lastBirthMs : null;
+    const trade_age_ms = s.lastTradeMs ? now - s.lastTradeMs : null;
+    const birthsLive = birth_age_ms !== null && birth_age_ms < TRADE_SILENCE_MS;
+    const tradesSilent = trade_age_ms === null || trade_age_ms > TRADE_SILENCE_MS;
+
+    let status = "ok";
+    let detail: string | null = null;
+    if (!connected) {
+      status = "socket_down";
+      detail = "WebSocket is down; the 30s alarm watchdog reconnects. Layer 1 (15s cron) carries the tape meanwhile.";
+    } else if (!keyed) {
+      status = "trades_unsubscribed";
+      detail = "No PUMPPORTAL_API_KEY set — births only, BY CONFIG, not by failure. " +
+        "Trade-level tape (and every claim graded against it) is not accruing. " +
+        "subscribeTokenTrade needs a key funded >=0.02 SOL.";
+    } else if (this.coins.size > 0 && birthsLive && tradesSilent) {
+      status = "trade_stream_dead";
+      detail = `Births are arriving (${Math.round((birth_age_ms as number) / 1000)}s ago) but NO trade ` +
+        `message in ${trade_age_ms === null ? "this session" : Math.round(trade_age_ms / 1000) + "s"} ` +
+        `while tracking ${this.coins.size} coins — the key-gated stream is gone while the socket reads healthy. ` +
+        "Most likely the PumpPortal key fell below 0.02 SOL (it degrades SILENTLY; the socket stays up). " +
+        "Also consistent with a revoked key or an upstream API change. The tape is NOT accruing: " +
+        "do not grade any forward claim against this window.";
+    }
+    return { status, connected, keyed, tracked: this.coins.size, birth_age_ms, trade_age_ms, detail };
   }
 
   async ensure(): Promise<void> {
@@ -248,6 +314,7 @@ export class PumpTape {
 
     if (txType === "create") {
       this.stats.births++;
+      this.stats.lastBirthMs = now; // free/keyless stream — see stats.lastTradeMs
       if (!this.coins.has(mint)) {
         // PINNED SHAPE: the create event carries the DEV BUY — solAmount is
         // the creator's initial buy in SOL (live sample: 4.938), trader is
@@ -280,6 +347,7 @@ export class PumpTape {
     const c = this.coins.get(mint);
     if (!c) return; // trade for a coin we never saw born (pre-connect) — skip
     this.stats.trades++;
+    this.stats.lastTradeMs = now; // KEY-GATED stream — silence here vs live births = drained/revoked key
 
     // lamports-vs-SOL heuristic until raw samples pin the unit: a single
     // pump.fun trade above 100k "SOL" does not exist; that magnitude is lamports.

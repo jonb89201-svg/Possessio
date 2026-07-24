@@ -76,8 +76,19 @@ async function handleMcp(req, res, parsedBody) {
 const httpServer = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    if (url.pathname === "/healthz") return send(res, 200, { ok: true, seat: binding.seatAddress, chainId: binding.chainId });
-    if (url.pathname !== MCP_PATH) return rpcError(res, -32601, 404, "not found");
+    // Liveness only — deliberately says NOTHING about who this host is (CS-1,
+    // audit 2026-07-23). It used to return the seat address + chainId, and it
+    // answers BEFORE the bearer gate below, so anyone who found the URL learned
+    // "this host holds council seat 0x… on chain 8453" with no token — free
+    // targeting intel for going after a signing key, and deploy.sh tells the
+    // operator to set the Codespace port PUBLIC. A liveness probe needs to prove
+    // the process is up, nothing more. The seat/chain detail moved behind the
+    // gate (/whoami) for anyone who can already authenticate.
+    if (url.pathname === "/healthz") return send(res, 200, { ok: true });
+    // /whoami carries the identity /healthz used to leak. It is NOT exempt from
+    // the door — it is routed past the 404 only so the gate below can judge it.
+    const isWhoami = url.pathname === "/whoami";
+    if (!isWhoami && url.pathname !== MCP_PATH) return rpcError(res, -32601, 404, "not found");
 
     // THE DOOR — every method on the MCP path proves the bearer token first, in
     // constant time. No token, wrong token, wrong scheme → 401, key untouched.
@@ -85,6 +96,10 @@ const httpServer = http.createServer(async (req, res) => {
       res.setHeader("www-authenticate", 'Bearer realm="council-signer"');
       return rpcError(res, -32001, 401, "unauthorized");
     }
+
+    // Authenticated identity readout (CS-1). Same facts /healthz used to hand
+    // out for free, now only to a caller who already proved the bearer token.
+    if (isWhoami) return send(res, 200, { ok: true, seat: binding.seatAddress, chainId: binding.chainId });
 
     // Only POST carries JSON-RPC; parse it ourselves and hand the object to the SDK.
     let parsedBody;

@@ -212,6 +212,34 @@ test("R-1: exactly-at-cap payload is kept whole, one char over is slimmed", asyn
   assert.equal(slim.image_uri, "u", "extracted field intact");
 });
 
+// N-3 (audit 2026-07-23): the R-1 slimming dropped associated_bonding_curve,
+// which screen.ts's rug gate reads to exclude the bonding curve from the float.
+// Undefined there does not read as "unknown" — it makes the curve score as the
+// top HOLDER, so gate_rug resolves to 0 (a FALSE rug fail) on every coin whose
+// birth payload exceeds the cap. This test is the guard: EVERY field a
+// downstream consumer reads must survive slimming. Add the field here when you
+// add the reader, and this fails loudly if slimming ever drops one again.
+test("N-3: slimming preserves every field a consumer reads", async () => {
+  const { rawBirthJson } = await import("../watcher.ts");
+  // field -> the consumer that reads it (kept in the assertion message so a
+  // failure names WHO breaks, not just WHAT is missing)
+  const CONSUMED = {
+    image_uri: "x402-toll.ts json_extract('$.image_uri')",
+    associated_bonding_curve: "screen.ts topHolderShare(curveAcct) — rug gate",
+  };
+  const base = { mint: "RUG", ...Object.fromEntries(Object.keys(CONSUMED).map((k) => [k, `v_${k}`])), description: "" };
+  const over = { ...base, description: "d".repeat(4001 - JSON.stringify(base).length) };
+  assert.ok(JSON.stringify(over).length > 4000, "fixture is over-cap");
+
+  const slim = JSON.parse(rawBirthJson(over));
+  assert.equal(slim.slimmed, true, "fixture slimmed");
+  for (const [field, consumer] of Object.entries(CONSUMED)) {
+    assert.equal(slim[field], `v_${field}`, `slimming dropped '${field}' — breaks ${consumer}`);
+  }
+  // and the curve account specifically survives as a usable value, not undefined
+  assert.notEqual(slim.associated_bonding_curve, undefined, "curve account must never be undefined after slimming");
+});
+
 test("R-3: idle gate still holds when the feed URL is empty", async () => {
   const db = birthDb();
   let fetched = false;

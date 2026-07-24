@@ -74,6 +74,89 @@ server.tool("get_ledger_stats",
   async () => text({ ...ledger.todayStats(rt.ledgerPath, day()),
     caps: { maxTradesPerDay: rt.maxTradesPerDay, maxDailyExposureUsd: rt.maxDailyExposureUsd } }));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CONSTITUTION GATES (F-1, Sec0, Sec2, Sec1, Sec3) — SINGLE-SOURCED.
+//
+// XT-3 (audit 2026-07-23): this pipeline used to live INSIDE build_trade only.
+// execute_trade — the path that will one day hold a signer — carried no gate of
+// its own and was safe purely because it hard-refuses at the end. That is a trap
+// for whoever wires the signer: nothing structurally forced the gates to be
+// re-applied, and the gates were not even visible in that function to be missed.
+// Both paths now call THIS, so a signer cannot be wired past the constitution
+// without deleting this call outright — a deliberate act, not an oversight.
+//
+// Returns { blocked: <tool response> } if any gate stops the trade (already
+// ledgered by skip()/refuse()), else the verified facts for the caller to use.
+// Order is load-bearing and matches RULEBOOK Sec0-3; do not reorder.
+async function runConstitutionGates(a) {
+  // 1. F-1 (absolute): contract address only, never a ticker.
+  const mint = assertContractAddress(a.tokenAddress);
+
+  // 2. FACTS LAYER (W-2): gather every gate fact server-side.
+  //    Fail-closed - an unfetchable fact is a refusal, never a
+  //    silent downgrade to the caller's word.
+  const g = await factsLayer.gatherFacts(mint, { fetchImpl: fetch, env: process.env });
+  const factsDivergence = factsLayer.divergence(a.facts, g);
+  const meta = {
+    factsSource: g.allFetched ? "chain-read" : "chain-read-incomplete",
+    factsDivergence,
+  };
+
+  // 3. Sec0 session gate - live reading, or the documented
+  //    ARCHITECT-ONLY override; no reading -> REFUSE (fail-closed).
+  const sg = g.facts.sessionGate;
+  if (sg.status === "UNAVAILABLE")
+    return { blocked: refuse("session-gate", sg.basis, a, { ...meta, sessionGate: sg }) };
+  if (sg.play !== true)
+    return { blocked: skip("session-gate", sg.basis, a, { ...meta, sessionGate: sg }) };
+
+  // 4. Fact completeness: every gate-critical fact must have fetched.
+  if (!g.allFetched)
+    return { blocked: refuse("facts", factsLayer.refusalReason(g), a, { ...meta, sessionGate: sg }) };
+
+  // 5. Sec2 rug gate - on FETCHED facts only.
+  const rg = rugGate(g.gateFacts, TUNE);
+  if (!rg.ok) return { blocked: skip("rug-gate", rg.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg }) };
+
+  // 6. Sec1 entry - on FETCHED facts only.
+  const en = entryOk(g.gateFacts, LAW, TUNE);
+  if (!en.ok) return { blocked: skip("entry", en.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg }) };
+
+  // 7. XT-1: SIZE THE TRADE SERVER-SIDE before capping it. The caps must bind on
+  //    what the swap actually SPENDS (amountAtomic), not on the caller's claimed
+  //    notionalUsd — those were never reconciled, so `notionalUsd: 1` with a huge
+  //    amountAtomic passed every cap and built a swap orders of magnitude larger.
+  //    Unpriceable input -> REFUSE (fail-closed), never cap on an unverified size.
+  const nf = await factsLayer.deriveNotionalUsd(
+    factsLayer.factsEnv(process.env), fetch, a.facts.inputMint, a.facts.amountAtomic);
+  if (nf.status !== "ok")
+    return { blocked: refuse("notional", nf.basis, a, { ...meta, sessionGate: sg, rugGate: rg }) };
+  const notionalUsd = nf.value;
+
+  //    A large gap between claimed and derived means the caller's model of this
+  //    trade is wrong (or dishonest). The derived number governs regardless; the
+  //    gap is surfaced, and a gross mismatch is refused rather than silently
+  //    re-sized under the caller. 25% mirrors the tape cross-check convention.
+  const claimed = Number(a.notionalUsd);
+  const notionalDivergencePct = Number.isFinite(claimed) && notionalUsd > 0
+    ? Math.abs(claimed - notionalUsd) / notionalUsd * 100 : null;
+  if (notionalDivergencePct !== null && notionalDivergencePct > 25) {
+    return { blocked: refuse("notional-divergence",
+      `claimed $${claimed} vs server-derived $${notionalUsd.toFixed(2)} ` +
+      `(${notionalDivergencePct.toFixed(1)}% apart) — ${nf.basis}`,
+      a, { ...meta, sessionGate: sg, rugGate: rg, notionalUsd, claimedNotionalUsd: claimed }) };
+  }
+
+  // 8. Sec3 caps (server-enforced against the ledger) — on the DERIVED notional.
+  const st = ledger.todayStats(rt.ledgerPath, day());
+  const cap = checkCaps({ notionalUsd, slippageBps: a.slippageBps, ...st }, rt);
+  if (!cap.ok) return { blocked: refuse("caps", cap.fails.join("; "), a,
+    { ...meta, sessionGate: sg, rugGate: rg, notionalUsd, claimedNotionalUsd: claimed }) };
+
+  return { mint, g, sg, rg, en, meta, factsDivergence, notionalUsd, notionalBasis: nf.basis,
+    claimedNotionalUsd: claimed, notionalDivergencePct };
+}
+
 // --- build_trade: the full pipeline, in order. Returns UNSIGNED tx. ---
 server.tool("build_trade",
   "Validate F-1 + all gates + caps on SERVER-FETCHED facts (chain/API reads, W-2), " +
@@ -95,43 +178,13 @@ server.tool("build_trade",
   async (a) => {
     const f = a.facts;
     try {
-      // 1. F-1 (absolute): contract address only, never a ticker.
-      const mint = assertContractAddress(a.tokenAddress);
-
-      // 2. FACTS LAYER (W-2): gather every gate fact server-side.
-      //    Fail-closed - an unfetchable fact is a refusal, never a
-      //    silent downgrade to the caller's word.
-      const g = await factsLayer.gatherFacts(mint, { fetchImpl: fetch, env: process.env });
-      const factsDivergence = factsLayer.divergence(f, g);
-      const meta = {
-        factsSource: g.allFetched ? "chain-read" : "chain-read-incomplete",
-        factsDivergence,
-      };
-
-      // 3. Sec0 session gate - live reading, or the documented
-      //    ARCHITECT-ONLY override; no reading -> REFUSE (fail-closed).
-      const sg = g.facts.sessionGate;
-      if (sg.status === "UNAVAILABLE")
-        return refuse("session-gate", sg.basis, a, { ...meta, sessionGate: sg });
-      if (sg.play !== true)
-        return skip("session-gate", sg.basis, a, { ...meta, sessionGate: sg });
-
-      // 4. Fact completeness: every gate-critical fact must have fetched.
-      if (!g.allFetched)
-        return refuse("facts", factsLayer.refusalReason(g), a, { ...meta, sessionGate: sg });
-
-      // 5. Sec2 rug gate - on FETCHED facts only.
-      const rg = rugGate(g.gateFacts, TUNE);
-      if (!rg.ok) return skip("rug-gate", rg.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
-
-      // 6. Sec1 entry - on FETCHED facts only.
-      const en = entryOk(g.gateFacts, LAW, TUNE);
-      if (!en.ok) return skip("entry", en.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
-
-      // 7. Sec3 caps (server-enforced against the ledger).
-      const st = ledger.todayStats(rt.ledgerPath, day());
-      const cap = checkCaps({ notionalUsd: a.notionalUsd, slippageBps: a.slippageBps, ...st }, rt);
-      if (!cap.ok) return refuse("caps", cap.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg });
+      // Sec0-Sec3, single-sourced (see runConstitutionGates). Any stop returns
+      // the caller-facing response already ledgered; only a clean pass falls
+      // through to the quote/build below.
+      const gate = await runConstitutionGates(a);
+      if (gate.blocked) return gate.blocked;
+      const { mint, g, sg, rg, factsDivergence,
+              notionalUsd, notionalBasis, claimedNotionalUsd, notionalDivergencePct } = gate;
 
       // 8. Jupiter quote + unsigned build (DEVICE-VERIFY: network here).
       const q = await jupiter.quote(rt, {
@@ -141,14 +194,22 @@ server.tool("build_trade",
 
       // W-1: an unsigned build is NOT a fill. "built" consumes the daily
       // cap budget (conservative) but stays out of net-return truth.
+      // XT-1: the row records the SERVER-DERIVED notional — the size the swap
+      // actually spends — so Sec5 exposure truth reflects reality, not the
+      // caller's claim. The claim is kept alongside it for the audit trail.
       ledger.append(rt.ledgerPath, ledger.record({
         ts: nowIso(), tokenAddress: mint, outcome: "built", entryMc: g.gateFacts.mc,
         factsSource: "chain-read", factsDivergence,
-        sessionGate: sg, rugGate: rg, notionalUsd: a.notionalUsd, reason: "build payload issued" }));
+        sessionGate: sg, rugGate: rg,
+        notionalUsd, claimedNotionalUsd, notionalBasis,
+        reason: "build payload issued" }));
       return text({ mode: "build", unsignedTx: built.unsignedTxBase64,
         note: "UNSIGNED. Sign in your wallet / dedicated trading wallet.",
         factsSource: "chain-read",
         factsVerifiedOnDevice: g.allChainRead, // per-call, never a constant
+        notionalUsd, notionalBasis, // XT-1: what the caps actually bound on
+        ...(notionalDivergencePct !== null && notionalDivergencePct > 1
+          ? { notionalDivergencePct: Number(notionalDivergencePct.toFixed(1)) } : {}),
         ...(factsDivergence.length ? { factsDivergence } : {}),
         quote: { outAmount: q.outAmount, priceImpactPct: q.priceImpactPct } });
     } catch (e) {
@@ -180,14 +241,21 @@ server.tool("execute_trade",
     // sessions writer, and Sec4 steps 3-5 (device verify, key ceremony,
     // ALLOW_HOT) remain open. Correct and intended: this guard passing
     // does NOT make anything hot by itself.
-    let g;
+    // XT-3: the FULL constitution (F-1, Sec0 session, fact completeness, Sec2
+    // rug, Sec1 entry, Sec3 caps) runs HERE, on the hot path, before any signer
+    // question — not just inside build_trade. Whoever wires the signer below
+    // inherits every gate by construction; skipping them now requires deleting
+    // this call. Reuses the gathered facts, so this costs no extra fetch.
+    let gates;
     try {
-      const mint = assertContractAddress(a.tokenAddress);
-      g = await factsLayer.gatherFacts(mint, { fetchImpl: fetch, env: process.env });
+      gates = await runConstitutionGates(a);
     } catch (e) {
       return text({ refused: true, reason: String(e.message || e),
         next: "Pass the exact mint address (F-1) and retry." });
     }
+    if (gates.blocked) return gates.blocked;
+    const g = gates.g;
+
     const guard = factsLayer.hotFactsGuard(g);
     if (!guard.ok) {
       return text({ refused: true, reason: guard.reason,

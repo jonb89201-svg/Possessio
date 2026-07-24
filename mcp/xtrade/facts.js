@@ -346,6 +346,53 @@ async function fetchSolUsd(cfg, fetchImpl) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// XT-1 (audit 2026-07-23): SERVER-DERIVED trade notional.
+//
+// Sec3 caps used to bind on the caller's CLAIMED `notionalUsd` while the swap
+// was built from the caller's SEPARATE `amountAtomic` — two numbers that were
+// never reconciled. `notionalUsd: 1` with a huge `amountAtomic` passed the $2
+// per-trade and $20 daily caps and returned an unsigned swap worth orders of
+// magnitude more, while the Sec5 ledger recorded $1. That made the exposure
+// caps accounting fiction and corrupted net-return truth — and it is the latent
+// bypass the moment a hot signer exists.
+//
+// The size that matters is the one the SWAP spends, so price THAT. Only inputs
+// we can price honestly are allowed; anything else is UNAVAILABLE and the caller
+// is refused (fail-closed, never a guess). Stablecoin legs are priced at par —
+// stated openly as an assumption, not smuggled in as a chain read.
+const PRICEABLE_INPUTS = {
+  [WSOL_MINT]:                                    { sym: "SOL",  decimals: 9, par: null },
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": { sym: "USDC", decimals: 6, par: 1 },
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": { sym: "USDT", decimals: 6, par: 1 },
+};
+
+async function deriveNotionalUsd(cfg, fetchImpl, inputMint, amountAtomic) {
+  const spec = PRICEABLE_INPUTS[inputMint];
+  if (!spec) {
+    return unavailable("xtrade", `input mint ${inputMint} is not priceable server-side ` +
+      `(known: ${Object.values(PRICEABLE_INPUTS).map((s) => s.sym).join(", ")}) — ` +
+      `refusing to cap on an unverified size`);
+  }
+  const raw = typeof amountAtomic === "string" ? Number(amountAtomic) : Number(amountAtomic);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return unavailable("xtrade", `amountAtomic ${String(amountAtomic)} is not a positive number`);
+  }
+  const units = raw / Math.pow(10, spec.decimals);
+  if (spec.par !== null) {
+    return ok(units * spec.par, "xtrade",
+      `${units} ${spec.sym} x $${spec.par} (stablecoin par ASSUMPTION, not a price read) ` +
+      `= server-derived notional from amountAtomic — the size the swap actually spends`);
+  }
+  let sol;
+  try { sol = await fetchSolUsd(cfg, fetchImpl); } catch (e) {
+    return unavailable("dexscreener", "SOL/USD unavailable, cannot size the trade: " + (e && e.message || e));
+  }
+  return ok(units * sol.solUsd, "dexscreener",
+    `${units} SOL x ${sol.basis} = server-derived notional from amountAtomic — ` +
+    `the size the swap actually spends`);
+}
+
 // ---- class 1: token age from the mint's signature history ----
 // getSignaturesForAddress is newest-first; walk `before`-paginated pages
 // until the FIRST (oldest) signature is reached - its blockTime is the
@@ -482,9 +529,19 @@ async function gatherFacts(tokenAddress, deps = {}) {
     if (creatorAddr && supplyOk && supplyAmt > 0) {
       try {
         const held = await fetchCreatorHolding(cfg, fetchImpl, creatorAddr, tokenAddress);
-        facts.creatorHoldingPct = ok((held / supplyAmt) * 100, "solana-rpc",
-          `creator wallet ${creatorAddr} (address from radar tape) holds via ` +
-          `getTokenAccountsByOwner / getTokenSupply`);
+        // XT-2 (audit 2026-07-23): source class is "radar" (3), NOT "solana-rpc"
+        // (1). The BALANCE is chain truth; the ATTRIBUTION — that this address is
+        // the creator — comes from the radar tape. A fact is only as strong as its
+        // weakest input, and this one has a class-3 input. Tagging it class-1 let
+        // it satisfy hotFactsGuard, so a compromised radar/D1 could plant a decoy
+        // "creator" holding ~0% on a rugged token and pass the Sec2 creator check
+        // while the ledger recorded it as a chain read. Labeled honestly, hot mode
+        // now refuses until the creator is derived from chain (first-mint signer);
+        // build_trade is unaffected — it gates on the VALUE, not the source class.
+        facts.creatorHoldingPct = ok((held / supplyAmt) * 100, "radar",
+          `creator wallet ${creatorAddr} — BALANCE chain-read via ` +
+          `getTokenAccountsByOwner / getTokenSupply, but the creator ADDRESS came ` +
+          `from the radar tape (class 3), so this fact is class 3 overall`);
       } catch (e) {
         facts.creatorHoldingPct = unavailable("solana-rpc",
           "creator holding read failed: " + (e && e.message || e));
@@ -797,5 +854,6 @@ module.exports = {
   factsEnv, GATE_CRITICAL, CHAIN_SOURCES, FETCH_TIMEOUT_MS,
   // chain-read ageMin/mc internals, exported for terminal-proof tests
   derivePumpCurvePda, decodeBondingCurve, curveMcUsd,
+  deriveNotionalUsd, PRICEABLE_INPUTS, // XT-1: server-derived trade size
   PUMPFUN_PROGRAM, BONDING_CURVE_DISCRIMINATOR, MAX_SIG_PAGES, SIG_PAGE_LIMIT,
 };

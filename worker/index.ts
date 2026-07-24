@@ -28,6 +28,29 @@ const json = (obj: unknown, status = 200) =>
 // Off-chain statement attribution — MUST match the connector's STATEMENT_DOMAIN
 // (config.js). Deliberately has no verifyingContract so a statement signature can
 // never be replayed as an on-chain vote.
+// Council-ledger write bounds (N-1 residual, audit 2026-07-24). Every field a
+// seat can set is capped, and each seat is rate-limited, so the worst a
+// COMPROMISED seat key can do to the shared radar D1 is bounded per minute
+// instead of unbounded. `body` is capped inline at 8000.
+const KIND_MAX_CHARS = 32;      // "statement" | "proposal" | "note" + headroom
+const REF_MAX_CHARS = 256;      // a proposalHash is 66 chars
+const SEAT_RATE_WINDOW_MS = 60_000;
+const SEAT_RATE_MAX_POSTS = 20; // per seat per window; far above honest use
+
+// Health verdict cache (N-4, audit 2026-07-23). /api/radar/health is
+// unauthenticated and runs a 6-subquery D1 read plus — when births are flat — a
+// POST to the PUBLIC Solana RPC. Uncached, every open MIB panel (and anyone
+// looping it) hammered that RPC at request rate, which gets our egress IP
+// rate-limited and degrades the very diagnosis the endpoint exists to give:
+// it failed hardest exactly when the thing it monitors was broken. A verdict is
+// only meaningful at ~cron granularity anyway, so a few seconds of staleness
+// costs nothing. Isolate-local (Workers gives no shared cache here), so this
+// bounds per-isolate amplification, not global — still a large cut, and honest
+// about what it is. Cached responses are MARKED: a health endpoint that quietly
+// served stale state would be lying in exactly the way it exists to prevent.
+const HEALTH_CACHE_MS = 15_000;
+let healthCache: { at: number; payload: Record<string, unknown> } | null = null;
+
 const STATEMENT_DOMAIN = { name: "PossessioCouncilStatement", version: "1" } as const;
 const STATEMENT_TYPES = {
   Statement: [
@@ -49,8 +72,16 @@ export default {
     if (pathname === "/api/radar/candidates") {
       const RADAR = "https://possessio-radar.jonb89201.workers.dev/radar/candidates";
       try {
+        // Bounded fetch (N-2, audit 2026-07-23). The repo's standing law: no
+        // un-timed await on an external host on a REQUEST path (radar/watcher.ts
+        // documents the 21-minute freeze that taught it). cf.cacheTtl only helps
+        // a cache HIT — a cold or expired fetch to a hung radar still blocks, and
+        // this path is polled every 5s by every open desk, so each poll would pin
+        // an isolate until the platform kills it. 5s matches the desk's cadence:
+        // a slower answer is stale anyway, and the client falls back cleanly.
         const r = await fetch(RADAR, {
           cf: { cacheTtl: 5, cacheEverything: true },
+          signal: AbortSignal.timeout(5_000),
         } as any);
         const body = await r.text();
         return new Response(body, {
@@ -77,6 +108,12 @@ export default {
     if (pathname === "/api/radar/health") {
       const db = env.COUNCIL_DB;
       if (!db) return json({ status: "unknown", error: "COUNCIL_DB_UNBOUND" }, 503);
+
+      // N-4: serve a recent verdict rather than re-running the D1 sweep + the
+      // public-RPC probe on every poll. Marked cached + aged so the reader knows.
+      if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+        return json({ ...healthCache.payload, cached: true, cache_age_ms: Date.now() - healthCache.at });
+      }
 
       let row: any;
       let db_mb: number | null = null;
@@ -207,7 +244,7 @@ export default {
           action = "Fix the failing scan (see cause) — a redeploy only helps for a transient/socket issue, not a code or upstream error.";
       }
 
-      return json({
+      const payload = {
         ts: Date.now(),
         status,
         diagnosis,
@@ -220,7 +257,9 @@ export default {
         pumpfun_program,
         scans,
         db_mb,
-      });
+      };
+      healthCache = { at: Date.now(), payload }; // N-4
+      return json(payload);
     }
 
     // Council communication ledger (SPEC_CouncilSigner_v3 §8). The end-to-end
@@ -250,6 +289,15 @@ export default {
         const ref = typeof b?.ref === "string" ? b.ref : null;
         if (!seat || !isAddress(seat) || typeof body !== "string" || body.length === 0 || body.length > 8000 || nonce == null || typeof signature !== "string")
           return json({ error: "BAD_FIELDS" }, 400);
+        // N-1 residual (audit 2026-07-24): `body` was the only bounded field, so
+        // `kind`/`ref` were unbounded write amplification into the SHARED radar D1
+        // — the same database whose size ceiling halted every radar write on
+        // 2026-07-16. Neither field is free-form prose: `kind` is a short
+        // discriminator (statement | proposal | note) and `ref` is a proposalHash
+        // (66 chars). Cap both rather than enum-restrict, so a future `kind` does
+        // not need a worker deploy to be accepted.
+        if (kind.length > KIND_MAX_CHARS) return json({ error: "KIND_TOO_LONG" }, 400);
+        if (ref !== null && ref.length > REF_MAX_CHARS) return json({ error: "REF_TOO_LONG" }, 400);
 
         let recovered: string;
         try {
@@ -272,6 +320,22 @@ export default {
           .map((s) => { try { return getAddress(s); } catch { return ""; } }).filter(Boolean);
         if (!allow.length) return json({ error: "ALLOWLIST_UNCONFIGURED" }, 503);
         if (!allow.includes(getAddress(seat))) return json({ error: "NOT_A_SEAT" }, 403);
+
+        // Per-seat rate limit (N-1 residual). Deliberately AFTER the signature +
+        // allowlist gates: an unauthenticated caller can never consume a real
+        // seat's budget, and the extra D1 read only runs for a proven seat. The
+        // ledger is its own rate-limit state — no new binding, and the counter
+        // cannot drift from what was actually written. Bounds a compromised seat
+        // key to SEAT_RATE_MAX_POSTS * (8000 + caps) bytes per window against the
+        // shared radar DB.
+        const rlSince = Date.now() - SEAT_RATE_WINDOW_MS;
+        const recent = await db
+          .prepare("SELECT COUNT(*) AS n FROM council_ledger WHERE seat = ?1 AND ts_ms > ?2")
+          .bind(getAddress(seat), rlSince)
+          .first<{ n: number }>();
+        if ((recent?.n ?? 0) >= SEAT_RATE_MAX_POSTS) {
+          return json({ error: "RATE_LIMITED", retry_after_ms: SEAT_RATE_WINDOW_MS }, 429);
+        }
 
         // Replay is dead at the DB (N-1): UNIQUE(seat, nonce) (migration 0025) lets
         // a seat commit any nonce at most once, so a statement harvested from the

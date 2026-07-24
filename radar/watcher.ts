@@ -60,16 +60,35 @@ function wfetch(url: string, init?: RequestInit): Promise<Response> {
 // row 500'd every /radar/candidates poll for as long as it sat in the feed
 // window. Externally triggerable outage of the public surface. The fix: keep
 // the full payload when it fits the cap; when it doesn't, store a SLIMMED
-// object of the fields downstream actually reads (json_extract '$.image_uri'
-// in x402-toll.ts) plus the free signals the roadmap names — a smaller valid
-// document, never an invalid big one. (x402-toll.ts additionally guards its
-// json_extract with json_valid() so historical bad rows can't 500 the feed.)
+// object of EVERY field a downstream consumer reads — image_uri (x402-toll.ts
+// json_extract) AND associated_bonding_curve (screen.ts's rug gate) — plus the
+// free signals the roadmap names: a smaller valid document, never an invalid
+// big one. (x402-toll.ts additionally guards its json_extract with json_valid()
+// so historical bad rows can't 500 the feed.) The original slimming named only
+// image_uri here and dropped the curve account, which silently corrupted the
+// rug gate for four days (N-3, audit 2026-07-23) — the omission was in this
+// comment before it was in the code, so keep this list exhaustive.
 const RAW_BIRTH_MAX_CHARS = 4000;
 export function rawBirthJson(it: any): string {
   const full = JSON.stringify(it);
   if (full.length <= RAW_BIRTH_MAX_CHARS) return full;
   return JSON.stringify({
+    // ── LOAD-BEARING: every field a downstream consumer READS must be here ──
+    // Anything omitted reads back as undefined, which is NOT the same as absent
+    // data — it silently becomes a wrong ANSWER downstream. Consumers today:
+    //   · image_uri              -> x402-toll.ts json_extract('$.image_uri')
+    //   · associated_bonding_curve -> screen.ts topHolderShare(curveAcct)
+    // Before adding a reader of raw_birth_json, add its field HERE.
     image_uri: it.image_uri ?? null,                       // the feed card image (read live)
+    // N-3 (audit 2026-07-23): omitted in the original R-1 slimming, and
+    // migration 0020's rug gate reads it. With it undefined, topHolderShare
+    // cannot exclude the bonding curve from the float — the curve (the largest
+    // pre-graduation account by far) scores as the top HOLDER, share -> ~1, and
+    // gate_rug resolves to 0: a FALSE rug fail, indistinguishable in the ledger
+    // from a real whale, on every coin whose birth payload exceeds the cap (a
+    // long creator description is enough). It suppressed strat_take and poisoned
+    // the very ledger the calibration exists to keep honest. Never drop it again.
+    associated_bonding_curve: it.associated_bonding_curve ?? null,
     twitter: it.twitter ?? null,                           // roadmap: CT narrative detection
     telegram: it.telegram ?? null,
     website: it.website ?? null,

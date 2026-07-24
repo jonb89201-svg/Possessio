@@ -166,3 +166,59 @@ test("server: hot path is gated by per-call chain-read facts, no flippable const
   assert.match(src, /const guard = factsLayer\.hotFactsGuard\(g\);/); // hot consults the guard
   assert.match(src, /if \(!guard\.ok\)/);                             // and refuses on failure
 });
+
+// ---- XT-1 (audit 2026-07-23): caps must bind on the size the SWAP SPENDS ----
+// Sec3 caps used to check the caller's CLAIMED notionalUsd while the swap was
+// built from the caller's SEPARATE amountAtomic, unreconciled — so
+// `notionalUsd: 1` with a huge amountAtomic passed the $2/trade and $20/day caps
+// and returned an unsigned swap worth orders of magnitude more, while the Sec5
+// ledger recorded $1. These prove the derivation that closes it.
+const { deriveNotionalUsd, PRICEABLE_INPUTS } = require("../facts");
+const WSOL = "So11111111111111111111111111111111111111112";
+const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+// deepest-liquidity wSOL pair shape, enough for fetchSolUsd
+const solFetch = async () => ({
+  ok: true, status: 200,
+  json: async () => ({ pairs: [{ baseToken: { address: WSOL }, priceUsd: "200",
+    liquidity: { usd: 1e9 }, dexId: "test", pairAddress: "p1" }] }),
+});
+
+test("XT-1: stablecoin leg is priced at par from amountAtomic", async () => {
+  const f = await deriveNotionalUsd({}, solFetch, USDC, "2000000"); // 2 USDC (6dp)
+  assert.equal(f.status, "ok");
+  assert.equal(f.value, 2);
+  assert.match(f.basis, /par ASSUMPTION/); // stated, not smuggled in as a price read
+});
+
+test("XT-1: SOL leg is priced from amountAtomic x SOL/USD", async () => {
+  const f = await deriveNotionalUsd({ dexscreenerBase: "x" }, solFetch, WSOL, "1000000000"); // 1 SOL (9dp)
+  assert.equal(f.status, "ok");
+  assert.equal(f.value, 200);
+});
+
+test("XT-1: THE BYPASS — huge amountAtomic is sized by the server, not the claim", async () => {
+  // the exploit: caller claims $1 while spending 1,000 SOL
+  const claimed = 1;
+  const f = await deriveNotionalUsd({ dexscreenerBase: "x" }, solFetch, WSOL, "1000000000000");
+  assert.equal(f.status, "ok");
+  assert.equal(f.value, 200_000, "server must price what the swap actually spends");
+  // and that derived size must blow the caps the claim would have slipped past
+  const rt = { maxTradesPerDay: 10, maxDailyExposureUsd: 20, maxNotionalUsd: 2, maxSlippageBps: 300 };
+  assert.equal(checkCaps({ notionalUsd: claimed, slippageBps: 100,
+    filledCount: 0, todayExposureUsd: 0 }, rt).ok, true, "the CLAIM passes — this was the bypass");
+  assert.equal(checkCaps({ notionalUsd: f.value, slippageBps: 100,
+    filledCount: 0, todayExposureUsd: 0 }, rt).ok, false, "the DERIVED size is refused");
+});
+
+test("XT-1: an unpriceable input mint is UNAVAILABLE, never a guess", async () => {
+  const f = await deriveNotionalUsd({}, solFetch, "SomeRandomMint1111111111111111111111111111", "1000");
+  assert.equal(f.status, "UNAVAILABLE");
+  assert.match(f.basis, /not priceable server-side/);
+  assert.ok(!Object.keys(PRICEABLE_INPUTS).includes("SomeRandomMint1111111111111111111111111111"));
+});
+
+test("XT-1: non-positive amountAtomic is refused", async () => {
+  for (const bad of ["0", "-5", "abc", ""]) {
+    assert.equal((await deriveNotionalUsd({}, solFetch, USDC, bad)).status, "UNAVAILABLE", `bad: ${bad}`);
+  }
+});
