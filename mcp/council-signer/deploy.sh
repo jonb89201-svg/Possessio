@@ -65,7 +65,8 @@ fi
 printf '\nIn claude.ai → Settings → Connectors → Add custom connector:\n'
 printf '  • URL:    the https URL above\n'
 printf '  • Header: Authorization: Bearer <your COUNCIL_MCP_TOKEN>\n'
-printf '\nHealth check (no token, no key):  curl -s http://127.0.0.1:%s/healthz\n' "$PORT"
+printf '\nLiveness (no token, returns {ok:true} only):  curl -s http://127.0.0.1:%s/healthz\n' "$PORT"
+printf 'Which seat (bearer-gated):  curl -s -H "Authorization: Bearer $COUNCIL_MCP_TOKEN" http://127.0.0.1:%s/whoami\n' "$PORT"
 
 say "Starting the bearer-gated remote server (Ctrl-C to stop)…"
 exec node remote.js

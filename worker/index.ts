@@ -37,6 +37,20 @@ const REF_MAX_CHARS = 256;      // a proposalHash is 66 chars
 const SEAT_RATE_WINDOW_MS = 60_000;
 const SEAT_RATE_MAX_POSTS = 20; // per seat per window; far above honest use
 
+// Health verdict cache (N-4, audit 2026-07-23). /api/radar/health is
+// unauthenticated and runs a 6-subquery D1 read plus — when births are flat — a
+// POST to the PUBLIC Solana RPC. Uncached, every open MIB panel (and anyone
+// looping it) hammered that RPC at request rate, which gets our egress IP
+// rate-limited and degrades the very diagnosis the endpoint exists to give:
+// it failed hardest exactly when the thing it monitors was broken. A verdict is
+// only meaningful at ~cron granularity anyway, so a few seconds of staleness
+// costs nothing. Isolate-local (Workers gives no shared cache here), so this
+// bounds per-isolate amplification, not global — still a large cut, and honest
+// about what it is. Cached responses are MARKED: a health endpoint that quietly
+// served stale state would be lying in exactly the way it exists to prevent.
+const HEALTH_CACHE_MS = 15_000;
+let healthCache: { at: number; payload: Record<string, unknown> } | null = null;
+
 const STATEMENT_DOMAIN = { name: "PossessioCouncilStatement", version: "1" } as const;
 const STATEMENT_TYPES = {
   Statement: [
@@ -94,6 +108,12 @@ export default {
     if (pathname === "/api/radar/health") {
       const db = env.COUNCIL_DB;
       if (!db) return json({ status: "unknown", error: "COUNCIL_DB_UNBOUND" }, 503);
+
+      // N-4: serve a recent verdict rather than re-running the D1 sweep + the
+      // public-RPC probe on every poll. Marked cached + aged so the reader knows.
+      if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+        return json({ ...healthCache.payload, cached: true, cache_age_ms: Date.now() - healthCache.at });
+      }
 
       let row: any;
       let db_mb: number | null = null;
@@ -224,7 +244,7 @@ export default {
           action = "Fix the failing scan (see cause) — a redeploy only helps for a transient/socket issue, not a code or upstream error.";
       }
 
-      return json({
+      const payload = {
         ts: Date.now(),
         status,
         diagnosis,
@@ -237,7 +257,9 @@ export default {
         pumpfun_program,
         scans,
         db_mb,
-      });
+      };
+      healthCache = { at: Date.now(), payload }; // N-4
+      return json(payload);
     }
 
     // Council communication ledger (SPEC_CouncilSigner_v3 §8). The end-to-end

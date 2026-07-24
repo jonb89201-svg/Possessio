@@ -87,8 +87,12 @@ claude.ai → **Settings → Connectors → Add custom connector**, set the URL 
 
 Env for `remote.js` (in addition to the stdio vars): `COUNCIL_MCP_TOKEN` (**required**,
 ≥32 chars — the server refuses to start without it), and optional `PORT`,
-`COUNCIL_MCP_HOST`, `COUNCIL_MCP_PATH`. `GET /healthz` returns the bound seat/chain
-for a liveness probe (no token, no key).
+`COUNCIL_MCP_HOST`, `COUNCIL_MCP_PATH`. `GET /healthz` is a liveness probe only —
+it returns `{ok:true}` and nothing else (no token, no key). It deliberately does
+NOT name the seat: it answers before the bearer gate, and the port is public, so
+disclosing "this host holds seat 0x… on chain 8453" was free targeting intel for
+anyone who found the URL (CS-1, audit 2026-07-23). For the bound seat/chain use
+`GET /whoami`, which is behind the same bearer token as every MCP method.
 
 ### The remote trade-off — read before you deploy
 

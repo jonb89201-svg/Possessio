@@ -482,9 +482,19 @@ async function gatherFacts(tokenAddress, deps = {}) {
     if (creatorAddr && supplyOk && supplyAmt > 0) {
       try {
         const held = await fetchCreatorHolding(cfg, fetchImpl, creatorAddr, tokenAddress);
-        facts.creatorHoldingPct = ok((held / supplyAmt) * 100, "solana-rpc",
-          `creator wallet ${creatorAddr} (address from radar tape) holds via ` +
-          `getTokenAccountsByOwner / getTokenSupply`);
+        // XT-2 (audit 2026-07-23): source class is "radar" (3), NOT "solana-rpc"
+        // (1). The BALANCE is chain truth; the ATTRIBUTION — that this address is
+        // the creator — comes from the radar tape. A fact is only as strong as its
+        // weakest input, and this one has a class-3 input. Tagging it class-1 let
+        // it satisfy hotFactsGuard, so a compromised radar/D1 could plant a decoy
+        // "creator" holding ~0% on a rugged token and pass the Sec2 creator check
+        // while the ledger recorded it as a chain read. Labeled honestly, hot mode
+        // now refuses until the creator is derived from chain (first-mint signer);
+        // build_trade is unaffected — it gates on the VALUE, not the source class.
+        facts.creatorHoldingPct = ok((held / supplyAmt) * 100, "radar",
+          `creator wallet ${creatorAddr} — BALANCE chain-read via ` +
+          `getTokenAccountsByOwner / getTokenSupply, but the creator ADDRESS came ` +
+          `from the radar tape (class 3), so this fact is class 3 overall`);
       } catch (e) {
         facts.creatorHoldingPct = unavailable("solana-rpc",
           "creator holding read failed: " + (e && e.message || e));
