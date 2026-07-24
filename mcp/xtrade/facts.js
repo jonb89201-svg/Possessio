@@ -346,6 +346,53 @@ async function fetchSolUsd(cfg, fetchImpl) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// XT-1 (audit 2026-07-23): SERVER-DERIVED trade notional.
+//
+// Sec3 caps used to bind on the caller's CLAIMED `notionalUsd` while the swap
+// was built from the caller's SEPARATE `amountAtomic` — two numbers that were
+// never reconciled. `notionalUsd: 1` with a huge `amountAtomic` passed the $2
+// per-trade and $20 daily caps and returned an unsigned swap worth orders of
+// magnitude more, while the Sec5 ledger recorded $1. That made the exposure
+// caps accounting fiction and corrupted net-return truth — and it is the latent
+// bypass the moment a hot signer exists.
+//
+// The size that matters is the one the SWAP spends, so price THAT. Only inputs
+// we can price honestly are allowed; anything else is UNAVAILABLE and the caller
+// is refused (fail-closed, never a guess). Stablecoin legs are priced at par —
+// stated openly as an assumption, not smuggled in as a chain read.
+const PRICEABLE_INPUTS = {
+  [WSOL_MINT]:                                    { sym: "SOL",  decimals: 9, par: null },
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": { sym: "USDC", decimals: 6, par: 1 },
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": { sym: "USDT", decimals: 6, par: 1 },
+};
+
+async function deriveNotionalUsd(cfg, fetchImpl, inputMint, amountAtomic) {
+  const spec = PRICEABLE_INPUTS[inputMint];
+  if (!spec) {
+    return unavailable("xtrade", `input mint ${inputMint} is not priceable server-side ` +
+      `(known: ${Object.values(PRICEABLE_INPUTS).map((s) => s.sym).join(", ")}) — ` +
+      `refusing to cap on an unverified size`);
+  }
+  const raw = typeof amountAtomic === "string" ? Number(amountAtomic) : Number(amountAtomic);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return unavailable("xtrade", `amountAtomic ${String(amountAtomic)} is not a positive number`);
+  }
+  const units = raw / Math.pow(10, spec.decimals);
+  if (spec.par !== null) {
+    return ok(units * spec.par, "xtrade",
+      `${units} ${spec.sym} x $${spec.par} (stablecoin par ASSUMPTION, not a price read) ` +
+      `= server-derived notional from amountAtomic — the size the swap actually spends`);
+  }
+  let sol;
+  try { sol = await fetchSolUsd(cfg, fetchImpl); } catch (e) {
+    return unavailable("dexscreener", "SOL/USD unavailable, cannot size the trade: " + (e && e.message || e));
+  }
+  return ok(units * sol.solUsd, "dexscreener",
+    `${units} SOL x ${sol.basis} = server-derived notional from amountAtomic — ` +
+    `the size the swap actually spends`);
+}
+
 // ---- class 1: token age from the mint's signature history ----
 // getSignaturesForAddress is newest-first; walk `before`-paginated pages
 // until the FIRST (oldest) signature is reached - its blockTime is the
@@ -807,5 +854,6 @@ module.exports = {
   factsEnv, GATE_CRITICAL, CHAIN_SOURCES, FETCH_TIMEOUT_MS,
   // chain-read ageMin/mc internals, exported for terminal-proof tests
   derivePumpCurvePda, decodeBondingCurve, curveMcUsd,
+  deriveNotionalUsd, PRICEABLE_INPUTS, // XT-1: server-derived trade size
   PUMPFUN_PROGRAM, BONDING_CURVE_DISCRIMINATOR, MAX_SIG_PAGES, SIG_PAGE_LIMIT,
 };

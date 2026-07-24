@@ -122,12 +122,39 @@ async function runConstitutionGates(a) {
   const en = entryOk(g.gateFacts, LAW, TUNE);
   if (!en.ok) return { blocked: skip("entry", en.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg }) };
 
-  // 7. Sec3 caps (server-enforced against the ledger).
-  const st = ledger.todayStats(rt.ledgerPath, day());
-  const cap = checkCaps({ notionalUsd: a.notionalUsd, slippageBps: a.slippageBps, ...st }, rt);
-  if (!cap.ok) return { blocked: refuse("caps", cap.fails.join("; "), a, { ...meta, sessionGate: sg, rugGate: rg }) };
+  // 7. XT-1: SIZE THE TRADE SERVER-SIDE before capping it. The caps must bind on
+  //    what the swap actually SPENDS (amountAtomic), not on the caller's claimed
+  //    notionalUsd — those were never reconciled, so `notionalUsd: 1` with a huge
+  //    amountAtomic passed every cap and built a swap orders of magnitude larger.
+  //    Unpriceable input -> REFUSE (fail-closed), never cap on an unverified size.
+  const nf = await factsLayer.deriveNotionalUsd(
+    factsLayer.factsEnv(process.env), fetch, a.facts.inputMint, a.facts.amountAtomic);
+  if (nf.status !== "ok")
+    return { blocked: refuse("notional", nf.basis, a, { ...meta, sessionGate: sg, rugGate: rg }) };
+  const notionalUsd = nf.value;
 
-  return { mint, g, sg, rg, en, meta, factsDivergence };
+  //    A large gap between claimed and derived means the caller's model of this
+  //    trade is wrong (or dishonest). The derived number governs regardless; the
+  //    gap is surfaced, and a gross mismatch is refused rather than silently
+  //    re-sized under the caller. 25% mirrors the tape cross-check convention.
+  const claimed = Number(a.notionalUsd);
+  const notionalDivergencePct = Number.isFinite(claimed) && notionalUsd > 0
+    ? Math.abs(claimed - notionalUsd) / notionalUsd * 100 : null;
+  if (notionalDivergencePct !== null && notionalDivergencePct > 25) {
+    return { blocked: refuse("notional-divergence",
+      `claimed $${claimed} vs server-derived $${notionalUsd.toFixed(2)} ` +
+      `(${notionalDivergencePct.toFixed(1)}% apart) — ${nf.basis}`,
+      a, { ...meta, sessionGate: sg, rugGate: rg, notionalUsd, claimedNotionalUsd: claimed }) };
+  }
+
+  // 8. Sec3 caps (server-enforced against the ledger) — on the DERIVED notional.
+  const st = ledger.todayStats(rt.ledgerPath, day());
+  const cap = checkCaps({ notionalUsd, slippageBps: a.slippageBps, ...st }, rt);
+  if (!cap.ok) return { blocked: refuse("caps", cap.fails.join("; "), a,
+    { ...meta, sessionGate: sg, rugGate: rg, notionalUsd, claimedNotionalUsd: claimed }) };
+
+  return { mint, g, sg, rg, en, meta, factsDivergence, notionalUsd, notionalBasis: nf.basis,
+    claimedNotionalUsd: claimed, notionalDivergencePct };
 }
 
 // --- build_trade: the full pipeline, in order. Returns UNSIGNED tx. ---
@@ -156,7 +183,8 @@ server.tool("build_trade",
       // through to the quote/build below.
       const gate = await runConstitutionGates(a);
       if (gate.blocked) return gate.blocked;
-      const { mint, g, factsDivergence } = gate;
+      const { mint, g, sg, rg, factsDivergence,
+              notionalUsd, notionalBasis, claimedNotionalUsd, notionalDivergencePct } = gate;
 
       // 8. Jupiter quote + unsigned build (DEVICE-VERIFY: network here).
       const q = await jupiter.quote(rt, {
@@ -166,14 +194,22 @@ server.tool("build_trade",
 
       // W-1: an unsigned build is NOT a fill. "built" consumes the daily
       // cap budget (conservative) but stays out of net-return truth.
+      // XT-1: the row records the SERVER-DERIVED notional — the size the swap
+      // actually spends — so Sec5 exposure truth reflects reality, not the
+      // caller's claim. The claim is kept alongside it for the audit trail.
       ledger.append(rt.ledgerPath, ledger.record({
         ts: nowIso(), tokenAddress: mint, outcome: "built", entryMc: g.gateFacts.mc,
         factsSource: "chain-read", factsDivergence,
-        sessionGate: sg, rugGate: rg, notionalUsd: a.notionalUsd, reason: "build payload issued" }));
+        sessionGate: sg, rugGate: rg,
+        notionalUsd, claimedNotionalUsd, notionalBasis,
+        reason: "build payload issued" }));
       return text({ mode: "build", unsignedTx: built.unsignedTxBase64,
         note: "UNSIGNED. Sign in your wallet / dedicated trading wallet.",
         factsSource: "chain-read",
         factsVerifiedOnDevice: g.allChainRead, // per-call, never a constant
+        notionalUsd, notionalBasis, // XT-1: what the caps actually bound on
+        ...(notionalDivergencePct !== null && notionalDivergencePct > 1
+          ? { notionalDivergencePct: Number(notionalDivergencePct.toFixed(1)) } : {}),
         ...(factsDivergence.length ? { factsDivergence } : {}),
         quote: { outAmount: q.outAmount, priceImpactPct: q.priceImpactPct } });
     } catch (e) {
