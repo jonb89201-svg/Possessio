@@ -28,6 +28,15 @@ const json = (obj: unknown, status = 200) =>
 // Off-chain statement attribution — MUST match the connector's STATEMENT_DOMAIN
 // (config.js). Deliberately has no verifyingContract so a statement signature can
 // never be replayed as an on-chain vote.
+// Council-ledger write bounds (N-1 residual, audit 2026-07-24). Every field a
+// seat can set is capped, and each seat is rate-limited, so the worst a
+// COMPROMISED seat key can do to the shared radar D1 is bounded per minute
+// instead of unbounded. `body` is capped inline at 8000.
+const KIND_MAX_CHARS = 32;      // "statement" | "proposal" | "note" + headroom
+const REF_MAX_CHARS = 256;      // a proposalHash is 66 chars
+const SEAT_RATE_WINDOW_MS = 60_000;
+const SEAT_RATE_MAX_POSTS = 20; // per seat per window; far above honest use
+
 const STATEMENT_DOMAIN = { name: "PossessioCouncilStatement", version: "1" } as const;
 const STATEMENT_TYPES = {
   Statement: [
@@ -250,6 +259,15 @@ export default {
         const ref = typeof b?.ref === "string" ? b.ref : null;
         if (!seat || !isAddress(seat) || typeof body !== "string" || body.length === 0 || body.length > 8000 || nonce == null || typeof signature !== "string")
           return json({ error: "BAD_FIELDS" }, 400);
+        // N-1 residual (audit 2026-07-24): `body` was the only bounded field, so
+        // `kind`/`ref` were unbounded write amplification into the SHARED radar D1
+        // — the same database whose size ceiling halted every radar write on
+        // 2026-07-16. Neither field is free-form prose: `kind` is a short
+        // discriminator (statement | proposal | note) and `ref` is a proposalHash
+        // (66 chars). Cap both rather than enum-restrict, so a future `kind` does
+        // not need a worker deploy to be accepted.
+        if (kind.length > KIND_MAX_CHARS) return json({ error: "KIND_TOO_LONG" }, 400);
+        if (ref !== null && ref.length > REF_MAX_CHARS) return json({ error: "REF_TOO_LONG" }, 400);
 
         let recovered: string;
         try {
@@ -272,6 +290,22 @@ export default {
           .map((s) => { try { return getAddress(s); } catch { return ""; } }).filter(Boolean);
         if (!allow.length) return json({ error: "ALLOWLIST_UNCONFIGURED" }, 503);
         if (!allow.includes(getAddress(seat))) return json({ error: "NOT_A_SEAT" }, 403);
+
+        // Per-seat rate limit (N-1 residual). Deliberately AFTER the signature +
+        // allowlist gates: an unauthenticated caller can never consume a real
+        // seat's budget, and the extra D1 read only runs for a proven seat. The
+        // ledger is its own rate-limit state — no new binding, and the counter
+        // cannot drift from what was actually written. Bounds a compromised seat
+        // key to SEAT_RATE_MAX_POSTS * (8000 + caps) bytes per window against the
+        // shared radar DB.
+        const rlSince = Date.now() - SEAT_RATE_WINDOW_MS;
+        const recent = await db
+          .prepare("SELECT COUNT(*) AS n FROM council_ledger WHERE seat = ?1 AND ts_ms > ?2")
+          .bind(getAddress(seat), rlSince)
+          .first<{ n: number }>();
+        if ((recent?.n ?? 0) >= SEAT_RATE_MAX_POSTS) {
+          return json({ error: "RATE_LIMITED", retry_after_ms: SEAT_RATE_WINDOW_MS }, 429);
+        }
 
         // Replay is dead at the DB (N-1): UNIQUE(seat, nonce) (migration 0025) lets
         // a seat commit any nonce at most once, so a statement harvested from the
