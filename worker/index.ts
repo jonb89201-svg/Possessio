@@ -58,8 +58,16 @@ export default {
     if (pathname === "/api/radar/candidates") {
       const RADAR = "https://possessio-radar.jonb89201.workers.dev/radar/candidates";
       try {
+        // Bounded fetch (N-2, audit 2026-07-23). The repo's standing law: no
+        // un-timed await on an external host on a REQUEST path (radar/watcher.ts
+        // documents the 21-minute freeze that taught it). cf.cacheTtl only helps
+        // a cache HIT — a cold or expired fetch to a hung radar still blocks, and
+        // this path is polled every 5s by every open desk, so each poll would pin
+        // an isolate until the platform kills it. 5s matches the desk's cadence:
+        // a slower answer is stale anyway, and the client falls back cleanly.
         const r = await fetch(RADAR, {
           cf: { cacheTtl: 5, cacheEverything: true },
+          signal: AbortSignal.timeout(5_000),
         } as any);
         const body = await r.text();
         return new Response(body, {
