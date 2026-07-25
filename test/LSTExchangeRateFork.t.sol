@@ -53,7 +53,7 @@ contract LSTExchangeRateForkTest is Test {
     // 1. CORE: 1 cbETH values at ~1.1327 ETH (cast-confirmed live rate).
     //    This is the live observe() + feed + tick-math proof end to end.
     function test_cbEthToEth_one_unit_matches_live_rate() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 out = rates.cbEthToEth(1e18);
 
         // Expected ~1.1327e18. Allow a generous band (rate moves with the
@@ -77,7 +77,7 @@ contract LSTExchangeRateForkTest is Test {
     //    with RateDivergence under live conditions (proves the guard isn't a
     //    permanent false-halt, and that oracle vs TWAP are consistent).
     function test_no_divergence_revert_under_live_conditions() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         // If oracle and TWAP disagreed >2%, this would revert. It must not.
         uint256 out = rates.cbEthToEth(1e18);
         assertGt(out, 0, "returned zero");
@@ -85,7 +85,7 @@ contract LSTExchangeRateForkTest is Test {
 
     // 3. LINEARITY: cbEthToEth scales linearly with input (2x in -> ~2x out).
     function test_linear_scaling() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 one = rates.cbEthToEth(1e18);
         uint256 two = rates.cbEthToEth(2e18);
         // 2x within rounding (should be exact-ish: 2*one == two +/- a few wei).
@@ -94,13 +94,13 @@ contract LSTExchangeRateForkTest is Test {
 
     // 4. EDGE: zero input returns zero (no revert, no garbage).
     function test_zero_input_returns_zero() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         assertEq(rates.cbEthToEth(0), 0, "zero input did not return zero");
     }
 
     // 5. SANITY: a large input does not overflow (whale-payment class amount).
     function test_large_input_no_overflow() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         // 1000 cbETH -> ~1132 ETH. Must compute without overflow/revert.
         uint256 out = rates.cbEthToEth(1000e18);
         assertGt(out, 1000e18, "1000 cbETH should value above 1000 ETH");

@@ -93,14 +93,14 @@ contract PaymentsForkTest is Test {
     //    constructor validates all 4 feed decimals - a successful deploy proves
     //    every feed address is correct and live on mainnet.
     function test_deploys_against_real_mainnet_venues() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         assertTrue(address(payments) != address(0), "Payments did not deploy");
         console2.log("Payments deployed at:", address(payments));
     }
 
     // 2. Config values landed correctly (no field-order mixup in the struct).
     function test_config_values_set_correctly() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         assertEq(payments.minSwapBatch(), MIN_SWAP_BATCH, "minSwapBatch wrong");
         assertEq(payments.daiCeiling(), DAI_CEILING, "daiCeiling wrong");
         assertEq(payments.dailyLimit(), DAILY_LIMIT, "dailyLimit wrong");
@@ -110,7 +110,7 @@ contract PaymentsForkTest is Test {
     //    LSTExchangeRate, and calling through it values cbETH correctly against
     //    the same live sources the standalone cert proved.
     function test_lstRates_wired_and_values_cbeth() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         // The contract exposes the lstRates address it was built with; calling
         // cbEthToEth through the live LSTExchangeRate must return a sane premium.
         ILST rates = ILST(LST_RATES);
@@ -136,7 +136,7 @@ contract PaymentsForkTest is Test {
 
     // ── sendUSDC ──────────────────────────────────────────────────────────
     function test_fork_sendUSDC_happy() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(USDC, address(payments), 500_000000);          // 500 USDC into the contract
         uint256 before = IERC20F(USDC).balanceOf(OWNER);
         vm.prank(OWNER);
@@ -146,7 +146,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendUSDC_nonOwner_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(USDC, address(payments), 100_000000);
         vm.prank(address(0xBAD));
         vm.expectRevert();                                   // AccessControl: not OWNER_ROLE
@@ -154,7 +154,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendUSDC_frozen_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(USDC, address(payments), 100_000000);
         _asGuardian();
         vm.prank(OWNER);
@@ -165,7 +165,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendUSDC_zeroAddress_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(USDC, address(payments), 100_000000);
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
@@ -173,7 +173,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendUSDC_zeroAmount_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.ZeroAmount.selector);
         payments.sendUSDC(0, OWNER);
@@ -181,7 +181,7 @@ contract PaymentsForkTest is Test {
 
     // ── sendCbETH ─────────────────────────────────────────────────────────
     function test_fork_sendCbETH_happy() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(CBETH, address(payments), 2 ether);
         uint256 before = IERC20F(CBETH).balanceOf(OWNER);
         vm.prank(OWNER);
@@ -191,7 +191,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendCbETH_nonOwner_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(CBETH, address(payments), 1 ether);
         vm.prank(address(0xBAD));
         vm.expectRevert();
@@ -199,7 +199,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendCbETH_frozen_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(CBETH, address(payments), 1 ether);
         _asGuardian();
         vm.prank(OWNER);
@@ -210,7 +210,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendCbETH_zeroAddress_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         deal(CBETH, address(payments), 1 ether);
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
@@ -218,7 +218,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_sendCbETH_zeroAmount_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.ZeroAmount.selector);
         payments.sendCbETH(0, OWNER);
@@ -236,7 +236,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_redeemMorpho_happy() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 shares = _seedMorphoShares(300_000000);     // 300 USDC of shares
         assertGt(shares, 0, "no shares seeded");
         uint256 before = IERC20F(USDC).balanceOf(OWNER);
@@ -247,7 +247,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_redeemMorpho_nonOwner_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 shares = _seedMorphoShares(100_000000);
         vm.prank(address(0xBAD));
         vm.expectRevert();
@@ -255,7 +255,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_redeemMorpho_frozen_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 shares = _seedMorphoShares(100_000000);
         _asGuardian();
         vm.prank(OWNER);
@@ -266,7 +266,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_redeemMorpho_zeroAddress_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         uint256 shares = _seedMorphoShares(100_000000);
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
@@ -274,7 +274,7 @@ contract PaymentsForkTest is Test {
     }
 
     function test_fork_redeemMorpho_zeroShares_reverts() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         vm.prank(OWNER);
         vm.expectRevert(PossessioPayments.ZeroAmount.selector);
         payments.redeemMorpho(0, OWNER);
@@ -332,7 +332,7 @@ contract PaymentsForkTest is Test {
     // Stale USDC/USD feed + minWethOut == 0  => sweep must REVERT (not fail open).
     // VERIFIED: reverts OracleStale - the upstream staleness guard protects the leg.
     function test_fork_sweep_staleUsdcUsd_zeroMinWeth_mustRevert() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         _seedForSweep();
         _staleFeed(CHAINLINK_USDC);                      // stale USDC/USD only
         vm.prank(OWNER);
@@ -343,7 +343,7 @@ contract PaymentsForkTest is Test {
 
     // Stale ETH/USD feed + minWethOut == 0  => sweep must REVERT (not fail open).
     function test_fork_sweep_staleEthUsd_zeroMinWeth_mustRevert() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         _seedForSweep();
         _staleFeed(CHAINLINK_ETH);                       // stale ETH/USD only
         vm.prank(OWNER);
@@ -359,7 +359,7 @@ contract PaymentsForkTest is Test {
     // since this case was verified green with a catch-all; the specific selector is
     // expected to be OracleStale by the same upstream-guard path as the tests above.
     function test_fork_sweep_staleUsdcUsd_realMinWeth_floorActive() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         _seedForSweep();
         _staleFeed(CHAINLINK_USDC);
         vm.prank(OWNER);
