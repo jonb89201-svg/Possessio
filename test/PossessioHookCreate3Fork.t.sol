@@ -107,7 +107,7 @@ contract PossessioHookCreate3ForkTest is Test {
 
     // 1. The real mine-and-deploy pipeline lands at the flagged address.
     function test_create3_deploys_to_mined_0x8C8_address() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         vm.prank(DEPLOYER);
         address deployed = CREATEX.deployCreate3(MINED_SALT, _hookInitCode());
 
@@ -120,7 +120,7 @@ contract PossessioHookCreate3ForkTest is Test {
     //    mined address. Catches the "app fires from a different wallet than the
     //    one mined-for" False Green.
     function test_wrong_sender_cannot_reach_mined_address() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         address wrongSender = address(0xBEEF);
         vm.assume(wrongSender != DEPLOYER);
 
@@ -136,7 +136,7 @@ contract PossessioHookCreate3ForkTest is Test {
     //    Hooks.validateHookPermissions internally; if the address bits did not
     //    match the hook's declared permissions, this reverts.
     function test_live_poolManager_accepts_hook() public {
-        if (!forked) return;
+        if (!forked) { vm.skip(true); return; }
         vm.prank(DEPLOYER);
         address hook = CREATEX.deployCreate3(MINED_SALT, _hookInitCode());
 
