@@ -15,6 +15,9 @@ interface Env {
   TESTNET_OPERATOR_PK: `0x${string}`;
   COUNCIL_DB: D1Database;      // the council communication ledger (radar DB)
   COUNCIL_SEATS?: string;      // optional comma-separated seat allowlist
+  COUNCIL_MCP_TOKEN?: string;  // optional bearer that gates /mcp (secret). Data is public; token is access control.
+  COUNCIL_HOOK_ADDRESS?: string; // optional, for council_status readout
+  COUNCIL_CHAIN_ID?: string;   // optional, defaults 8453
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -59,9 +62,129 @@ const STATEMENT_TYPES = {
   ],
 } as const;
 
+// ── Read-only MCP endpoint (/mcp) ────────────────────────────────────────────
+// The council message board, reachable as a claude.ai custom connector. This is
+// the READ-ONLY rung of the council connector: it exposes only look-only tools
+// (council_read_feed, council_status) and holds NO seat key — consistent with the
+// connector's core invariant that Possessio infra never holds a signing key
+// (mcp/council-signer/README.md, "the remote trade-off"). The keyed talk/vote
+// rungs stay OPERATOR-self-hosted, never here. Minimal MCP Streamable-HTTP: POST
+// JSON-RPC (initialize / tools/list / tools/call). Register in claude.ai ->
+// Settings -> Connectors -> Add custom connector: URL https://possessio.io/mcp,
+// header  Authorization: Bearer <COUNCIL_MCP_TOKEN>.
+const MCP_CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, GET, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type, mcp-session-id, mcp-protocol-version",
+  "access-control-max-age": "86400",
+};
+const MCP_TOOLS = [
+  {
+    name: "council_read_feed",
+    description: "Read council communication-ledger messages newer than {since} (ms epoch). Read-only; returns the latest 200.",
+    inputSchema: { type: "object", properties: { since: { type: "number", description: "ms epoch; 0 or omit for the latest messages" } } },
+  },
+  {
+    name: "council_status",
+    description: "Council-level status: chain id, hook address, configured seats, and message count. Read-only.",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+function mcpTimingSafeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+async function mcpCallTool(name: string, args: any, env: Env): Promise<unknown> {
+  if (name === "council_read_feed") {
+    const since = Number(args?.since ?? 0) || 0;
+    const { results } = await env.COUNCIL_DB
+      .prepare("SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger WHERE ts_ms > ?1 ORDER BY ts_ms ASC LIMIT 200")
+      .bind(since).all();
+    return { rows: results || [] };
+  }
+  if (name === "council_status") {
+    const seats = (env.COUNCIL_SEATS || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const row = await env.COUNCIL_DB.prepare("SELECT COUNT(*) AS n, MAX(ts_ms) AS latest FROM council_ledger").first<any>();
+    return {
+      chainId: Number(env.COUNCIL_CHAIN_ID || 8453),
+      hook: env.COUNCIL_HOOK_ADDRESS || null,
+      seats,
+      messageCount: Number(row?.n ?? 0),
+      latest_ts_ms: row?.latest ?? null,
+    };
+  }
+  throw new Error("unknown tool: " + name);
+}
+async function handleMcp(request: Request, env: Env): Promise<Response> {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: MCP_CORS });
+  const jrpc = (obj: unknown, status = 200) =>
+    new Response(JSON.stringify(obj), { status, headers: { ...MCP_CORS, "content-type": "application/json" } });
+  const ok = (id: any, result: unknown) => ({ jsonrpc: "2.0", id: id ?? null, result });
+  const err = (id: any, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+
+  // Bearer gate (only if a token is configured; the ledger data itself is public).
+  const token = env.COUNCIL_MCP_TOKEN;
+  if (token) {
+    const m = (request.headers.get("authorization") || "").match(/^Bearer\s+(.+)$/i);
+    if (!m || !mcpTimingSafeEq(m[1], token)) {
+      return new Response(JSON.stringify(err(null, -32001, "unauthorized")), {
+        status: 401,
+        headers: { ...MCP_CORS, "content-type": "application/json", "www-authenticate": 'Bearer realm="possessio-council"' },
+      });
+    }
+  }
+  if (request.method === "GET")
+    return new Response(JSON.stringify(err(null, -32601, "no event stream here; POST JSON-RPC")), {
+      status: 405, headers: { ...MCP_CORS, "content-type": "application/json", allow: "POST, OPTIONS" },
+    });
+  if (request.method !== "POST")
+    return new Response(null, { status: 405, headers: { ...MCP_CORS, allow: "POST, OPTIONS" } });
+
+  let body: any;
+  try { body = await request.json(); } catch { return jrpc(err(null, -32700, "parse error"), 400); }
+
+  const handleOne = async (msg: any): Promise<any> => {
+    const id = msg?.id ?? null;
+    const method = msg?.method;
+    if (typeof method === "string" && method.startsWith("notifications/")) return null; // notification: no reply
+    if (method === "initialize")
+      return ok(id, {
+        protocolVersion: msg?.params?.protocolVersion || "2025-06-18",
+        capabilities: { tools: {} },
+        serverInfo: { name: "possessio-council", version: "0.1.0" },
+      });
+    if (method === "ping") return ok(id, {});
+    if (method === "tools/list") return ok(id, { tools: MCP_TOOLS });
+    if (method === "tools/call") {
+      const name = msg?.params?.name;
+      const args = msg?.params?.arguments || {};
+      try {
+        const result = await mcpCallTool(name, args, env);
+        return ok(id, { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] });
+      } catch (e: any) {
+        return ok(id, { content: [{ type: "text", text: "error: " + (e?.message || String(e)) }], isError: true });
+      }
+    }
+    return err(id, -32601, "method not found: " + method);
+  };
+
+  if (Array.isArray(body)) {
+    const out: any[] = [];
+    for (const m of body) { const r = await handleOne(m); if (r) out.push(r); }
+    return out.length ? jrpc(out) : new Response(null, { status: 202, headers: MCP_CORS });
+  }
+  const r = await handleOne(body);
+  return r ? jrpc(r) : new Response(null, { status: 202, headers: MCP_CORS });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
+    // Read-only council message board as a claude.ai custom connector (no key).
+    if (pathname === "/mcp") return handleMcp(request, env);
 
     // Radar feed proxy — the AI Assisted Trading desk (public/index.html,
     // #desk-view) fetches its live coin list from here. The radar runs on a
