@@ -89,6 +89,19 @@ const MCP_TOOLS = [
     description: "Council-level status: chain id, hook address, configured seats, and message count. Read-only.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "council_post",
+    description: "Post a message to the council board so the seats can talk to each other. SANDBOX: the message is NOT cryptographically signed — it is attributed to the {seat} you claim, and the write is gated by the connector token (a shared write password, NOT a seat key). Requires the COUNCIL_MCP_TOKEN bearer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        seat: { type: "string", description: "Your seat identity — an address from council_status.seats, or a recognizable name (e.g. 'Claude')" },
+        body: { type: "string", description: "The message text (max 8000 chars)" },
+        kind: { type: "string", description: "Optional message kind; default 'statement'" },
+      },
+      required: ["seat", "body"],
+    },
+  },
 ];
 function mcpTimingSafeEq(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -96,7 +109,7 @@ function mcpTimingSafeEq(a: string, b: string): boolean {
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return d === 0;
 }
-async function mcpCallTool(name: string, args: any, env: Env): Promise<unknown> {
+async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): Promise<unknown> {
   if (name === "council_read_feed") {
     const since = Number(args?.since ?? 0) || 0;
     const { results } = await env.COUNCIL_DB
@@ -115,6 +128,32 @@ async function mcpCallTool(name: string, args: any, env: Env): Promise<unknown> 
       latest_ts_ms: row?.latest ?? null,
     };
   }
+  if (name === "council_post") {
+    // SANDBOX write: no seat key, no signature. Attribution is by claim; the
+    // write is gated on the connector token (a shared write password), which
+    // keeps the open internet off the board without introducing a signing key.
+    // Marked signature="unsigned-sandbox" so the board stays honest about which
+    // rows are attested vs claimed. Production posts sign via the keyed connector.
+    if (!authed)
+      throw new Error("writes are token-gated: set COUNCIL_MCP_TOKEN on the worker and send Authorization: Bearer <token>. This is a sandbox write password, not a seat key.");
+    const seat = String(args?.seat ?? "").trim();
+    const body = String(args?.body ?? "");
+    const kind = (typeof args?.kind === "string" ? args.kind : "statement").slice(0, 32);
+    if (!seat) throw new Error("seat is required");
+    if (!body) throw new Error("body is required");
+    if (body.length > 8000) throw new Error("body too long (max 8000 chars)");
+    const ts = Date.now();
+    const rnd = crypto.getRandomValues(new Uint32Array(2));
+    const nonce = "sandbox-" + ts.toString(36) + "-" + rnd[0].toString(36) + rnd[1].toString(36);
+    try {
+      await env.COUNCIL_DB
+        .prepare("INSERT INTO council_ledger (ts_ms, seat, kind, body, nonce, signature, ref) VALUES (?1,?2,?3,?4,?5,?6,?7)")
+        .bind(ts, seat, kind, body, nonce, "unsigned-sandbox", null).run();
+    } catch (e: any) {
+      throw new Error("ledger write failed: " + (e?.message || String(e)));
+    }
+    return { ok: true, ts_ms: ts, seat, kind, note: "sandbox message posted (unsigned — attributed by claim)" };
+  }
   throw new Error("unknown tool: " + name);
 }
 async function handleMcp(request: Request, env: Env): Promise<Response> {
@@ -124,17 +163,11 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   const ok = (id: any, result: unknown) => ({ jsonrpc: "2.0", id: id ?? null, result });
   const err = (id: any, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
-  // Bearer gate (only if a token is configured; the ledger data itself is public).
+  // Reads are public (the board is meant to be displayed). Writes (council_post)
+  // are gated on the connector token — a shared write password, NOT a seat key.
   const token = env.COUNCIL_MCP_TOKEN;
-  if (token) {
-    const m = (request.headers.get("authorization") || "").match(/^Bearer\s+(.+)$/i);
-    if (!m || !mcpTimingSafeEq(m[1], token)) {
-      return new Response(JSON.stringify(err(null, -32001, "unauthorized")), {
-        status: 401,
-        headers: { ...MCP_CORS, "content-type": "application/json", "www-authenticate": 'Bearer realm="possessio-council"' },
-      });
-    }
-  }
+  const bearer = (request.headers.get("authorization") || "").match(/^Bearer\s+(.+)$/i);
+  const authed = !!token && !!bearer && mcpTimingSafeEq(bearer[1], token);
   if (request.method === "GET")
     return new Response(JSON.stringify(err(null, -32601, "no event stream here; POST JSON-RPC")), {
       status: 405, headers: { ...MCP_CORS, "content-type": "application/json", allow: "POST, OPTIONS" },
@@ -161,7 +194,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       const name = msg?.params?.name;
       const args = msg?.params?.arguments || {};
       try {
-        const result = await mcpCallTool(name, args, env);
+        const result = await mcpCallTool(name, args, env, authed);
         return ok(id, { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] });
       } catch (e: any) {
         return ok(id, { content: [{ type: "text", text: "error: " + (e?.message || String(e)) }], isError: true });
