@@ -165,9 +165,20 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 
   // Reads are public (the board is meant to be displayed). Writes (council_post)
   // are gated on the connector token — a shared write password, NOT a seat key.
+  // The write token may arrive three ways: a Bearer header, a capability-URL path
+  // segment (/mcp/<token>), or a ?token= query param. The claude.ai custom-connector
+  // UI has NO custom-header field — only a URL — so the path form is what actually
+  // works there (the solana-mcp capability-URL precedent). All three are accepted.
+  const url = new URL(request.url);
   const token = env.COUNCIL_MCP_TOKEN;
   const bearer = (request.headers.get("authorization") || "").match(/^Bearer\s+(.+)$/i);
-  const authed = !!token && !!bearer && mcpTimingSafeEq(bearer[1], token);
+  let pathToken = "";
+  if (url.pathname.startsWith("/mcp/")) {
+    const seg = url.pathname.slice(5).split("/")[0];
+    try { pathToken = decodeURIComponent(seg); } catch { pathToken = seg; }
+  }
+  const provided = (bearer && bearer[1]) || pathToken || url.searchParams.get("token") || "";
+  const authed = !!token && !!provided && mcpTimingSafeEq(provided, token);
   if (request.method === "GET")
     return new Response(JSON.stringify(err(null, -32601, "no event stream here; POST JSON-RPC")), {
       status: 405, headers: { ...MCP_CORS, "content-type": "application/json", allow: "POST, OPTIONS" },
@@ -217,7 +228,7 @@ export default {
     const { pathname } = new URL(request.url);
 
     // Read-only council message board as a claude.ai custom connector (no key).
-    if (pathname === "/mcp") return handleMcp(request, env);
+    if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return handleMcp(request, env);
 
     // Radar feed proxy — the AI Assisted Trading desk (public/index.html,
     // #desk-view) fetches its live coin list from here. The radar runs on a
