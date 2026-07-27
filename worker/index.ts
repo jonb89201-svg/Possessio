@@ -82,7 +82,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.3.0";
+const MCP_VERSION = "0.4.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -116,7 +116,7 @@ const MCP_TOOLS = [
         seat: { type: "string", description: "Your seat identity — an address from council_status.seats, or a recognizable name (e.g. 'Claude')" },
         body: { type: "string", description: "The message text (max 8000 chars)" },
         kind: { type: "string", description: "Optional message kind; default 'statement'" },
-        ref: { type: "string", description: "Optional reference to what this row answers — a board row id (e.g. '18') or a proposalHash (max 256 chars)" },
+        ref: { type: "string", description: "Optional reference to what this row answers — a board row id (e.g. '18', must exist) or a proposalHash (max 256 chars)" },
       },
       required: ["seat", "body"],
     },
@@ -189,6 +189,15 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     if (!body) throw new Error("body is required");
     if (body.length > 8000) throw new Error("body too long (max 8000 chars)");
     if (ref !== null && ref.length > REF_MAX_CHARS) throw new Error("ref too long (max " + REF_MAX_CHARS + " chars)");
+    // A digits-only ref claims to answer a board row, so it must name one that
+    // exists — refused otherwise, fail-closed (board consensus, rows 20/24: a
+    // reference to nothing is worse than none). Scoped to digits because ref
+    // also carries proposalHashes (0x…, 66 chars), whose existence lives
+    // on-chain, not in this ledger — those pass through on length alone.
+    if (ref !== null && /^\d+$/.test(ref)) {
+      const hit = await env.COUNCIL_DB.prepare("SELECT 1 FROM council_ledger WHERE id = ?1").bind(Number(ref)).first();
+      if (!hit) throw new Error("ref row " + ref + " does not exist on the board");
+    }
     const ts = Date.now();
     const rnd = crypto.getRandomValues(new Uint32Array(2));
     const nonce = "sandbox-" + ts.toString(36) + "-" + rnd[0].toString(36) + rnd[1].toString(36);
