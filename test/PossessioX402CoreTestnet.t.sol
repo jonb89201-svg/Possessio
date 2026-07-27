@@ -36,6 +36,7 @@ contract X402TestnetProofTest is Test {
     uint256 constant VELOCITY_HALFLIFE = 3600;
     uint256 constant ABSOLUTE_FLOOR    = 10_000000;
     uint256 constant FLOOR_PER_UNIT    = 1_000000;
+    uint256 constant REGISTRATION_FEE  = 5_000000; // $5 rotation tax
     uint256 constant DUST_FLOOR        = 1_000000;
 
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
@@ -99,7 +100,8 @@ contract X402TestnetProofTest is Test {
             _operationalCap:      OPERATIONAL_CAP,
             _absoluteFloor:       ABSOLUTE_FLOOR,
             _floorPerUnit:        FLOOR_PER_UNIT,
-            _velocityHalflife:    VELOCITY_HALFLIFE
+            _velocityHalflife:    VELOCITY_HALFLIFE,
+            _registrationFee:     REGISTRATION_FEE
         });
 
         // register the buyer (proof = [leafB])
@@ -396,31 +398,31 @@ contract X402TestnetProofTest is Test {
         // feeSource == operator -> valve violation
         vm.expectRevert(PossessioX402Core.ValveIntegrityViolation.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, operator,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
 
         // feeSource == heartSink -> valve violation (inbound == outbound Heart)
         vm.expectRevert(PossessioX402Core.ValveIntegrityViolation.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, H,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
 
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
         new PossessioX402Core(root, DUST_FLOOR, address(0), H, operator, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, address(0), operator, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, H, address(0), feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
         vm.expectRevert(PossessioX402Core.ZeroAddress.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, H, operator, address(0),
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
 
         // intentional-omission shape: both outbound to one address - ALLOWED
         // (heartSink == operator; the Heart is still a valid infra-sink).
         PossessioX402Core merged = new PossessioX402Core(root, DUST_FLOOR, usdc,
             H, H, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
         assertEq(merged.heartSink(), merged.operatorDestination(), "heartSink==operator is by design");
     }
 
@@ -434,16 +436,16 @@ contract X402TestnetProofTest is Test {
         // EOA heartSink -> no code -> pre-check reverts.
         vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, makeAddr("eoa"), operator, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
 
         // real contract, no isInfraSink() marker -> try/catch reverts.
         address wrong = address(new NotAnInfraSink());
         vm.expectRevert(PossessioX402Core.FeeSinkInterfaceMismatch.selector);
         new PossessioX402Core(root, DUST_FLOOR, usdc, wrong, operator, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
 
         // the live infra-sink constructs cleanly (positive control).
         new PossessioX402Core(root, DUST_FLOOR, usdc, address(heart), operator, feeSource,
-            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE);
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REGISTRATION_FEE);
     }
 }

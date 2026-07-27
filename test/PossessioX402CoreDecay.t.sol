@@ -21,7 +21,8 @@ contract DecayHarness is PossessioX402Core {
             1e12,                // operationalCap
             1e8,                 // absoluteFloor
             1e6,                 // floorPerUnit
-            halflife             // VELOCITY_HALFLIFE
+            halflife,            // VELOCITY_HALFLIFE
+            0                    // registrationFee (unused by decay)
         )
     {}
 

@@ -18,6 +18,7 @@ contract PossessioX402CoreGauntletTest is Test {
     uint256 constant VELOCITY_HALFLIFE = 3600;
     uint256 constant ABSOLUTE_FLOOR = 10_000000; // 10 USDC
     uint256 constant FLOOR_PER_UNIT = 1_000000;
+    uint256 constant REGISTRATION_FEE = 5_000000; // $5 rotation tax
     uint256 constant DUST_FLOOR = 1_000000;
 
     bytes32 constant RECEIVE_TYPEHASH =
@@ -62,7 +63,8 @@ contract PossessioX402CoreGauntletTest is Test {
             _operationalCap: OPERATIONAL_CAP,
             _absoluteFloor: ABSOLUTE_FLOOR,
             _floorPerUnit: FLOOR_PER_UNIT,
-            _velocityHalflife: VELOCITY_HALFLIFE
+            _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
 
         bytes32[] memory proof = new bytes32[](1);
@@ -349,7 +351,8 @@ contract PossessioX402CoreGauntletTest is Test {
             _operationalCap: OPERATIONAL_CAP,
             _absoluteFloor: ABSOLUTE_FLOOR,
             _floorPerUnit: FLOOR_PER_UNIT,
-            _velocityHalflife: VELOCITY_HALFLIFE
+            _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
     }
 
@@ -370,7 +373,8 @@ contract PossessioX402CoreGauntletTest is Test {
             _operationalCap: OPERATIONAL_CAP,
             _absoluteFloor: ABSOLUTE_FLOOR,
             _floorPerUnit: FLOOR_PER_UNIT,
-            _velocityHalflife: VELOCITY_HALFLIFE
+            _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
     }
 
@@ -389,7 +393,8 @@ contract PossessioX402CoreGauntletTest is Test {
             root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
             _heartSink: eoa, _operatorDestination: operator, _deploymentFeeSource: feeSource,
             _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
-            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
     }
 
@@ -404,7 +409,8 @@ contract PossessioX402CoreGauntletTest is Test {
             root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
             _heartSink: wrong, _operatorDestination: operator, _deploymentFeeSource: feeSource,
             _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
-            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
     }
 
@@ -417,7 +423,8 @@ contract PossessioX402CoreGauntletTest is Test {
             root: root, dustFloor: DUST_FLOOR, _payToken: address(usdc),
             _heartSink: address(heart), _operatorDestination: operator, _deploymentFeeSource: feeSource,
             _operationalCap: OPERATIONAL_CAP, _absoluteFloor: ABSOLUTE_FLOOR,
-            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE
+            _floorPerUnit: FLOOR_PER_UNIT, _velocityHalflife: VELOCITY_HALFLIFE,
+            _registrationFee: REGISTRATION_FEE
         });
         assertEq(ok.heartSink(), address(heart), "heartSink wired");
     }

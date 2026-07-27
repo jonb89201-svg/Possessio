@@ -214,6 +214,17 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     ///         is routed one-way into the Heart (heartSink). Immutable bound.
     uint256 public immutable OPERATIONAL_CAP;
 
+    /// @notice One-time cost (payToken/USDC) to self-register via registerOpen.
+    ///         The ROTATION TAX: settleCall gates on registered[caller], and a
+    ///         fresh address gets a fresh (clean) guard slot - so escaping a
+    ///         behavioural-fee reputation by hopping addresses must cost
+    ///         something, or the open toll is trivially sybilled. Set to 0 for
+    ///         a free-open deployment (registerOpen still works, no fee pulled);
+    ///         any positive value is the tax. Immutable, per deployment.
+    ///         "No signup" means no ACCOUNT, not no fee - registration is
+    ///         accountless (EIP-3009), permissionless, and priced.
+    uint256 public immutable REGISTRATION_FEE;
+
     /// @notice Live accounting of the self-funding pool (infra reserve).
     ///         Denominated in payToken (USDC). NEVER native ETH.
     uint256 public operationalPoolBalance;
@@ -272,6 +283,10 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
     event OperationalExpensesPaid(uint256 amount, address indexed operator);
     event DeploymentFeeReceived(address indexed from, uint256 amount);
+    /// @notice A permissionless identity registered itself via registerOpen and
+    ///         paid the rotation tax. Distinct from SymmetryGuardCore.Registered
+    ///         (the merkle/allowlist path) so the two routes stay legible on-chain.
+    event RegisteredOpen(address indexed caller, uint256 fee);
 
     error InsufficientOperationalFunds();
     error ExceedsDrawableSurplus(uint256 requested, uint256 drawable);
@@ -322,6 +337,13 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
     error AmountMismatch(uint256 signed, uint256 expected);
     error CallerNotRegistered(address caller);
+    /// @notice registerOpen called by an already-registered identity. Refused so
+    ///         a second fee can never be charged, and so re-registration can
+    ///         never be used as a reputation reset.
+    error AlreadyRegistered(address caller);
+    /// @notice registerOpen signed value != REGISTRATION_FEE. Exact equality
+    ///         only - no tolerance band (same discipline as settleCall).
+    error WrongRegistrationFee(uint256 signed, uint256 expected);
     error SellerMismatch(bytes32 channelId, address provided, address registered);
     error NonceCommitmentMismatch(bytes32 signedNonce, bytes32 expectedCommitment);
     error UnauthorizedCall();
@@ -344,7 +366,8 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         uint256 _operationalCap,
         uint256 _absoluteFloor,
         uint256 _floorPerUnit,
-        uint256 _velocityHalflife
+        uint256 _velocityHalflife,
+        uint256 _registrationFee
     ) SymmetryGuardCore(root, dustFloor) {
         // Zero-address guards on every load-bearing destination.
         if (
@@ -397,6 +420,7 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         ABSOLUTE_FLOOR = _absoluteFloor;
         FLOOR_PER_UNIT = _floorPerUnit;
         VELOCITY_HALFLIFE = _velocityHalflife;
+        REGISTRATION_FEE = _registrationFee;
         lastVelocityTs = block.timestamp;
     }
 
@@ -594,6 +618,95 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
         // INTERACTION: route surplus INTO THE HEART (receiveInfraFunds — option
         // A) AFTER state is committed. Brick-guard makes the critical push safe.
+        if (surplus > 0) {
+            payTokenERC20.forceApprove(heartSink, surplus);
+            IPossessioPool(heartSink).receiveInfraFunds(surplus);
+            emit HeartSurplusRouted(surplus);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        OPEN + PRICED REGISTRATION (the permissionless identity door)
+
+      settleCall gates on registered[caller]. SymmetryGuardCore.register
+      is the MERKLE path - a fixed allowlist committed at deploy, right
+      for a private deployment, impossible for an open toll (a merkle
+      root cannot admit an address that was not in the tree).
+
+      This is the second path: anyone may register, paying REGISTRATION_FEE
+      once. "No signup" means no ACCOUNT - so the pull is EIP-3009
+      (receiveWithAuthorization), the same accountless, front-run-closed
+      primitive settleCall uses. No approval, no prior interaction.
+
+      WHY PRICED: a free-open door is trivially sybilled. A fresh address
+      gets a fresh guard slot, so a bad behavioural-fee reputation could be
+      shed for the cost of gas. The fee is the ROTATION TAX: N identities
+      cost N * REGISTRATION_FEE. It does not gate honesty - it prices
+      evasion.
+
+      VALVE-SAFE: the fee moves ONLY toward the pool. This function has no
+      outbound path to the registrant and opens no new inbound path to the
+      Heart - it reuses the existing accounted door (receiveInfraFunds) for
+      surplus, exactly as receiveDeploymentFee and settleCall's toll do.
+      Nothing here can move funds OUT of the pool.
+
+      The merkle path is untouched. A deployment may use either, both, or
+      (with REGISTRATION_FEE = 0) free-open.
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Register msg.sender permissionlessly by paying REGISTRATION_FEE.
+    ///         One-time, exact-value, accountless. The signed authorization must
+    ///         be for `value == REGISTRATION_FEE`, from msg.sender, to this
+    ///         contract.
+    /// @dev CEI ordering mirrors receiveDeploymentFee: pull, commit accounting
+    ///      and the identity, THEN push any surplus into the Heart.
+    /// @param value       Signed authorization amount. MUST equal REGISTRATION_FEE.
+    /// @param validAfter  EIP-3009 window start.
+    /// @param validBefore EIP-3009 window end.
+    /// @param nonce       EIP-3009 nonce (burned by the token; replay-dead).
+    function registerOpen(
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant {
+        // 1. One identity, one charge. Also blocks re-registration being used
+        //    as a reputation reset (guard slots are keyed on (sender, poolId)
+        //    and are NOT touched here either way).
+        if (registered[msg.sender]) revert AlreadyRegistered(msg.sender);
+
+        // 2. Exact price. No tolerance band (settleCall discipline).
+        if (value != REGISTRATION_FEE) revert WrongRegistrationFee(value, REGISTRATION_FEE);
+
+        uint256 surplus;
+        if (value > 0) {
+            // 3. Front-run-closed pull. The authorization is bound to
+            //    from == msg.sender and to == address(this), so no other
+            //    submitter can consume it and it cannot register a third party.
+            payToken.receiveWithAuthorization(
+                msg.sender, address(this), value, validAfter, validBefore, nonce, v, r, s
+            );
+
+            // 4. EFFECTS: pool accounting first, surplus computed before any
+            //    external interaction.
+            uint256 newBalance = operationalPoolBalance + value;
+            if (newBalance > OPERATIONAL_CAP) {
+                surplus = newBalance - OPERATIONAL_CAP;
+                operationalPoolBalance = OPERATIONAL_CAP;
+            } else {
+                operationalPoolBalance = newBalance;
+            }
+        }
+
+        // 5. EFFECTS: grant the identity. Committed before the external push.
+        registered[msg.sender] = true;
+        emit RegisteredOpen(msg.sender, value);
+
+        // 6. INTERACTION: route surplus INTO THE HEART via the accounted door,
+        //    after state is committed. Brick-guard makes this push safe.
         if (surplus > 0) {
             payTokenERC20.forceApprove(heartSink, surplus);
             IPossessioPool(heartSink).receiveInfraFunds(surplus);
