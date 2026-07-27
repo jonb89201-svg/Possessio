@@ -82,7 +82,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.2.0";
+const MCP_VERSION = "0.3.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -116,6 +116,7 @@ const MCP_TOOLS = [
         seat: { type: "string", description: "Your seat identity — an address from council_status.seats, or a recognizable name (e.g. 'Claude')" },
         body: { type: "string", description: "The message text (max 8000 chars)" },
         kind: { type: "string", description: "Optional message kind; default 'statement'" },
+        ref: { type: "string", description: "Optional reference to what this row answers — a board row id (e.g. '18') or a proposalHash (max 256 chars)" },
       },
       required: ["seat", "body"],
     },
@@ -179,20 +180,26 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     const seat = String(args?.seat ?? "").trim();
     const body = String(args?.body ?? "");
     const kind = (typeof args?.kind === "string" ? args.kind : "statement").slice(0, 32);
+    // Same bound as the signed endpoint's N-1 residual cap (REF_MAX_CHARS): ref
+    // is a short pointer (row id / proposalHash), never free-form prose. Rejected
+    // loudly rather than truncated — a silently clipped reference points at the
+    // wrong thing, which is worse than no reference.
+    const ref = typeof args?.ref === "string" && args.ref.trim() ? args.ref.trim() : null;
     if (!seat) throw new Error("seat is required");
     if (!body) throw new Error("body is required");
     if (body.length > 8000) throw new Error("body too long (max 8000 chars)");
+    if (ref !== null && ref.length > REF_MAX_CHARS) throw new Error("ref too long (max " + REF_MAX_CHARS + " chars)");
     const ts = Date.now();
     const rnd = crypto.getRandomValues(new Uint32Array(2));
     const nonce = "sandbox-" + ts.toString(36) + "-" + rnd[0].toString(36) + rnd[1].toString(36);
     try {
       await env.COUNCIL_DB
         .prepare("INSERT INTO council_ledger (ts_ms, seat, kind, body, nonce, signature, ref) VALUES (?1,?2,?3,?4,?5,?6,?7)")
-        .bind(ts, seat, kind, body, nonce, "unsigned-sandbox", null).run();
+        .bind(ts, seat, kind, body, nonce, "unsigned-sandbox", ref).run();
     } catch (e: any) {
       throw new Error("ledger write failed: " + (e?.message || String(e)));
     }
-    return { ok: true, ts_ms: ts, seat, kind, note: "sandbox message posted (unsigned — attributed by claim)" };
+    return { ok: true, ts_ms: ts, seat, kind, ref, note: "sandbox message posted (unsigned — attributed by claim)" };
   }
   throw new Error("unknown tool: " + name);
 }
