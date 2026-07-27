@@ -54,6 +54,164 @@ const SEAT_RATE_MAX_POSTS = 20; // per seat per window; far above honest use
 const HEALTH_CACHE_MS = 15_000;
 let healthCache: { at: number; payload: Record<string, unknown> } | null = null;
 
+// Shared by the /api/radar/health route and the connector's radar_health tool
+// (increment 4): one computation, two callers, so the console and the council
+// can never disagree about the feed's health. Returns the payload; callers wrap.
+async function computeRadarHealth(db: D1Database): Promise<Record<string, unknown>> {
+
+  // N-4: serve a recent verdict rather than re-running the D1 sweep + the
+  // public-RPC probe on every poll. Marked cached + aged so the reader knows.
+  if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+    return { ...healthCache.payload, cached: true, cache_age_ms: Date.now() - healthCache.at };
+  }
+
+  let row: any;
+  let db_mb: number | null = null;
+  try {
+    // .all() (not .first()) so we also get meta.size_after — D1 hands back the
+    // DB file size for free, and pragma_page_count is blocked (SQLITE_AUTH).
+    const res: any = await db.prepare(
+      "SELECT " +
+      "(strftime('%s','now')*1000 - (SELECT MAX(pumpfun_first_seen_ms) FROM births)) AS births_age_ms, " +
+      "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-300000) AS births_5min, " +
+      "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-3600000) AS births_1h, " +
+      "(strftime('%s','now')*1000 - (SELECT MAX(ms) FROM mc_ticks)) AS tape_age_ms, " +
+      "(strftime('%s','now')*1000 - (SELECT MAX(ts_ms) FROM regime_ticks)) AS btc_age_ms, " +
+      "(SELECT btc_usd FROM regime_ticks ORDER BY ts_ms DESC LIMIT 1) AS btc_usd"
+    ).all();
+    row = res?.results?.[0] || {};
+    const bytes = res?.meta?.size_after;
+    if (bytes) db_mb = Math.round((Number(bytes) / 1048576) * 10) / 10;
+  } catch (e: any) {
+    return { status: "unknown", diagnosis: "Radar DB query failed: " + (e?.message || e), action: "Check the COUNCIL_DB binding / radar DB." };
+  }
+
+  const num = (x: any) => (x == null ? null : Number(x));
+  const births_age_ms = num(row?.births_age_ms);
+  const births_5min = num(row?.births_5min) ?? 0;
+  const births_1h = num(row?.births_1h) ?? 0;
+  const tape_age_ms = num(row?.tape_age_ms);
+  const btc_age_ms = num(row?.btc_age_ms);
+  const btc_usd = num(row?.btc_usd);
+
+  const BTC_STALE = 120000, TAPE_STALL = 600000;
+  const btcFresh = btc_age_ms != null && btc_age_ms <= BTC_STALE;
+  const birthsFlat = births_5min === 0;
+  const tapeFrozen = tape_age_ms == null || tape_age_ms > TAPE_STALL;
+
+  // Which scan is actually failing — feed_status is written by the radar cron
+  // (radar/index.ts `tracked`), turning "births frozen" into the CAUSE:
+  // "birthScan failing: <error>". A scan is failing now iff its last error is
+  // newer than its last success. Best-effort — a missing table (pre radar
+  // deploy) or read error never blocks the verdict.
+  const scans: Record<string, { ok_age_ms: number | null; err_age_ms: number | null; err: string | null; failing: boolean }> = {};
+  const failing: string[] = [];
+  try {
+    const fs: any = await db.prepare("SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status").all();
+    const nowMs = Date.now();
+    for (const r of (fs?.results || [])) {
+      const okMs = r.last_ok_ms == null ? null : Number(r.last_ok_ms);
+      const errMs = r.last_err_ms == null ? null : Number(r.last_err_ms);
+      const isFailing = errMs != null && (okMs == null || errMs > okMs);
+      scans[r.scan] = {
+        ok_age_ms: okMs == null ? null : nowMs - okMs,
+        err_age_ms: errMs == null ? null : nowMs - errMs,
+        err: isFailing ? (r.last_err ?? null) : null,
+        failing: isFailing,
+      };
+      if (isFailing) failing.push(r.scan);
+    }
+  } catch { /* feed_status not present yet — omit */ }
+
+  // Best-effort on-chain cross-check — only when births look flat, since that
+  // is exactly when "our WS dropped" vs "pump.fun itself is quiet" is the open
+  // question. Short timeout; a failure never blocks the verdict.
+  let pumpfun_program: { checked: boolean; alive: boolean; age_s: number | null } | null = null;
+  if (birthsFlat) {
+    pumpfun_program = { checked: true, alive: false, age_s: null };
+    try {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 3000);
+      const rr = await fetch("https://api.mainnet-beta.solana.com", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: ["6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", { limit: 1 }] }),
+        signal: ac.signal,
+      });
+      clearTimeout(t);
+      const jj: any = await rr.json();
+      const bt = jj?.result?.[0]?.blockTime;
+      if (bt) {
+        const age_s = Math.max(0, Math.floor(Date.now() / 1000) - Number(bt));
+        pumpfun_program = { checked: true, alive: age_s < 120, age_s };
+      }
+    } catch { /* leave alive:false, age_s:null — unknown, not proven-quiet */ }
+  }
+
+  let status: string, diagnosis: string, action: string | null;
+  if (!btcFresh && birthsFlat) {
+    status = "radar_down";
+    diagnosis = "Radar worker down — the BTC and pump.fun feeds are both stale.";
+    action = "Redeploy the radar worker.";
+  } else if (btcFresh && birthsFlat && tapeFrozen) {
+    if (pumpfun_program?.alive) {
+      status = "ws_dropped";
+      diagnosis = "pump.fun is LIVE on-chain (" + pumpfun_program.age_s + "s ago) but births + tape are frozen while the worker is alive (BTC fresh) — the pumpportal websocket dropped.";
+      action = "Redeploy the radar worker to reconnect the WS.";
+    } else if (pumpfun_program && pumpfun_program.age_s == null) {
+      status = "ingest_stalled";
+      diagnosis = "Births + tape frozen, worker alive (BTC fresh); couldn't reach Solana to confirm whether pump.fun itself is live.";
+      action = "Likely a dropped WS — redeploy the radar worker; if births stay flat, verify pump.fun isn't halted.";
+    } else {
+      status = "market_quiet";
+      diagnosis = "Births + tape frozen, worker alive (BTC fresh), and pump.fun's program looks quiet on-chain — a market lull, not our bug.";
+      action = "Stand down; births resume when pump.fun does.";
+    }
+  } else if (btcFresh && birthsFlat && !tapeFrozen) {
+    status = "quiet";
+    diagnosis = "No new births in 5 min but the tape is recent — likely a brief lull.";
+    action = "Watch; no action unless it persists.";
+  } else if (!btcFresh && !birthsFlat) {
+    status = "btc_lagging";
+    diagnosis = "Births are flowing but the BTC regime feed is lagging.";
+    action = "Minor — watch the BTC source.";
+  } else {
+    status = "healthy";
+    diagnosis = "Feed live — births and tape current.";
+    action = null;
+  }
+
+  // Name the cause: if a scan is throwing during a stall, append which one and
+  // why — the WHY, live, instead of guessing between upstream/limit/code bug.
+  if (failing.length && status !== "healthy" && status !== "market_quiet") {
+    const detail = failing.map((s) => {
+      const sc = scans[s];
+      const age = sc.err_age_ms == null ? "" : " (" + Math.round(sc.err_age_ms / 1000) + "s ago)";
+      return s + " failing" + age + (sc.err ? ": " + sc.err : "");
+    }).join("; ");
+    diagnosis += "  CAUSE — " + detail + ".";
+    if (status === "ingest_stalled" || status === "radar_down")
+      action = "Fix the failing scan (see cause) — a redeploy only helps for a transient/socket issue, not a code or upstream error.";
+  }
+
+  const payload = {
+    ts: Date.now(),
+    status,
+    diagnosis,
+    action,
+    streams: {
+      births: { age_ms: births_age_ms, last_5min: births_5min, last_1h: births_1h },
+      tape: { age_ms: tape_age_ms },
+      btc: { age_ms: btc_age_ms, usd: btc_usd },
+    },
+    pumpfun_program,
+    scans,
+    db_mb,
+  };
+  healthCache = { at: Date.now(), payload }; // N-4
+  return payload;
+}
+
 const STATEMENT_DOMAIN = { name: "PossessioCouncilStatement", version: "1" } as const;
 const STATEMENT_TYPES = {
   Statement: [
@@ -82,7 +240,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.4.0";
+const MCP_VERSION = "0.5.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -106,6 +264,11 @@ const MCP_TOOLS = [
       },
       required: ["q"],
     },
+  },
+  {
+    name: "radar_health",
+    description: "Radar feed health self-diagnosis — the same verdict the console's /api/radar/health serves: status, plain-language diagnosis, recommended action, per-stream ages, failing scans. Read-only; cross-organ (radar D1). May serve a briefly cached verdict, marked cached:true.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "council_post",
@@ -168,6 +331,13 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
           .bind(pat, limit);
     const { results } = await stmt.all();
     return { q, seat: seat || null, rows: results || [] };
+  }
+  if (name === "radar_health") {
+    // Cross-organ read (increment 4): the connector's first tool whose data is
+    // another organ's. Same visibility as the public /api/radar/health route,
+    // same computation (computeRadarHealth) — the console and the council can
+    // never disagree about the feed. Read-only; no auth needed, like all reads.
+    return await computeRadarHealth(env.COUNCIL_DB);
   }
   if (name === "council_post") {
     // SANDBOX write: no seat key, no signature. Attribution is by claim; the
@@ -331,158 +501,7 @@ export default {
     if (pathname === "/api/radar/health") {
       const db = env.COUNCIL_DB;
       if (!db) return json({ status: "unknown", error: "COUNCIL_DB_UNBOUND" }, 503);
-
-      // N-4: serve a recent verdict rather than re-running the D1 sweep + the
-      // public-RPC probe on every poll. Marked cached + aged so the reader knows.
-      if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
-        return json({ ...healthCache.payload, cached: true, cache_age_ms: Date.now() - healthCache.at });
-      }
-
-      let row: any;
-      let db_mb: number | null = null;
-      try {
-        // .all() (not .first()) so we also get meta.size_after — D1 hands back the
-        // DB file size for free, and pragma_page_count is blocked (SQLITE_AUTH).
-        const res: any = await db.prepare(
-          "SELECT " +
-          "(strftime('%s','now')*1000 - (SELECT MAX(pumpfun_first_seen_ms) FROM births)) AS births_age_ms, " +
-          "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-300000) AS births_5min, " +
-          "(SELECT COUNT(*) FROM births WHERE pumpfun_first_seen_ms > strftime('%s','now')*1000-3600000) AS births_1h, " +
-          "(strftime('%s','now')*1000 - (SELECT MAX(ms) FROM mc_ticks)) AS tape_age_ms, " +
-          "(strftime('%s','now')*1000 - (SELECT MAX(ts_ms) FROM regime_ticks)) AS btc_age_ms, " +
-          "(SELECT btc_usd FROM regime_ticks ORDER BY ts_ms DESC LIMIT 1) AS btc_usd"
-        ).all();
-        row = res?.results?.[0] || {};
-        const bytes = res?.meta?.size_after;
-        if (bytes) db_mb = Math.round((Number(bytes) / 1048576) * 10) / 10;
-      } catch (e: any) {
-        return json({ status: "unknown", diagnosis: "Radar DB query failed: " + (e?.message || e), action: "Check the COUNCIL_DB binding / radar DB." });
-      }
-
-      const num = (x: any) => (x == null ? null : Number(x));
-      const births_age_ms = num(row?.births_age_ms);
-      const births_5min = num(row?.births_5min) ?? 0;
-      const births_1h = num(row?.births_1h) ?? 0;
-      const tape_age_ms = num(row?.tape_age_ms);
-      const btc_age_ms = num(row?.btc_age_ms);
-      const btc_usd = num(row?.btc_usd);
-
-      const BTC_STALE = 120000, TAPE_STALL = 600000;
-      const btcFresh = btc_age_ms != null && btc_age_ms <= BTC_STALE;
-      const birthsFlat = births_5min === 0;
-      const tapeFrozen = tape_age_ms == null || tape_age_ms > TAPE_STALL;
-
-      // Which scan is actually failing — feed_status is written by the radar cron
-      // (radar/index.ts `tracked`), turning "births frozen" into the CAUSE:
-      // "birthScan failing: <error>". A scan is failing now iff its last error is
-      // newer than its last success. Best-effort — a missing table (pre radar
-      // deploy) or read error never blocks the verdict.
-      const scans: Record<string, { ok_age_ms: number | null; err_age_ms: number | null; err: string | null; failing: boolean }> = {};
-      const failing: string[] = [];
-      try {
-        const fs: any = await db.prepare("SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status").all();
-        const nowMs = Date.now();
-        for (const r of (fs?.results || [])) {
-          const okMs = r.last_ok_ms == null ? null : Number(r.last_ok_ms);
-          const errMs = r.last_err_ms == null ? null : Number(r.last_err_ms);
-          const isFailing = errMs != null && (okMs == null || errMs > okMs);
-          scans[r.scan] = {
-            ok_age_ms: okMs == null ? null : nowMs - okMs,
-            err_age_ms: errMs == null ? null : nowMs - errMs,
-            err: isFailing ? (r.last_err ?? null) : null,
-            failing: isFailing,
-          };
-          if (isFailing) failing.push(r.scan);
-        }
-      } catch { /* feed_status not present yet — omit */ }
-
-      // Best-effort on-chain cross-check — only when births look flat, since that
-      // is exactly when "our WS dropped" vs "pump.fun itself is quiet" is the open
-      // question. Short timeout; a failure never blocks the verdict.
-      let pumpfun_program: { checked: boolean; alive: boolean; age_s: number | null } | null = null;
-      if (birthsFlat) {
-        pumpfun_program = { checked: true, alive: false, age_s: null };
-        try {
-          const ac = new AbortController();
-          const t = setTimeout(() => ac.abort(), 3000);
-          const rr = await fetch("https://api.mainnet-beta.solana.com", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: ["6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", { limit: 1 }] }),
-            signal: ac.signal,
-          });
-          clearTimeout(t);
-          const jj: any = await rr.json();
-          const bt = jj?.result?.[0]?.blockTime;
-          if (bt) {
-            const age_s = Math.max(0, Math.floor(Date.now() / 1000) - Number(bt));
-            pumpfun_program = { checked: true, alive: age_s < 120, age_s };
-          }
-        } catch { /* leave alive:false, age_s:null — unknown, not proven-quiet */ }
-      }
-
-      let status: string, diagnosis: string, action: string | null;
-      if (!btcFresh && birthsFlat) {
-        status = "radar_down";
-        diagnosis = "Radar worker down — the BTC and pump.fun feeds are both stale.";
-        action = "Redeploy the radar worker.";
-      } else if (btcFresh && birthsFlat && tapeFrozen) {
-        if (pumpfun_program?.alive) {
-          status = "ws_dropped";
-          diagnosis = "pump.fun is LIVE on-chain (" + pumpfun_program.age_s + "s ago) but births + tape are frozen while the worker is alive (BTC fresh) — the pumpportal websocket dropped.";
-          action = "Redeploy the radar worker to reconnect the WS.";
-        } else if (pumpfun_program && pumpfun_program.age_s == null) {
-          status = "ingest_stalled";
-          diagnosis = "Births + tape frozen, worker alive (BTC fresh); couldn't reach Solana to confirm whether pump.fun itself is live.";
-          action = "Likely a dropped WS — redeploy the radar worker; if births stay flat, verify pump.fun isn't halted.";
-        } else {
-          status = "market_quiet";
-          diagnosis = "Births + tape frozen, worker alive (BTC fresh), and pump.fun's program looks quiet on-chain — a market lull, not our bug.";
-          action = "Stand down; births resume when pump.fun does.";
-        }
-      } else if (btcFresh && birthsFlat && !tapeFrozen) {
-        status = "quiet";
-        diagnosis = "No new births in 5 min but the tape is recent — likely a brief lull.";
-        action = "Watch; no action unless it persists.";
-      } else if (!btcFresh && !birthsFlat) {
-        status = "btc_lagging";
-        diagnosis = "Births are flowing but the BTC regime feed is lagging.";
-        action = "Minor — watch the BTC source.";
-      } else {
-        status = "healthy";
-        diagnosis = "Feed live — births and tape current.";
-        action = null;
-      }
-
-      // Name the cause: if a scan is throwing during a stall, append which one and
-      // why — the WHY, live, instead of guessing between upstream/limit/code bug.
-      if (failing.length && status !== "healthy" && status !== "market_quiet") {
-        const detail = failing.map((s) => {
-          const sc = scans[s];
-          const age = sc.err_age_ms == null ? "" : " (" + Math.round(sc.err_age_ms / 1000) + "s ago)";
-          return s + " failing" + age + (sc.err ? ": " + sc.err : "");
-        }).join("; ");
-        diagnosis += "  CAUSE — " + detail + ".";
-        if (status === "ingest_stalled" || status === "radar_down")
-          action = "Fix the failing scan (see cause) — a redeploy only helps for a transient/socket issue, not a code or upstream error.";
-      }
-
-      const payload = {
-        ts: Date.now(),
-        status,
-        diagnosis,
-        action,
-        streams: {
-          births: { age_ms: births_age_ms, last_5min: births_5min, last_1h: births_1h },
-          tape: { age_ms: tape_age_ms },
-          btc: { age_ms: btc_age_ms, usd: btc_usd },
-        },
-        pumpfun_program,
-        scans,
-        db_mb,
-      };
-      healthCache = { at: Date.now(), payload }; // N-4
-      return json(payload);
+      return json(await computeRadarHealth(db));
     }
 
     // Council communication ledger (SPEC_CouncilSigner_v3 §8). The end-to-end
