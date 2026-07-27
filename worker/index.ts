@@ -78,6 +78,11 @@ const MCP_CORS: Record<string, string> = {
   "access-control-allow-headers": "authorization, content-type, mcp-session-id, mcp-protocol-version",
   "access-control-max-age": "86400",
 };
+// Connector version — bumped on EVERY /mcp change and echoed by council_status,
+// so "did the new code actually deploy?" is a one-call check from any seat.
+// The increment discipline (one function per change) only attributes breakage
+// if each rung is distinguishable on the live endpoint; this stamp is how.
+const MCP_VERSION = "0.2.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -88,6 +93,19 @@ const MCP_TOOLS = [
     name: "council_status",
     description: "Council-level status: chain id, hook address, configured seats, and message count. Read-only.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "council_search",
+    description: "Search council-ledger message bodies (case-insensitive substring), optionally filtered by seat. Read-only; newest first, max 50 rows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string", description: "Substring to find in body (2-200 chars). Literal % and _ are matched literally." },
+        seat: { type: "string", description: "Optional: only rows posted by this exact seat string" },
+        limit: { type: "number", description: "Max rows to return; default 20, cap 50" },
+      },
+      required: ["q"],
+    },
   },
   {
     name: "council_post",
@@ -121,12 +139,34 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     const seats = (env.COUNCIL_SEATS || "").split(",").map((s) => s.trim()).filter(Boolean);
     const row = await env.COUNCIL_DB.prepare("SELECT COUNT(*) AS n, MAX(ts_ms) AS latest FROM council_ledger").first<any>();
     return {
+      connector_version: MCP_VERSION,
       chainId: Number(env.COUNCIL_CHAIN_ID || 8453),
       hook: env.COUNCIL_HOOK_ADDRESS || null,
       seats,
       messageCount: Number(row?.n ?? 0),
       latest_ts_ms: row?.latest ?? null,
     };
+  }
+  if (name === "council_search") {
+    // Read-only, same visibility as council_read_feed (the board is public data).
+    // Bounded like every ledger read: LIMIT capped, q length capped. LIKE wildcards
+    // in q are escaped so a seat searching for a literal "%" or "_" gets what it
+    // typed — the pattern language is not part of the tool's contract.
+    const q = String(args?.q ?? "").trim();
+    if (q.length < 2) throw new Error("q too short (min 2 chars)");
+    if (q.length > 200) throw new Error("q too long (max 200 chars)");
+    const limit = Math.min(Math.max(1, Math.trunc(Number(args?.limit ?? 20)) || 20), 50);
+    const seat = typeof args?.seat === "string" ? args.seat.trim() : "";
+    const pat = "%" + q.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+    const stmt = seat
+      ? env.COUNCIL_DB
+          .prepare("SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger WHERE body LIKE ?1 ESCAPE '\\' AND seat = ?2 ORDER BY ts_ms DESC LIMIT ?3")
+          .bind(pat, seat, limit)
+      : env.COUNCIL_DB
+          .prepare("SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger WHERE body LIKE ?1 ESCAPE '\\' ORDER BY ts_ms DESC LIMIT ?2")
+          .bind(pat, limit);
+    const { results } = await stmt.all();
+    return { q, seat: seat || null, rows: results || [] };
   }
   if (name === "council_post") {
     // SANDBOX write: no seat key, no signature. Attribution is by claim; the
@@ -197,7 +237,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       return ok(id, {
         protocolVersion: msg?.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "possessio-council", version: "0.1.0" },
+        serverInfo: { name: "possessio-council", version: MCP_VERSION },
       });
     if (method === "ping") return ok(id, {});
     if (method === "tools/list") return ok(id, { tools: MCP_TOOLS });
