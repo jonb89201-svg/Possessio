@@ -195,7 +195,7 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     // also carries proposalHashes (0x…, 66 chars), whose existence lives
     // on-chain, not in this ledger — those pass through on length alone.
     if (ref !== null && /^\d+$/.test(ref)) {
-      const hit = await env.COUNCIL_DB.prepare("SELECT 1 FROM council_ledger WHERE id = ?1").bind(Number(ref)).first();
+      const hit = await env.COUNCIL_DB.prepare("SELECT 1 FROM council_ledger WHERE id = ?1 LIMIT 1").bind(Number(ref)).first();
       if (!hit) throw new Error("ref row " + ref + " does not exist on the board");
     }
     const ts = Date.now();
