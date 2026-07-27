@@ -57,6 +57,7 @@ contract DeployX402Testnet is Script {
     uint256 constant ABSOLUTE_FLOOR    = 10_000000;  // 10 USDC - the hard baseline (DoD #17's wall)
     uint256 constant FLOOR_PER_UNIT    = 1_000000;   // 1 USDC per unit of decayed velocity - legible per-call
     uint256 constant DUST_FLOOR        = 1_000000;   // 1 USDC - SymmetryGuardCore dust threshold (parent arg)
+    uint256 constant REGISTRATION_FEE  = 5_000000;   // 5 USDC - open-register rotation tax (testnet mirror)
 
     error TestnetAddressesMustBeDistinct(); // pre-check mirror of ValveIntegrityViolation + WO's 3-distinct rule
 
@@ -92,7 +93,8 @@ contract DeployX402Testnet is Script {
             _operationalCap:      OPERATIONAL_CAP,
             _absoluteFloor:       ABSOLUTE_FLOOR,
             _floorPerUnit:        FLOOR_PER_UNIT,
-            _velocityHalflife:    VELOCITY_HALFLIFE
+            _velocityHalflife:    VELOCITY_HALFLIFE,
+            _registrationFee:     REGISTRATION_FEE
         }));
         vm.stopBroadcast();
 

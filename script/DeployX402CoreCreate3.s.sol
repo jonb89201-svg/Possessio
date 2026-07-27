@@ -17,7 +17,7 @@
 // RUN (fork first):
 //   DEPLOYER_PK=<anchor EOA> X402_ROOT=0x.. X402_DUST_FLOOR=.. OPERATOR_DEST_ADDR=0x.. \
 //   TREASURY_DEST_ADDR=0x.. X402_FEE_SOURCE_ADDR=0x.. X402_OP_CAP=.. X402_ABS_FLOOR=.. \
-//   X402_FLOOR_PER_UNIT=.. X402_HALFLIFE=.. \
+//   X402_FLOOR_PER_UNIT=.. X402_HALFLIFE=.. X402_REGISTRATION_FEE=.. \
 //   forge script script/DeployX402CoreCreate3.s.sol --rpc-url $BASE_RPC_URL -vvv
 
 pragma solidity ^0.8.26;
@@ -61,6 +61,7 @@ contract DeployX402CoreCreate3 is Script {
         uint256 absFloor  = vm.envUint("X402_ABS_FLOOR");
         uint256 perUnit   = vm.envUint("X402_FLOOR_PER_UNIT");
         uint256 halflife  = vm.envUint("X402_HALFLIFE");
+        uint256 regFee    = vm.envUint("X402_REGISTRATION_FEE"); // open-register rotation tax
 
         if (vm.addr(pk) != ANCHOR_EOA) revert KeyIsNotAnchorEOA(vm.addr(pk));
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -80,7 +81,7 @@ contract DeployX402CoreCreate3 is Script {
         // enforces heartSink is a live infra-sink. A bad wire reverts here.
         bytes memory initCode = abi.encodePacked(
             type(PossessioX402Core).creationCode,
-            abi.encode(root, dustFloor, PAY_TOKEN, HEART, operator, feeSource, cap, absFloor, perUnit, halflife)
+            abi.encode(root, dustFloor, PAY_TOKEN, HEART, operator, feeSource, cap, absFloor, perUnit, halflife, regFee)
         );
 
         vm.startBroadcast(pk);
