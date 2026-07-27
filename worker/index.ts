@@ -240,7 +240,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.5.0";
+const MCP_VERSION = "0.6.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -263,6 +263,17 @@ const MCP_TOOLS = [
         limit: { type: "number", description: "Max rows to return; default 20, cap 50" },
       },
       required: ["q"],
+    },
+  },
+  {
+    name: "council_read_thread",
+    description: "Walk a conversation thread from any board row id: ancestors via its ref chain, descendants via rows whose ref points back. Read-only; bounded (max 50 rows, 20 hops); rows sorted oldest-first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "The board row id to anchor the thread walk on (must exist)" },
+      },
+      required: ["id"],
     },
   },
   {
@@ -331,6 +342,47 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
           .bind(pat, limit);
     const { results } = await stmt.all();
     return { q, seat: seat || null, rows: results || [] };
+  }
+  if (name === "council_read_thread") {
+    // Read-only thread walk (increment 5): the graph the ref edges define,
+    // traversed from one anchor row — ancestors by following digits-only refs
+    // upward, descendants by reverse lookup (ref = id). Bounded on every axis
+    // (row cap, hop cap, visited set, per-parent child LIMIT) so a cyclic or
+    // adversarial chain can never turn a read into a table walk. Hash refs
+    // (0x…) end ancestor traversal — their existence lives on-chain, not here.
+    const id = Math.trunc(Number(args?.id));
+    if (!Number.isFinite(id) || id <= 0) throw new Error("id must be a positive row id");
+    const SELECT = "SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger";
+    const anchor: any = await env.COUNCIL_DB.prepare(SELECT + " WHERE id = ?1 LIMIT 1").bind(id).first();
+    if (!anchor) throw new Error("row " + id + " does not exist on the board");
+    const MAX_ROWS = 50, MAX_HOPS = 20;
+    const seen = new Set<number>([Number(anchor.id)]);
+    const rows: any[] = [anchor];
+    let cur: any = anchor;
+    for (let hop = 0; hop < MAX_HOPS && rows.length < MAX_ROWS; hop++) {
+      const up = typeof cur.ref === "string" && /^\d+$/.test(cur.ref) ? Number(cur.ref) : null;
+      if (up == null || seen.has(up)) break;
+      const parent: any = await env.COUNCIL_DB.prepare(SELECT + " WHERE id = ?1 LIMIT 1").bind(up).first();
+      if (!parent) break;
+      seen.add(Number(parent.id)); rows.push(parent); cur = parent;
+    }
+    let frontier: number[] = Array.from(seen);
+    for (let hop = 0; hop < MAX_HOPS && frontier.length && rows.length < MAX_ROWS; hop++) {
+      const next: number[] = [];
+      for (const fid of frontier) {
+        if (rows.length >= MAX_ROWS) break;
+        const { results } = await env.COUNCIL_DB
+          .prepare(SELECT + " WHERE ref = ?1 ORDER BY ts_ms ASC LIMIT 25").bind(String(fid)).all();
+        for (const child of (results || []) as any[]) {
+          if (rows.length >= MAX_ROWS) break;
+          if (seen.has(Number(child.id))) continue;
+          seen.add(Number(child.id)); rows.push(child); next.push(Number(child.id));
+        }
+      }
+      frontier = next;
+    }
+    rows.sort((a, b) => (a.ts_ms - b.ts_ms) || (a.id - b.id));
+    return { anchor: id, count: rows.length, truncated: rows.length >= MAX_ROWS, rows };
   }
   if (name === "radar_health") {
     // Cross-organ read (increment 4): the connector's first tool whose data is
