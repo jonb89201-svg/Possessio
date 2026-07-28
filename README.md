@@ -217,18 +217,28 @@ This is what "crypto treasury without crypto custody" looks like operationally -
 
 The merchant description above is one use of this contract, not its shape.
 
-**The shape is an account: a contract that holds USDC, earns on it, and answers to exactly one key -- its owner's.** Nothing about it is specific to any industry, business model, or counterparty. It does not know or care where the money came from or what it is for.
+**The shape is an account: a contract that holds value, earns on it, and answers to exactly one key -- its owner's.** A digital savings and current account, self-custodied, immutable, and functional. Nothing about it is specific to any industry, business model, or counterparty; it does not know or care where the money came from or what it is for.
 
-That generality is deliberate, and the uses follow from it rather than defining it. It is the settlement sink other contracts in this system route value into (`PossessioFactory` pins it as `FEE_SINK`); it is a business's operating and reserve account; it is a merchant's treasury behind a payment processor; it is one person's savings. Same contract, same bytecode, different owner and a different number in one field. Anything that needs somewhere durable to put USDC and would rather not ask permission is in scope.
+That generality is deliberate, and the uses follow from it rather than defining it -- long-term storage of value, a business's operating and reserve account, a merchant's treasury behind a payment processor (the original intent, and still one use of many), the settlement sink other contracts route into, or one person's savings. Same contract, same bytecode; a different owner and a different position on one slider. Anything that needs somewhere durable to put value and would rather not ask permission is in scope.
 
 **It behaves like an address, not like a protocol.** There is no `deposit()`, no `receive()`, no `fallback`, nothing `payable`. USDC arrives by plain ERC-20 transfer and the sweep simply reads `USDC.balanceOf(address(this))`. A holder hands out their contract address and *anyone* can pay it -- a customer, a wallet, a payment processor, an exchange withdrawal -- with no integration, no approve-then-deposit, and no knowledge that it is a contract at all. Nothing has to be learned on the payer's side. That single property is what makes it an account.
 
-**Checking and savings, chosen by one number.** After the working-capital reserve fills to `daiCeiling`, the remainder splits by `cbEthBps` (default 5000 = 50/50):
+**Two dials, and one of them is a slider you drag.** Value entering the account is allocated in two stages:
 
-- **The Morpho leg** -- USDC in, USDC out. Yield with no price exposure. This is the checking side: operating cash, payables, anything with a near-term obligation attached to it.
-- **The cbETH leg** -- staked ETH, held in the account itself. This is the savings side.
+1. **The reserve.** USDC refills a DAI working-capital reserve up to `daiCeiling`. This is the liquid layer -- money with a date attached to it.
+2. **The split.** Whatever remains *above* the ceiling divides by `cbEthBps` between two legs:
+   - **The Morpho leg** -- USDC in, USDC out, via a curated Morpho Blue ERC-4626 vault. Yield with no price exposure. Lending.
+   - **The cbETH leg** -- staked ETH held in the account itself. Yield plus ETH exposure. Savings.
 
-The two legs carry genuinely different risk and the split is a real decision, not a default to inherit. `cbEthBps = 0` is a pure-USDC account with no currency exposure; `cbEthBps = 5000` accepts ETH price movement in exchange for the staking leg. The rule is the same whatever the account is for: money with a date attached to it belongs on the first leg, and money without one is what the second leg is for.
+`cbEthBps` is exposed in the console as a labelled slider -- **"My Lending" ↔ "My Savings"** -- and it is bounded on-chain, not just in the UI: `setCbEthBps` enforces `1000 ≤ bps ≤ 9000`, so the allocation ranges from 10/90 to 90/10 and can never be pushed to either extreme. Every account starts at 50/50 (`cbEthBps = 5000`, set at construction, not a deploy parameter). Moving between dollars and staked ETH is a slider drag and one signature -- not a trade, not a bridge, not an exchange account.
+
+Because the floor is 10%, the slider is not the exposure control -- **`daiCeiling` is.** The split only ever applies to the surplus above the reserve, so an account that wants to hold almost entirely dollars raises its ceiling; an account accumulating long-term reserves lowers it. The ceiling decides how much is spending money, the slider decides how the rest is held.
+
+**Immutable, and fully functional.** These are the only economic dials, they belong to the owner, and there is nothing else to configure -- no upgrade path, no proxy, no migration, no admin who can retune it later. The contract you launch is the contract forever, which is what makes a long-term store of value trustworthy rather than merely convenient. Immutability here does not mean frozen or minimal: the account sweeps, rebalances, earns on both legs, enforces rate-limited exits for every asset it can hold, and runs itself on Chainlink Automation.
+
+**It is designed to be launched alongside something else.** The account is where value settles and rests; the contracts that generate that value point at it. `PossessioFactory` already pins an account as its `FEE_SINK`. A dual launch -- an account plus whichever contract does the earning -- gives an operator one durable, yield-bearing place for proceeds to land, owned outright, rather than a balance held wherever the earning happened to occur.
+
+That is the shape that makes a fully digital economy workable from one address: **be paid into it, pay out of it, and hold long-term value in it** -- and the same is true whether the counterparty is a person, a business, or an agent settling per-call in USDC.
 
 **Self-custody is the point, and the comparison is not a savings account.** The alternative to holding staked ETH here is holding it at a custodian, and custodians are what keep getting drained. Value in this contract is held by the contract itself under a key its owner controls; there is no exchange account, no omnibus wallet, and no counterparty whose failure reaches it.
 
