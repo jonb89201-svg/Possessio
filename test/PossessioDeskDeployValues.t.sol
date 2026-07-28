@@ -24,10 +24,13 @@ pragma solidity ^0.8.26;
    hold across the whole range a customer might choose". That is what
    this suite adds, by fuzzing the caps themselves.
 
-   ONE DIVERGENCE FOUND AND FLAGGED, not resolved: AutoTarget's per-tx
-   fee is $0.02 in all three of its own suites (FEE = 20_000) and $1 in
-   TradingDeskCreate3 (PER_TX_FEE = 1e6) — 50x apart. Both are exercised
-   below so whichever ships is covered.
+   PER_TX_FEE was the one divergence this sweep found: $0.02 in all three
+   AutoTarget suites and $1 in TradingDeskCreate3. It was never a conflict
+   — it was SPEC_AutoTarget §7 open decision #2 still open, with the $1 a
+   placeholder in a test that only cares about addresses. RATIFIED
+   2026-07-28 at $0.02, the bottom of the spec's own suggested range and
+   the tape-toll price. The placeholder is corrected and $0.02 is now
+   pinned as the shipping value here.
 //////////////////////////////////////////////////////////////*/
 
 import {Test, console2} from "forge-std/Test.sol";
@@ -46,9 +49,8 @@ contract PossessioDeskDeployValuesTest is Test {
     uint256 constant MAX_OUTSTANDING = 10_000e6;
     uint256 constant DAILY_DRAW_CAP  = 20_000e6;
 
-    // ── the two per-tx fees in the tree ──────────────────────────────────
-    uint256 constant FEE_UNIT_SUITES = 20_000;   // $0.02 — AutoTarget x3
-    uint256 constant FEE_DESK_ASSEMBLY = 1e6;    // $1    — TradingDeskCreate3
+    // ── AT_PER_TX_FEE — ratified 2026-07-28 (§22) ────────────────────────
+    uint256 constant PER_TX_FEE_SHIPPING = 20_000;  // $0.02, flat, per intent
 
     uint16  constant STOP_BPS_EXPECTED = 1000;   // -10%, hardcoded constant
 
@@ -82,25 +84,29 @@ contract PossessioDeskDeployValuesTest is Test {
     function test_K1_stopIsAHardcodedConstant() public {
         MockInfraPoolDesk pool = new MockInfraPoolDesk();
         PossessioAutoTarget at =
-            new PossessioAutoTarget(address(usdc), address(pool), makeAddr("keeper"), FEE_UNIT_SUITES);
+            new PossessioAutoTarget(address(usdc), address(pool), makeAddr("keeper"), PER_TX_FEE_SHIPPING);
         assertEq(at.STOP_BPS(), STOP_BPS_EXPECTED, "the -10% stop must be 1000 bps, always");
     }
 
-    // ── K2. Both per-tx fees in the tree actually construct and bind ─────
-    //      $0.02 (AutoTarget suites) and $1 (desk assembly) are 50x apart.
-    //      Whichever ships, it is covered.
-    function test_K2_bothPerTxFeesInTheTreeAreExercised() public {
+    // ── K2. The ratified per-tx fee is $0.02, and it is immutable ────────
+    //      §22 AT_PER_TX_FEE=20000, closing SPEC_AutoTarget §7 decision #2.
+    //      Pinned so the deploy env, the desk-assembly test and AutoTarget's
+    //      own suites can never drift apart again -- which is exactly how a
+    //      $1 placeholder survived in the tree unnoticed.
+    function test_K2_ratifiedPerTxFeeIsTwoCents() public {
         MockInfraPoolDesk pool = new MockInfraPoolDesk();
         address keeper = makeAddr("keeper");
 
-        PossessioAutoTarget cheap =
-            new PossessioAutoTarget(address(usdc), address(pool), keeper, FEE_UNIT_SUITES);
-        PossessioAutoTarget dear =
-            new PossessioAutoTarget(address(usdc), address(pool), keeper, FEE_DESK_ASSEMBLY);
+        PossessioAutoTarget at =
+            new PossessioAutoTarget(address(usdc), address(pool), keeper, PER_TX_FEE_SHIPPING);
 
-        assertEq(cheap.PER_TX_FEE(), FEE_UNIT_SUITES,   "$0.02 tier binds");
-        assertEq(dear.PER_TX_FEE(),  FEE_DESK_ASSEMBLY, "$1 tier binds");
-        assertEq(cheap.STOP_BPS(), dear.STOP_BPS(),   "the stop never varies with the fee");
+        assertEq(at.PER_TX_FEE(), PER_TX_FEE_SHIPPING, "shipping fee must be $0.02");
+        assertEq(at.STOP_BPS(), STOP_BPS_EXPECTED, "the stop never varies with the fee");
+
+        // no setter may reprice a live desk -- the fee is the user's terms
+        (bool ok, ) = address(at).call(abi.encodeWithSignature("setPerTxFee(uint256)", uint256(1e6)));
+        assertFalse(ok, "no setPerTxFee may exist");
+        assertEq(at.PER_TX_FEE(), PER_TX_FEE_SHIPPING, "fee immutable for the desk's life");
     }
 
     // ── K3. The caps land exactly as constructed ─────────────────────────

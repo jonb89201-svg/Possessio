@@ -230,8 +230,13 @@ Executed/Cancelled are terminal.
 1. ~~Exit-execution model A vs B~~ — **RESOLVED (§3): A, keeper-side, fully
    mechanical.** Remaining sub-item: which `SpendPermissionManager` deployment +
    DEX the keeper uses per chain (deploy/keeper config, not a contract freeze).
-2. **`PER_TX_FEE`** — flat USDC per open? (interim: mirror the R1 toll scale,
-   e.g. $0.02–0.10) or a bps of notional? Immutable per deploy either way.
+2. ~~**`PER_TX_FEE`**~~ — **RESOLVED 2026-07-28 (Architect): flat `$0.02`
+   USDC per open** (`AT_PER_TX_FEE=20000`, recorded in DEPLOY_CALIBRATION §22).
+   Flat, not bps of notional. Chosen at the bottom of the range suggested here
+   so it matches the R1 tape toll and AutoTarget's own three suites. Immutable
+   per deploy. A `$1` placeholder that had been sitting in
+   `test/TradingDeskCreate3.t.sol` (a CREATE3 prewire proof, which is
+   initcode-independent and so never noticed the value) was corrected to match.
 3. **Fee destination** — the Heart (Option A, self-funding, recommended) vs an
    operator `TOLL_SINK` batched sweep (R1's pattern). Spec builds Option A;
    swappable at deploy.
