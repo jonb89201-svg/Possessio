@@ -82,7 +82,7 @@ POSSESSIO has shipped across multiple phases. Each phase generated architectural
 
 **L1Anchor + L1AnchorFactory (forge-verified, pre-deployment -- parked)** -- Per-merchant Ethereum mainnet settlement contracts. Parked pending the institutional (MAVAN/Fundstrat) conversation, which follows grant-readiness. Routes merchant-bridged cbETH to MAVAN (Tom Lee's Bitmine Made in America Validator Network) for institutional staking yield, and merchant-bridged USDC to Bitwise-curated Morpho Blue vault for institutional lending yield. The MAVAN Merchant Identity primitive -- the structural mechanism for institutional recognition of POSSESSIO Anchors as a property of deployment path rather than central registry -- was invented by Vesper (Code Integrity seat). Without this invention, POSSESSIO could not scale institutional integrations.
 
-**PossessioPayments -- LIVE on Base mainnet** at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453, verifiable on BaseScan). Phase 2 council product, now deployed. The clean mainnet deploy is itself a proof: the constructor's decimals checks on all Chainlink feeds passed, confirming every feed/venue address is real and correct. The proof that the production system can ship in a second product domain. Different architectural shape than PLATE -- non-custodial merchant payment processor, sold as one-time software, POSSESSIO retains zero on-chain authority post-deployment, no protocol fee extraction at any layer. The SAL (Service Accountability Layer) framework that informs SAV's accountability primitive traces to ChatGPT (council seat).
+**PossessioPayments -- LIVE on Base mainnet** at `0x67247eB2108E7229331127DF1309D624d95467ca` (chain 8453, verifiable on BaseScan). Phase 2 council product, now deployed. The clean mainnet deploy is itself a proof: the constructor's decimals checks on all Chainlink feeds passed, confirming every feed/venue address is real and correct. The proof that the production system can ship in a second product domain. Different architectural shape than PLATE -- a non-custodial account primitive (merchant settlement is one use of it), sold as one-time software, POSSESSIO retains zero on-chain authority post-deployment, no protocol fee extraction at any layer. The SAL (Service Accountability Layer) framework that informs SAV's accountability primitive traces to ChatGPT (council seat).
 
 The arc is the work. Multiple products, one production system, no team scaling, no capital infusion between phases.
 
@@ -207,7 +207,46 @@ A merchant payment processor -- non-custodial smart contract infrastructure for 
 
 This is what "crypto treasury without crypto custody" looks like operationally -- merchants get a treasury-management layer integrated with their existing payment processor, routing operational liquidity to DAI and accumulating cbETH yield in their own contract, without giving up custody at any point.
 
-**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the totals above.
+**Status:** LIVE on Base mainnet at `0x67247eB2108E7229331127DF1309D624d95467ca` (chain 8453), deployed 2026-07-28, `OWNER_ROLE` `0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9`. Config: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI/24h, usdcDailyLimit 50,000 USDC/24h, cbEthDailyLimit 20 cbETH/24h. Every field verified post-deploy by live `eth_call`/`eth_getCode`; `LST_RATES` reuses the already-live `0xDDb75e974d99FcF95E241adbFD376861c47a8548` rather than redeploying it. Transfer of `OWNER_ROLE` to a Treasury Safe is planned before customer funds flow (single-key discipline). Payments forge tests included in the totals above.
+
+**The exits are the contract.** `sendUSDC`, `sendCbETH` and `redeemMorpho` are what make the account an account rather than a one-way deposit: USDC, the cbETH treasury leg and the Morpho position each have an owner-controlled door out, every one of them freeze-checked and rate-limited by the C-2 rolling per-asset daily caps (`sendUSDC` and `redeemMorpho` share a single USDC window, closing the split-path drain). A yield-bearing contract without an exit for every asset it can hold is not a treasury -- it is a place value goes and does not come back from. Any future revision of this contract inherits that requirement: **no asset may be acquirable without a matching withdrawal path.**
+
+---
+
+## The Account primitive -- what PossessioPayments actually is
+
+The merchant description above is one use of this contract, not its shape.
+
+**The shape is an account: a contract that holds value, earns on it, and answers to exactly one key -- its owner's.** A digital savings and current account, self-custodied, immutable, and functional. Nothing about it is specific to any industry, business model, or counterparty; it does not know or care where the money came from or what it is for.
+
+That generality is deliberate, and the uses follow from it rather than defining it -- long-term storage of value, a business's operating and reserve account, a merchant's treasury behind a payment processor (the original intent, and still one use of many), the settlement sink other contracts route into, or one person's savings. Same contract, same bytecode; a different owner and a different position on one slider. Anything that needs somewhere durable to put value and would rather not ask permission is in scope.
+
+**It behaves like an address, not like a protocol.** There is no `deposit()`, no `receive()`, no `fallback`, nothing `payable`. USDC arrives by plain ERC-20 transfer and the sweep simply reads `USDC.balanceOf(address(this))`. A holder hands out their contract address and *anyone* can pay it -- a customer, a wallet, a payment processor, an exchange withdrawal -- with no integration, no approve-then-deposit, and no knowledge that it is a contract at all. Nothing has to be learned on the payer's side. That single property is what makes it an account.
+
+**Two dials, and one of them is a slider you drag.** Value entering the account is allocated in two stages:
+
+1. **The reserve.** USDC refills a DAI working-capital reserve up to `daiCeiling`. This is the liquid layer -- money with a date attached to it.
+2. **The split.** Whatever remains *above* the ceiling divides by `cbEthBps` between two legs:
+   - **The Morpho leg** -- USDC in, USDC out, via a curated Morpho Blue ERC-4626 vault. Yield with no price exposure. Lending.
+   - **The cbETH leg** -- staked ETH held in the account itself. Yield plus ETH exposure. Savings.
+
+`cbEthBps` is exposed in the console as a labelled slider -- **"My Lending" ↔ "My Savings"** -- and it is bounded on-chain, not just in the UI: `setCbEthBps` enforces `1000 ≤ bps ≤ 9000`, so the allocation ranges from 10/90 to 90/10 and can never be pushed to either extreme. Every account starts at 50/50 (`cbEthBps = 5000`, set at construction, not a deploy parameter). Moving between dollars and staked ETH is a slider drag and one signature -- not a trade, not a bridge, not an exchange account.
+
+Because the floor is 10%, the slider is not the exposure control -- **`daiCeiling` is.** The split only ever applies to the surplus above the reserve, so an account that wants to hold almost entirely dollars raises its ceiling; an account accumulating long-term reserves lowers it. The ceiling decides how much is spending money, the slider decides how the rest is held.
+
+**Immutable, and fully functional.** These are the only economic dials, they belong to the owner, and there is nothing else to configure -- no upgrade path, no proxy, no migration, no admin who can retune it later. The contract you launch is the contract forever, which is what makes a long-term store of value trustworthy rather than merely convenient. Immutability here does not mean frozen or minimal: the account sweeps, rebalances, earns on both legs, enforces rate-limited exits for every asset it can hold, and runs itself on Chainlink Automation.
+
+**It is designed to be launched alongside something else.** The account is where value settles and rests; the contracts that generate that value point at it. `PossessioFactory` already pins an account as its `FEE_SINK`. A dual launch -- an account plus whichever contract does the earning -- gives an operator one durable, yield-bearing place for proceeds to land, owned outright, rather than a balance held wherever the earning happened to occur.
+
+That is the shape that makes a fully digital economy workable from one address: **be paid into it, pay out of it, and hold long-term value in it** -- and the same is true whether the counterparty is a person, a business, or an agent settling per-call in USDC.
+
+**Self-custody is the point, and the comparison is not a savings account.** The alternative to holding staked ETH here is holding it at a custodian, and custodians are what keep getting drained. Value in this contract is held by the contract itself under a key its owner controls; there is no exchange account, no omnibus wallet, and no counterparty whose failure reaches it.
+
+**Zero POSSESSIO authority, structurally.** The claim is checkable, not asserted. The entire contract contains exactly one hardcoded address (`AERODROME_CBETH_WETH_POOL`) and it is a venue, not an authority. The complete role setup at construction is `_grantRole(OWNER_ROLE, p.owner)` and `_setRoleAdmin(OWNER_ROLE, OWNER_ROLE)`. There is no POSSESSIO address anywhere in it, no admin role, no upgrade path, no proxy, no pause we hold, and no fee we take. `DEFAULT_ADMIN_ROLE` is granted to nobody and, being its own admin, can never be granted to anyone. Once deployed, the only key on earth with authority over the contract is the owner's -- enforced by the absence of code, which is the only guarantee that cannot be withdrawn later.
+
+**The owner is a wallet, and the wallet is the security model.** Launch happens inside a wallet browser, so the account inherits that wallet's protections rather than inventing its own. A passkey Base Account keeps the signing credential in the device secure enclave, gated by biometrics and recoverable through the platform -- there is no seed phrase to lose. A Safe puts it behind an M-of-N threshold instead. Either way the device is the cold storage, and the operator never handles a private key as a string.
+
+**Not yet auto-launchable -- stated plainly.** `PossessioFactory.deployTemplate` appends `abi.encode(owner, initArgs)` to the pinned template initcode, so a template's constructor must be `(address, bytes)`. This contract's constructor takes `DeployParams`, so the factory cannot currently deploy it: the factory supplies 160 bytes where the constructor expects 576. Closing that is a constructor-shape change that leaves the runtime bytecode byte-identical, and it makes the contract strictly safer -- the factory *writes* the owner, so an instance cannot be deployed owned by anyone other than the launcher. Until that lands and a `templateCodehash` is pinned, deployment is by script only. Tracked in `TODO.md`.
 
 ---
 
@@ -216,7 +255,7 @@ This is what "crypto treasury without crypto custody" looks like operationally -
 | File | Description | Status |
 |---|---|---|
 | [`src/POSSESSIO_v2-6-3.sol`](src/POSSESSIO_v2-6-3.sol) | PLATE V3 ($STEEL) -- treasury engine + embedded SAV + Chainlink Automation (Uniswap V4 hooks) | Fork-proven (CREATE3 3/3) -- mainnet deploy pending; STEEL token on Sepolia |
-| [`src/PossessioPayments.sol`](src/PossessioPayments.sol) | Merchant payments product (Phase 2) | **LIVE Base mainnet** `0x1c0F7299...AB91` |
+| [`src/PossessioPayments.sol`](src/PossessioPayments.sol) | The account primitive -- self-custody USDC account with a yield split; merchant settlement is one use (Phase 2) | **LIVE Base mainnet** `0x67247eB2...67ca` |
 | [`src/LSTExchangeRate.sol`](src/LSTExchangeRate.sol) | LST valuation guard (dual-source, fail-closed) | **LIVE Base mainnet** `0xDDb75e97...8548` |
 | [`src/L1Anchor.sol`](src/L1Anchor.sol) | Per-merchant Ethereum mainnet settlement (MAVAN + Bitwise routing) | Forge-verified -- pre-deployment (parked) |
 | [`src/L1AnchorFactory.sol`](src/L1AnchorFactory.sol) | Canonical factory for L1Anchor deployment (Ethereum mainnet) | Forge-verified -- pre-deployment |
@@ -251,7 +290,7 @@ This is what "crypto treasury without crypto custody" looks like operationally -
 
 | Contract | Address |
 |---|---|
-| PossessioPayments | `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` |
+| PossessioPayments | `0x67247eB2108E7229331127DF1309D624d95467ca` |
 | LSTExchangeRate (LST valuation guard) | `0xDDb75e974d99FcF95E241adbFD376861c47a8548` |
 
 **V3 generation -- testnet / pending mainnet:**

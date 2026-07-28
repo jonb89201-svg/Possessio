@@ -26,14 +26,14 @@ repo, never against a prose description. Verified against `main@a3146eb`.
 
 New MCP seat onboarding: read this file + RULEBOOK_TradingAgent.md, then
 prove your network: (1) curl a Jupiter quote (public.jupiterapi.com),
-(2) cast call the live Payments 0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91
+(2) cast call the live Payments 0x67247eB2108E7229331127DF1309D624d95467ca
 (getUSDCBalance / getTreasuryGauge / executedUpkeepCount - closes the
 console-compat probe), (3) run node mcp/xtrade/scripts/deviceverify.js.
 RPC URLs come from environment variables, never from the repo.
 
 **Console-compat probe CLOSED (2026-07-06, repo seat via Base MCP):**
 read-only eth_call against live Payments
-0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91 on Base (block ~48,262,912):
+0x67247eB2108E7229331127DF1309D624d95467ca on Base (block ~48,262,912):
 `getUSDCBalance()` = 0, `getTreasuryGauge()` = 320587280895694 wei
 (~0.00032 ETH-equiv), `executedUpkeepCount()` = 0. All three selectors
 (`3cfd1ccc` / `2e23acc4` / `351dab15`) confirmed present in the deployed

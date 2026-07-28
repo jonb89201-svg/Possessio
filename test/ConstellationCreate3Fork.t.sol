@@ -75,6 +75,10 @@ contract ConstellationCreate3ForkTest is Test {
     uint256 internal constant FLOOR = 1_000e6;
     uint256 internal constant FPU = 10e6;
     uint256 internal constant HL = 7 days;
+    // x402Core registration tax (11th ctor arg). $5 USDC, matching the §22
+    // calibration. Economics only — CREATE3 addresses are initcode-independent,
+    // so this value cannot move an anchor.
+    uint256 internal constant REG_FEE = 5e6;
 
     function setUp() public {
         bytes memory code = vm.parseBytes(vm.readFile("test/fixtures/createx.runtime.hex"));
@@ -110,7 +114,7 @@ contract ConstellationCreate3ForkTest is Test {
         //    surplus over the cap routes into the Heart via receiveInfraFunds.
         x402 = _deploy(X402CORE_SALT, abi.encodePacked(
             type(PossessioX402Core).creationCode,
-            abi.encode(keccak256("ROOT"), uint256(1e6), USDC, pool, OPERATOR, X402_FEESRC, CAP, FLOOR, FPU, HL)
+            abi.encode(keccak256("ROOT"), uint256(1e6), USDC, pool, OPERATOR, X402_FEESRC, CAP, FLOOR, FPU, HL, REG_FEE)
         ));
         assertEq(x402, X402CORE_ADDR, "x402core != anchor");
 

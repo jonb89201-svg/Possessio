@@ -29,7 +29,7 @@ several of its figures. Verified this session:
   mainnet deploy pending) — so the listing's "V1 deployment (Base mainnet,
   dormant)" conflates a testnet artifact with mainnet. The contract genuinely
   **live on Base mainnet (chain 8453)** is **PossessioPayments
-  `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91`** (plus `LSTExchangeRate`),
+  `0x67247eB2108E7229331127DF1309D624d95467ca`** (plus `LSTExchangeRate`),
   BaseScan-verifiable.
 - **SAV status.** The 3% council allocation is evidenced on-chain by the STEEL
   deployer balance move (`deployer_steel_before/after.txt`: `1e27 → 9.7e26`,

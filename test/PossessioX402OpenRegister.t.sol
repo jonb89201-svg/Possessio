@@ -96,6 +96,25 @@ contract PossessioX402OpenRegisterTest is Test {
         (a.v, a.r, a.s) = vm.sign(pk, digest);
     }
 
+    /// @dev Same as `_signReg` but with a caller-chosen nonce, so a single
+    ///      nonce can be aimed at two different entry points.
+    function _signAt(uint256 pk, address target, uint256 value, bytes32 nonce)
+        internal view returns (Auth memory a)
+    {
+        a.value = value;
+        a.validAfter = block.timestamp - 1;
+        a.validBefore = block.timestamp + 3600;
+        a.nonce = nonce;
+        bytes32 digest = keccak256(abi.encodePacked(
+            "\x19\x01", usdc.DOMAIN_SEPARATOR(),
+            keccak256(abi.encode(
+                RECEIVE_WITH_AUTHORIZATION_TYPEHASH,
+                vm.addr(pk), target, a.value, a.validAfter, a.validBefore, a.nonce
+            ))
+        ));
+        (a.v, a.r, a.s) = vm.sign(pk, digest);
+    }
+
     function _register(uint256 pk, PossessioX402Core c, uint256 value) internal returns (Auth memory a) {
         a = _signReg(pk, address(c), value);
         vm.prank(vm.addr(pk));
@@ -258,6 +277,39 @@ contract PossessioX402OpenRegisterTest is Test {
         vm.prank(who);
         vm.expectRevert(); // AlreadyRegistered (identity) — nonce burn is the second wall
         core.registerOpen(a.value, a.validAfter, a.validBefore, a.nonce, a.v, a.r, a.s);
+    }
+
+    /// @notice DoD 8b — the SECOND wall, asserted rather than commented.
+    ///         DoD8 above never reaches the token: `AlreadyRegistered` fires
+    ///         first, so the nonce burn is proven by nobody. Gauge's review
+    ///         (board row 53) called that out. Here the registration nonce is
+    ///         chosen to also be a VALID settleCall commitment, so the reuse
+    ///         attempt clears every gate in the core and dies on the token's
+    ///         own replay wall — the burn itself, asserted.
+    function test_DoD8b_registrationNonce_isBurned_onTheToken() public {
+        // Register with a nonce that is simultaneously a settleCall commitment.
+        uint256 basePrice = 100_000000;
+        bytes32 salt      = keccak256("dod8b-salt");
+        uint256 bps       = core.totalFeeBps(buyer, channelId);
+        uint256 value     = basePrice + (basePrice * bps) / 10_000;
+        bytes32 sharedNonce = keccak256(abi.encode(seller, channelId, value, salt));
+
+        usdc.mint(buyer, REG_FEE + value);
+
+        Auth memory reg = _signAt(buyerPk, address(core), REG_FEE, sharedNonce);
+        vm.prank(buyer);
+        core.registerOpen(reg.value, reg.validAfter, reg.validBefore, reg.nonce, reg.v, reg.r, reg.s);
+        assertTrue(usdc.authorizationState(buyer, sharedNonce), "token burned the nonce at registration");
+
+        // Same nonce, now inside settleCall: registered, priced, seller matches,
+        // value exact, commitment matches — every core gate passes. The only
+        // thing left to stop it is the token.
+        Auth memory call = _signAt(buyerPk, address(core), value, sharedNonce);
+        vm.expectRevert(bytes("FiatTokenV2: authorization is used or canceled"));
+        core.settleCall(
+            buyer, seller, channelId, salt,
+            call.value, call.validAfter, call.validBefore, call.nonce, call.v, call.r, call.s
+        );
     }
 
     // ───────────────────────────── DoD 10 : fee == 0 (free-open) ─────

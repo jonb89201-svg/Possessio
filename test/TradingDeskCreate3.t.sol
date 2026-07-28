@@ -57,7 +57,9 @@ contract TradingDeskCreate3Test is Test {
     uint256 constant MAX_PER_TRADE   = 3_500e6;
     uint256 constant MAX_OUTSTANDING = 10_000e6;
     uint256 constant DAILY_DRAW_CAP  = 20_000e6;
-    uint256 constant PER_TX_FEE      = 1e6;
+    uint256 constant PER_TX_FEE      = 20_000;  // $0.02 — ratified 2026-07-28,
+                                                //   matches AutoTarget's own suites
+                                                //   and the R1 toll scale (SPEC_AutoTarget §7.2)
 
     DeskUSDC      usdc;
     MockInfraPool pool;
