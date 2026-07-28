@@ -10,10 +10,40 @@
 //
 // owner = deployer (standing default for automated deploys).
 //
+// WHO DEPLOYS: the script derives the deployer from DEPLOYER_PK at runtime -
+// vm.addr(pk) - and there is NO address hardcoded here. Whatever key signs
+// becomes both the deployer and the OWNER_ROLE holder. That is deliberate:
+// this contract is MIT and standalone (zero Possessio imports), so anyone can
+// clone the repo and deploy their own instance for gas alone. A pinned
+// deployer constant would revert for everyone but us and break that.
+//
+// OPT-IN GUARD: export EXPECTED_DEPLOYER=0x... and the script asserts the
+// signing key resolves to it, reverting BEFORE spending gas. Leave it unset
+// (the default) and self-deployers are unaffected. Use it for our own
+// deployments so a stale or wrong key cannot silently mint a contract owned
+// by the wrong address.
+//
+// DO NOT pass --private-key. Line ~`vm.startBroadcast(pk)` takes an explicit
+// key and overrides the flag, so the flag is inert; passing a malformed or
+// empty value there fails with "Failed to decode private key" before forge
+// ever loads this file.
+//
+// POSSESSIO DEPLOYMENTS ON BASE (8453) - see broadcast/ for the full record:
+//   v2  0x67247eB2108E7229331127DF1309D624d95467ca  owner 0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9
+//       2026-07-28. Adds the three operational exits (sendUSDC / sendCbETH /
+//       redeemMorpho) that v1 lacks. Verified live: bytecode present, all
+//       three selectors present, all 5 economic params and all 5 wired
+//       addresses match the constants below.
+//   v1  0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91  SUPERSEDED, still live.
+//       Deployer was never recorded - broadcast/ was not committed for it.
+//       That omission is why v2 pins the record here.
+//
 // RUN (mainnet):
+//   export DEPLOYER_PK=0x<64 hex>
+//   export BASE_RPC_URL=<rpc>
+//   export EXPECTED_DEPLOYER=0x<address>          # optional, recommended for us
 //   forge script script/DeployPayments.s.sol \
 //     --rpc-url $BASE_RPC_URL \
-//     --private-key $DEPLOYER_PK \
 //     --broadcast -vvv 2>&1 | tee deploy_payments.txt
 
 pragma solidity ^0.8.20;
@@ -22,6 +52,9 @@ import "forge-std/Script.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
 
 contract DeployPayments is Script {
+    /// @notice EXPECTED_DEPLOYER was set and the signing key resolves elsewhere.
+    error DeployerMismatch(address actual, address expected);
+
     // ---- cast-verified Base mainnet addresses ----
     address constant USDC             = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant CBETH            = 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22;
@@ -50,6 +83,15 @@ contract DeployPayments is Script {
     function run() external returns (address paymentsAddr) {
         uint256 pk = vm.envUint("DEPLOYER_PK");
         address deployer = vm.addr(pk); // owner = deployer (standing default)
+
+        // Opt-in deployer assertion. Unset (address(0)) = no check, so a
+        // third party deploying their own instance is never gated. Set it and
+        // a wrong or stale key reverts here, before any gas is spent.
+        address expected = vm.envOr("EXPECTED_DEPLOYER", address(0));
+        if (expected != address(0) && deployer != expected) {
+            revert DeployerMismatch(deployer, expected);
+        }
+        console2.log("  deployer (signing key resolves to):", deployer);
 
         // Field order MUST match the struct exactly.
         PossessioPayments.DeployParams memory p = PossessioPayments.DeployParams({
