@@ -38,7 +38,7 @@ function pitchEmail(lead: Lead, fromName: string) {
 I'm a systems architect and developer open to collaborating or taking on contract work if the scope and price line up. Rather than describe what I do, here's shipped, verifiable proof:
 
 Live on Base mainnet (verifiable on BaseScan):
-- PossessioPayments (0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91) — non-custodial merchant payment processor
+- PossessioPayments (0x67247eB2108E7229331127DF1309D624d95467ca) — non-custodial merchant payment processor
 - LSTExchangeRate (0xDDb75e974d99FcF95E241adbFD376861c47a8548) — fail-closed cbETH valuation guard
 
 Both are part of POSSESSIO, a non-custodial DeFi protocol on Base: Uniswap V4 hooks, Chainlink automation, 690 passing tests. I architected it and directed a multi-model AI build through rigorous verification — and the entire thing was built and deployed from a phone, mobile-only. No desktop.

@@ -28,7 +28,7 @@ Two things make this a real proposal rather than a pitch:
 
 It isn't a deck. Two related contracts are already live and verifiable on Base mainnet today:
 
-- PossessioPayments — `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91`
+- PossessioPayments — `0x67247eB2108E7229331127DF1309D624d95467ca`
 - LSTExchangeRate — `0xDDb75e974d99FcF95E241adbFD376861c47a8548`
 
 L1Anchor itself is forge-verified and pre-deployment — 690 tests across 33 suites, adversarial and fork-tested. I'll send the source the moment you want it.

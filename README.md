@@ -82,7 +82,7 @@ POSSESSIO has shipped across multiple phases. Each phase generated architectural
 
 **L1Anchor + L1AnchorFactory (forge-verified, pre-deployment -- parked)** -- Per-merchant Ethereum mainnet settlement contracts. Parked pending the institutional (MAVAN/Fundstrat) conversation, which follows grant-readiness. Routes merchant-bridged cbETH to MAVAN (Tom Lee's Bitmine Made in America Validator Network) for institutional staking yield, and merchant-bridged USDC to Bitwise-curated Morpho Blue vault for institutional lending yield. The MAVAN Merchant Identity primitive -- the structural mechanism for institutional recognition of POSSESSIO Anchors as a property of deployment path rather than central registry -- was invented by Vesper (Code Integrity seat). Without this invention, POSSESSIO could not scale institutional integrations.
 
-**PossessioPayments -- LIVE on Base mainnet** at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453, verifiable on BaseScan). Phase 2 council product, now deployed. The clean mainnet deploy is itself a proof: the constructor's decimals checks on all Chainlink feeds passed, confirming every feed/venue address is real and correct. The proof that the production system can ship in a second product domain. Different architectural shape than PLATE -- non-custodial merchant payment processor, sold as one-time software, POSSESSIO retains zero on-chain authority post-deployment, no protocol fee extraction at any layer. The SAL (Service Accountability Layer) framework that informs SAV's accountability primitive traces to ChatGPT (council seat).
+**PossessioPayments -- LIVE on Base mainnet** at `0x67247eB2108E7229331127DF1309D624d95467ca` (chain 8453, verifiable on BaseScan). Phase 2 council product, now deployed. The clean mainnet deploy is itself a proof: the constructor's decimals checks on all Chainlink feeds passed, confirming every feed/venue address is real and correct. The proof that the production system can ship in a second product domain. Different architectural shape than PLATE -- a non-custodial account primitive (merchant settlement is one use of it), sold as one-time software, POSSESSIO retains zero on-chain authority post-deployment, no protocol fee extraction at any layer. The SAL (Service Accountability Layer) framework that informs SAV's accountability primitive traces to ChatGPT (council seat).
 
 The arc is the work. Multiple products, one production system, no team scaling, no capital infusion between phases.
 
@@ -207,9 +207,9 @@ A merchant payment processor -- non-custodial smart contract infrastructure for 
 
 This is what "crypto treasury without crypto custody" looks like operationally -- merchants get a treasury-management layer integrated with their existing payment processor, routing operational liquidity to DAI and accumulating cbETH yield in their own contract, without giving up custody at any point.
 
-**Status:** LIVE on Base mainnet at `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` (chain 8453). Config at deploy: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI. Owner is currently the deployer EOA -- transfer to the Treasury Safe is planned before merchant funds flow (single-key discipline). Payments forge tests included in the totals above.
+**Status:** LIVE on Base mainnet at `0x67247eB2108E7229331127DF1309D624d95467ca` (chain 8453), deployed 2026-07-28, `OWNER_ROLE` `0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9`. Config: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI/24h, usdcDailyLimit 50,000 USDC/24h, cbEthDailyLimit 20 cbETH/24h. Every field verified post-deploy by live `eth_call`/`eth_getCode`; `LST_RATES` reuses the already-live `0xDDb75e974d99FcF95E241adbFD376861c47a8548` rather than redeploying it. Transfer of `OWNER_ROLE` to a Treasury Safe is planned before customer funds flow (single-key discipline). Payments forge tests included in the totals above.
 
-**Status (v2, current):** LIVE on Base mainnet at `0x67247eB2108E7229331127DF1309D624d95467ca`, deployed 2026-07-28, `OWNER_ROLE` `0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9`. Supersedes v1, which remains live and is not being decommissioned. v2 adds the three operational exits absent from v1 -- `sendUSDC`, `sendCbETH`, `redeemMorpho` -- each owner-gated, freeze-checked, and rate-limited by the C-2 rolling per-asset daily caps (`sendUSDC` and `redeemMorpho` share one USDC window, closing the split-path drain). Config: minSwapBatch 100 USDC, daiCeiling 10,000 DAI, dailyLimit 50,000 DAI/24h, usdcDailyLimit 50,000 USDC/24h, cbEthDailyLimit 20 cbETH/24h. Every field verified post-deploy by live `eth_call`/`eth_getCode`; `LST_RATES` reuses the already-live `0xDDb75e974d99FcF95E241adbFD376861c47a8548` rather than redeploying it.
+**The exits are the contract.** `sendUSDC`, `sendCbETH` and `redeemMorpho` are what make the account an account rather than a one-way deposit: USDC, the cbETH treasury leg and the Morpho position each have an owner-controlled door out, every one of them freeze-checked and rate-limited by the C-2 rolling per-asset daily caps (`sendUSDC` and `redeemMorpho` share a single USDC window, closing the split-path drain). A yield-bearing contract without an exit for every asset it can hold is not a treasury -- it is a place value goes and does not come back from. Any future revision of this contract inherits that requirement: **no asset may be acquirable without a matching withdrawal path.**
 
 ---
 
@@ -245,7 +245,7 @@ The two legs carry genuinely different risk and the split is a real decision, no
 | File | Description | Status |
 |---|---|---|
 | [`src/POSSESSIO_v2-6-3.sol`](src/POSSESSIO_v2-6-3.sol) | PLATE V3 ($STEEL) -- treasury engine + embedded SAV + Chainlink Automation (Uniswap V4 hooks) | Fork-proven (CREATE3 3/3) -- mainnet deploy pending; STEEL token on Sepolia |
-| [`src/PossessioPayments.sol`](src/PossessioPayments.sol) | The account primitive -- self-custody USDC account with a yield split; merchant settlement is one use (Phase 2) | **LIVE Base mainnet** v2 `0x67247eB2...67ca` · v1 `0x1c0F7299...AB91` superseded, still live |
+| [`src/PossessioPayments.sol`](src/PossessioPayments.sol) | The account primitive -- self-custody USDC account with a yield split; merchant settlement is one use (Phase 2) | **LIVE Base mainnet** `0x67247eB2...67ca` |
 | [`src/LSTExchangeRate.sol`](src/LSTExchangeRate.sol) | LST valuation guard (dual-source, fail-closed) | **LIVE Base mainnet** `0xDDb75e97...8548` |
 | [`src/L1Anchor.sol`](src/L1Anchor.sol) | Per-merchant Ethereum mainnet settlement (MAVAN + Bitwise routing) | Forge-verified -- pre-deployment (parked) |
 | [`src/L1AnchorFactory.sol`](src/L1AnchorFactory.sol) | Canonical factory for L1Anchor deployment (Ethereum mainnet) | Forge-verified -- pre-deployment |
@@ -280,8 +280,7 @@ The two legs carry genuinely different risk and the split is a real decision, no
 
 | Contract | Address |
 |---|---|
-| PossessioPayments v2 (current) | `0x67247eB2108E7229331127DF1309D624d95467ca` |
-| PossessioPayments v1 (superseded, still live) | `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` |
+| PossessioPayments | `0x67247eB2108E7229331127DF1309D624d95467ca` |
 | LSTExchangeRate (LST valuation guard) | `0xDDb75e974d99FcF95E241adbFD376861c47a8548` |
 
 **V3 generation -- testnet / pending mainnet:**

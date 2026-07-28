@@ -28,15 +28,22 @@
 // empty value there fails with "Failed to decode private key" before forge
 // ever loads this file.
 //
-// POSSESSIO DEPLOYMENTS ON BASE (8453) - see broadcast/ for the full record:
-//   v2  0x67247eB2108E7229331127DF1309D624d95467ca  owner 0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9
-//       2026-07-28. Adds the three operational exits (sendUSDC / sendCbETH /
-//       redeemMorpho) that v1 lacks. Verified live: bytecode present, all
-//       three selectors present, all 5 economic params and all 5 wired
-//       addresses match the constants below.
-//   v1  0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91  SUPERSEDED, still live.
-//       Deployer was never recorded - broadcast/ was not committed for it.
-//       That omission is why v2 pins the record here.
+// POSSESSIO DEPLOYMENT ON BASE (8453) - see broadcast/ for the full record:
+//   0x67247eB2108E7229331127DF1309D624d95467ca  owner 0x9Ce4cb26A5F7B50826B07eb8B2C065F0Bb37a6c9
+//   2026-07-28. Verified live: bytecode present, sendUSDC / sendCbETH /
+//   redeemMorpho all present, all 5 economic params and all 5 wired addresses
+//   match the constants below.
+//
+// WHY THE EXITS ARE NON-NEGOTIABLE. The predecessor deployment held cbETH,
+// USDC and Morpho shares with no withdrawal path for any of them - only DAI
+// could leave. Value that entered its yield legs cannot come out. It is
+// decommissioned and deliberately not cited anywhere in this repo; a dead
+// contract listed among live ones is a false green, and its address in a doc
+// is an invitation to send funds into it.
+//
+// STANDING RULE for any revision of this contract: no asset may be
+// ACQUIRABLE without a matching WITHDRAWAL PATH. Adding a yield venue means
+// adding its exit in the same change, or the venue does not ship.
 //
 // RUN (mainnet):
 //   export DEPLOYER_PK=0x<64 hex>

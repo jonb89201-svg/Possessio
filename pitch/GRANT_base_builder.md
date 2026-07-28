@@ -18,7 +18,7 @@ Non-custodial payment + treasury infrastructure on Base that brings real-world
 merchants on-chain — without ever taking custody of their funds.
 
 ## What's live on Base mainnet (verifiable now)
-- **PossessioPayments** — `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91`
+- **PossessioPayments** — `0x67247eB2108E7229331127DF1309D624d95467ca`
   A merchant payment processor. Stripe/PayPal-compatible settlement routes a
   merchant's proceeds into an on-chain treasury they fully own — a DAI
   working-capital reserve plus cbETH rewards accrual. Zero protocol custody,

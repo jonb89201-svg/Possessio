@@ -51,7 +51,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 ## Status board (what's real, honestly tiered)
 
 **Tier 1 — Live & code-verified on Base mainnet** (deployed; verify on BaseScan):
-- PossessioPayments `0x1c0F7299BA395955C1bb23D4fC316bfC1d78AB91` — payment engine; also the shared treasury sink the factory routes fees to
+- PossessioPayments `0x67247eB2108E7229331127DF1309D624d95467ca` — payment engine; also the shared treasury sink the factory routes fees to
 - LSTExchangeRate `0xDDb75e974d99FcF95E241adbFD376861c47a8548` — fail-closed cbETH valuation guard
 - PLATE v1 `0x726D6a7A598A4D12aDe7019Dc2598D955391E298` — treasury-engine token (dormant)
 
