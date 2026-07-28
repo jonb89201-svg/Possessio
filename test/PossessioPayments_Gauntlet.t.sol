@@ -6,6 +6,7 @@ import "forge-std/Test.sol";
 import "forge-std/console.sol";
 import "forge-std/StdStorage.sol";
 import "../src/PossessioPayments.sol";
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 
 /*
  * PossessioPayments — Gauntlet Adversarial Test Suite
@@ -486,7 +487,7 @@ contract PossessioPaymentsGauntlet is Test {
         lstRates     = new MockLSTRates_G();
 
         // v2.4.2 — Constructor takes single DeployParams struct.
-        payments = new PossessioPayments(_gauntletParams());
+        payments = deployPayments(_gauntletParams());
 
         // Default healthy router config
         router.setWethOut(1 ether);       // v2.4.2 — USDC->WETH first hop yield
@@ -644,7 +645,7 @@ contract PossessioPaymentsGauntlet is Test {
         // with the malicious token under test.
         PossessioPayments.DeployParams memory p = _gauntletParams();
         p.dai = address(evilDai);
-        PossessioPayments evilPayments = new PossessioPayments(p);
+        PossessioPayments evilPayments = deployPayments(p);
 
         evilDai.mint(address(evilPayments), 5000 * 1e18);
         evilDai.setTarget(address(evilPayments));

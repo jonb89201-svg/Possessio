@@ -25,6 +25,7 @@ pragma solidity ^0.8.20;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 
 contract PaymentsForkTest is Test {
     PossessioPayments payments;
@@ -85,7 +86,7 @@ contract PaymentsForkTest is Test {
                 usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
                 cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
             });
-            payments = new PossessioPayments(p);
+            payments = deployPayments(p);
         }
     }
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // BUILD-PROOF: PAYMENTS_TEST_V243_OUT61b — import repointed to numberless ../src/PossessioPayments.sol (was _v2-4-2).
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
@@ -439,7 +440,7 @@ contract PossessioPaymentsTest is Test {
 
         // v2.4.2 — Constructor takes a single DeployParams struct (was 14 positional).
         // Matches PossessioHook.DeployParams pattern; eliminates stack-too-deep.
-        payments = new PossessioPayments(_defaultParams());
+        payments = deployPayments(_defaultParams());
 
         // Default mock router outputs at healthy values
         aeroRouter.setCbEthOut(1 ether);  // 1:1 WETH→cbETH default at healthy peg
@@ -516,21 +517,21 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.owner = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsZeroUSDC() public {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.usdc = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsZeroDAI() public {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.dai = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     // v2.4.1 — New zero-address validation tests for added params
@@ -539,21 +540,21 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.weth = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsZeroAeroRouter() public {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.aeroRouter = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsZeroMorphoVault() public {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.morphoVault = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     // v2.4.2 — Zero-address validation for the two new compositional feeds
@@ -562,14 +563,14 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlinkUsdcUsd = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsZeroEthUsdFeed() public {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlinkEthUsd = address(0);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsOnWrongCbEthOracleDecimals() public {
@@ -578,7 +579,7 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlink = address(wrongClass);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsOnWrongDaiOracleDecimals() public {
@@ -587,7 +588,7 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlinkDai = address(wrongClass);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsOnWrongUsdcUsdOracleDecimals() public {
@@ -596,7 +597,7 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlinkUsdcUsd = address(wrongClass);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     function test_Deploy_RevertsOnWrongEthUsdOracleDecimals() public {
@@ -605,7 +606,7 @@ contract PossessioPaymentsTest is Test {
         PossessioPayments.DeployParams memory p = _defaultParams();
         p.chainlinkEthUsd = address(wrongClass);
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
-        new PossessioPayments(p);
+        deployPayments(p);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2197,7 +2198,7 @@ contract PossessioPaymentsAutomationTest is Test {
         lstRates    = new MockLSTRates_A();
 
         // v2.4.2 — Constructor takes single DeployParams struct
-        payments = new PossessioPayments(PossessioPayments.DeployParams({
+        payments = deployPayments(PossessioPayments.DeployParams({
             owner:            OWNER,
             usdc:             address(usdc),
             cbeth:            address(cbeth),
