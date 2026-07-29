@@ -5,6 +5,14 @@ out/
 cache/
 broadcast/
 artifacts/
+# EXCEPTION: public/artifacts/ is not a build directory — it is SHIPPED STATIC
+# CONTENT. The console's launch rail fetches /artifacts/payments.json to build
+# the deploy calldata, and the worker serves it out of the ASSETS binding, which
+# is populated from what's committed here. If this stays ignored, the deploy
+# lands with no artifact, the fetch 503s, and the rail silently stays in
+# preview. Re-included deliberately; regenerate with GenTemplateArtifact.s.sol.
+!public/artifacts/
+!public/artifacts/**
 
 # =========================
 # Dependencies

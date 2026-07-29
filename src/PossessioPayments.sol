@@ -724,7 +724,31 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         uint256 cbEthDailyLimit;    // C-2 — 24h cap on cbETH exits (sendCbETH), 18-dec
     }
 
-    constructor(DeployParams memory p) {
+    /**
+     * @notice FACTORY-SHAPED constructor. PossessioFactory appends
+     *         `abi.encode(owner, initArgs)` to the pinned template initCode
+     *         (PossessioFactory.sol:256), so any launchable template MUST take
+     *         exactly `(address, bytes)`. This is what makes the Account
+     *         deployable from the console's launch rail by someone who will
+     *         never see an ABI.
+     *
+     *         THE FACTORY WRITES THE OWNER. `_factoryOwner` overrides whatever
+     *         `p.owner` is carried inside `initArgs`, so a caller cannot
+     *         deploy an instance owned by anyone but the launcher — the
+     *         factory's anti-spoofing guarantee, which the previous
+     *         struct-only constructor could not participate in.
+     *
+     *         Runtime bytecode is UNCHANGED by this signature: the decode
+     *         happens at construction and nothing about the deployed contract's
+     *         behaviour or storage layout moves. Only initcode grows.
+     *
+     * @param _factoryOwner Owner, written by the factory. Never caller-supplied.
+     * @param initArgs      abi.encode(DeployParams). Its `owner` field is ignored.
+     */
+    constructor(address _factoryOwner, bytes memory initArgs) {
+        DeployParams memory p = abi.decode(initArgs, (DeployParams));
+        p.owner = _factoryOwner;   // factory-written; the encoded value is discarded
+
         if (p.owner            == address(0)) revert InvalidAddress();
         if (p.usdc             == address(0)) revert InvalidAddress();
         if (p.cbeth            == address(0)) revert InvalidAddress();

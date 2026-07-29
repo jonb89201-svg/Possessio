@@ -32,6 +32,7 @@ pragma solidity ^0.8.26;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 import {MockUSDC, MockDAI, MockCbETH, MockWETH, MockV3Router,
         MockAerodromeRouter, MockMorphoVault, MockChainlink,
         MockLSTRates} from "./PossessioPayments_t.sol";
@@ -66,7 +67,7 @@ contract PossessioPaymentsDeployValuesTest is Test {
         clEthUsd   = new MockChainlink(int256(300_000_000_000), 8);
         lst = new MockLSTRates();
 
-        pay = new PossessioPayments(PossessioPayments.DeployParams({
+        pay = deployPayments(PossessioPayments.DeployParams({
             owner: owner, usdc: address(usdc), cbeth: address(cbeth), dai: address(dai),
             weth: address(weth), router: address(router), aeroRouter: address(aero),
             morphoVault: address(morpho), chainlink: address(clEth),

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/PossessioPayments.sol";
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 
 // ===========================================================================
 // H-1 SLIPPAGE REGRESSION SUITE
@@ -221,7 +222,7 @@ contract PossessioPaymentsH1SlippageTest is Test {
         clEthUsd  = new MockChainlink_H1(int256(300_000_000_000), 8);          // $3000
         lst       = new MockLSTRates_H1();
 
-        payments = new PossessioPayments(PossessioPayments.DeployParams({
+        payments = deployPayments(PossessioPayments.DeployParams({
             owner:            MERCHANT,
             usdc:             address(usdc),
             cbeth:            address(cbeth),
