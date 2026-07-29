@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<title>POSSESSIO — Operator Console v0.5.0</title>
+<title>POSSESSIO — Operator Console v0.5.1</title>
 <meta name="base:app_id" content="6a4b1d5d02e2e34e3e7fbd30" />
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","name":"Possessio","url":"https://possessio.io","splashImageUrl":"https://possessio.io/splash-200.png","splashBackgroundColor":"#556870"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -387,7 +387,7 @@ mibLog('MIB bridge active.','#0ff');})();</script>
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
     <span class="wallet-pill" id="chain-pill">Chain 8453</span>
     <div class="spacer"></div>
-    <span class="tag">v0.5.0 · 2026-05-27</span>
+    <span class="tag">v0.5.1 · 2026-07-29</span>
   </div>
 </header>
 
@@ -3649,7 +3649,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
           var msg=String((e2&&(e2.shortMessage||e2.message))||e2);
           var surfaceMiss=(e2&&(e2.code==="BAD_DATA"||e2.code==="CALL_EXCEPTION"))||/revert|decode|returned no data/i.test(msg);
           set(surfaceMiss
-            ? "Contract found, but it isn't a Funding Vault (no vault surface). Buys need a Funding Vault."
+            ? "Contract found, but it isn't a Funding Vault (no vault surface: "+msg.slice(0,90)+"). Buys need a Funding Vault."
             : "RPC read failed twice ("+msg.slice(0,120)+") — network trouble, not the contract. Try Connect again.","err");
           renderList(); return;
         }
