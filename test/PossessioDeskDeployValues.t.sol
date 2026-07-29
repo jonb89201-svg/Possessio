@@ -82,9 +82,8 @@ contract PossessioDeskDeployValuesTest is Test {
     //      by construction — asserted here so a future change to a
     //      constructor parameter breaks a test.
     function test_K1_stopIsAHardcodedConstant() public {
-        MockInfraPoolDesk pool = new MockInfraPoolDesk();
         PossessioAutoTarget at =
-            new PossessioAutoTarget(address(usdc), address(pool), makeAddr("keeper"), PER_TX_FEE_SHIPPING);
+            new PossessioAutoTarget(address(usdc), makeAddr("tollSink"), makeAddr("keeper"), PER_TX_FEE_SHIPPING);
         assertEq(at.STOP_BPS(), STOP_BPS_EXPECTED, "the -10% stop must be 1000 bps, always");
     }
 
@@ -98,7 +97,7 @@ contract PossessioDeskDeployValuesTest is Test {
         address keeper = makeAddr("keeper");
 
         PossessioAutoTarget at =
-            new PossessioAutoTarget(address(usdc), address(pool), keeper, PER_TX_FEE_SHIPPING);
+            new PossessioAutoTarget(address(usdc), makeAddr("tollSink"), keeper, PER_TX_FEE_SHIPPING);
 
         assertEq(at.PER_TX_FEE(), PER_TX_FEE_SHIPPING, "shipping fee must be $0.02");
         assertEq(at.STOP_BPS(), STOP_BPS_EXPECTED, "the stop never varies with the fee");

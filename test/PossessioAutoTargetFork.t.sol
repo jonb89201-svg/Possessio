@@ -31,6 +31,7 @@ contract PossessioAutoTargetForkTest is Test {
 
     PossessioAutoTarget internal desk;
     PossessioPool internal heart;
+    address internal tollSink; // V2 plain-push fee destination
     address internal keeper;
     uint32 internal constant CHAIN = 8453; // Base (EVM rail)
     bytes32 internal tokenRef;
@@ -54,18 +55,15 @@ contract PossessioAutoTargetForkTest is Test {
         address operator = makeAddr("operator");
         address treasury = makeAddr("treasury");
 
-        // Break the circular wiring (Heart needs the desk as a source; the desk
-        // needs the Heart as feeSink) by predicting the desk's CREATE address.
-        uint256 n = vm.getNonce(address(this));
-        address predictedDesk = vm.computeCreateAddress(address(this), n + 1);
-
+        // V2: no circular wiring — the fee is a plain push to a TOLL_SINK
+        // address, so the desk needs nothing from the Heart and the Heart
+        // needs nothing from the desk. A real Pool is still deployed to prove
+        // the constructor REJECTS it as a sink (the inverted V2 guard).
         address[] memory sources = new address[](1);
-        sources[0] = predictedDesk;
-
-        // Real-code Heart: large cap so the whole fee credits poolBalance.
-        heart = new PossessioPool(USDC, sources, operator, treasury, 1e18, 0, 0, 3600); // nonce n
-        desk = new PossessioAutoTarget(USDC, address(heart), keeper, FEE); // nonce n+1
-        assertEq(address(desk), predictedDesk, "desk landed at predicted address");
+        sources[0] = makeAddr("someAuthorizedSource");
+        heart = new PossessioPool(USDC, sources, operator, treasury, 1e18, 0, 0, 3600);
+        tollSink = makeAddr("tollSink");
+        desk = new PossessioAutoTarget(USDC, tollSink, keeper, FEE);
 
         deal(USDC, user, FEE); // fund the signer with real USDC on the fork
     }
@@ -88,19 +86,18 @@ contract PossessioAutoTargetForkTest is Test {
         (a.v, a.r, a.s) = vm.sign(pk, digest);
     }
 
-    /// @notice The whole money-path against real USDC + real Heart.
-    function test_fork_open_routes_real_usdc_into_heart() public {
+    /// @notice The whole money-path against real USDC: fee pushed to the sink.
+    function test_fork_open_pushes_real_usdc_to_tollSink() public {
         _requireFork();
 
-        uint256 heartBefore = IUSDCLike(USDC).balanceOf(address(heart));
+        uint256 sinkBefore = IUSDCLike(USDC).balanceOf(tollSink);
 
         PossessioAutoTarget.FeeAuth memory a = _signReal(userPk, address(desk), FEE, keccak256("fork-n1"));
         vm.prank(user);
         uint256 id = desk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
 
-        // Fee landed in the real Heart and credited poolBalance (Option A).
-        assertEq(IUSDCLike(USDC).balanceOf(address(heart)) - heartBefore, FEE, "real USDC reached the Heart");
-        assertEq(heart.poolBalance(), FEE, "Heart credited poolBalance (accounted pull, not stranded)");
+        // Fee landed at the TOLL_SINK by plain push (Option B / R1 pattern).
+        assertEq(IUSDCLike(USDC).balanceOf(tollSink) - sinkBefore, FEE, "real USDC reached the toll sink");
 
         // Non-custodial: the desk holds nothing.
         assertEq(IUSDCLike(USDC).balanceOf(address(desk)), 0, "desk holds no USDC");

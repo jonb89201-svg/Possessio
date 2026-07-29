@@ -27,11 +27,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
        enforces the stop even on a +50% target.
     2. NON-CUSTODIAL. This contract never calls transfer/transferFrom on the
        traded `token`. The only asset it touches is the transient per-tx USDC
-       fee, routed to the Heart in the SAME tx -> its USDC balance is 0 after
-       every openIntent. It is a trigger + fee + discipline layer, not custody.
-    3. FEE ATOMICITY. If the Heart route reverts (this contract not an
-       authorized source, or a Heart bug), the whole openIntent unwinds - the
-       user is NEVER charged for a failed open (same law as the factory edit).
+       fee, pushed to the immutable TOLL_SINK in the SAME tx -> its USDC
+       balance is 0 after every openIntent. Trigger + fee + discipline, not
+       custody. (V2: plain push, Option B — V1's Heart pull-door route bricked
+       against the sealed authorizedSources set and is gone.)
+    3. FEE ATOMICITY. If the fee push reverts (token-level failure), the whole
+       openIntent unwinds - the user is NEVER charged for a failed open (same
+       law as the factory edit).
     4. FRONT-RUN-CLOSED FEE. to == address(this) in the EIP-3009 auth; no
        third party can settle the user's authorization elsewhere.
     5. KEEPER IS TRIGGER-ONLY. The keeper can resolveIntent (emit an authorized
@@ -69,11 +71,19 @@ interface IERC3009 {
     ) external;
 }
 
-/// @notice The Heart's accounted inflow door (Option A). This contract approves
-///         and the Heart PULLS the fee, crediting poolBalance. A raw push would
-///         strand it (the pool has no sync door, Pool DoD #14).
-interface IPossessioPool {
-    function receiveInfraFunds(uint256 amount) external;
+// V2 NOTE: the fee leg no longer speaks IPossessioPool. V1 routed the fee via
+// the Heart's accounted pull door (Option A) — and bricked on-chain, because
+// the live Heart's authorizedSources is sealed at its construction and this
+// desk deployed after it. The constructor's brick guard proved "my sink is a
+// live Heart" (isInfraSink) when the property that mattered was "that Heart
+// accepts ME" (isAuthorizedSource). V2 dissolves the property instead of
+// guarding it: the fee is a plain push to an immutable TOLL_SINK address
+// (SPEC_AutoTarget §7 decision 3, Option B — the R1 pattern; batched sweep
+// into the Heart happens off this contract via an already-authorized source).
+// Any address accepts a plain ERC-20 push, so this failure class cannot exist.
+/// @notice Probe used ONLY to reject an accounted-pull pool as the toll sink
+///         (a plain push to the Heart is uncredited dead weight there).
+interface IInfraSinkProbe {
     function isInfraSink() external view returns (bool);
 }
 
@@ -86,7 +96,11 @@ contract PossessioAutoTarget is ReentrancyGuard {
 
     error ZeroAddress();
     error ZeroFee();
-    error FeeSinkInterfaceMismatch();
+    /// @notice V2: the TOLL_SINK must NOT be an accounted-pull pool (a contract
+    ///         claiming isInfraSink()): a plain push to the Heart's address is
+    ///         uncredited dead weight there (Pool DoD #14 — proven stranded).
+    ///         The one address class a plain-push fee must never target.
+    error TollSinkIsAccountedPool();
     error ZeroTokenRef();
     error ZeroChainTag();
     error ZeroEntryPrice();
@@ -142,13 +156,16 @@ contract PossessioAutoTarget is ReentrancyGuard {
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice USDC as EIP-3009 (fee settle) and as ERC20 (Heart route).
+    /// @notice USDC as EIP-3009 (fee settle) and as ERC20 (fee push).
     IERC3009 public immutable payToken;
     IERC20 public immutable payTokenERC20;
 
-    /// @notice The Heart the per-tx fee is routed INTO via receiveInfraFunds
-    ///         (Option A). Must be in the Heart's authorizedSources or every
-    ///         openIntent reverts (Invariant 3).
+    /// @notice The TOLL_SINK: the address every per-tx fee is pushed to, set
+    ///         once at construction. A deploy-time choice, not a code decision —
+    ///         an operator EOA, the Payments account, or any future sink. Fees
+    ///         reach the Heart (if the council routes them there) by batched
+    ///         sweep from this address via an already-authorized source, never
+    ///         directly from this desk (SPEC_AutoTarget §7 d3 Option B / R1).
     address public immutable feeSink;
 
     /// @notice Bounded trigger authority. Can resolveIntent; has NO fund
@@ -221,19 +238,19 @@ contract PossessioAutoTarget is ReentrancyGuard {
         }
         if (_perTxFee == 0) revert ZeroFee();
 
-        // BRICK GUARD (council, same vector as PossessioFactory): feeSink must be
-        // a live contract that implements the accounted door, else every
-        // openIntent reverts forever. A code-length check is insufficient (a
-        // real-but-wrong contract has code but not the door). The pool must be
-        // live before this desk deploys. code-length pre-check handles the EOA
-        // case (no-code call reverts on return-decode outside try/catch).
-        if (_feeSink.code.length == 0) revert FeeSinkInterfaceMismatch();
-        try IPossessioPool(_feeSink).isInfraSink() returns (bool ok) {
-            if (!ok) revert FeeSinkInterfaceMismatch();
-        } catch {
-            revert FeeSinkInterfaceMismatch();
+        // V2: the fee leg is a plain safeTransfer, which every address accepts
+        // — EOA, contract, or Safe — so V1's "is my sink a live Heart" guard
+        // (which passed while the live Heart still refused this desk as a
+        // payer, bricking every openIntent) has no property left to check.
+        // ONE guard remains, inverted: an accounted-pull pool must be REJECTED
+        // as the sink, because a plain push to it is uncredited dead weight
+        // (Pool DoD #14 — proven stranded). Everything else is a valid
+        // TOLL_SINK; the destination is the deployer's choice, not the code's.
+        if (_feeSink.code.length > 0) {
+            try IInfraSinkProbe(_feeSink).isInfraSink() returns (bool isPool) {
+                if (isPool) revert TollSinkIsAccountedPool();
+            } catch { /* not a pool — any plain contract is a fine sink */ }
         }
-
         payToken = IERC3009(_payToken);
         payTokenERC20 = IERC20(_payToken);
         feeSink = _feeSink;
@@ -298,12 +315,11 @@ contract PossessioAutoTarget is ReentrancyGuard {
             feeAuth.s
         );
 
-        // 3. Route the fee INTO the Heart via its accounted pull door (Option A).
-        //    forceApprove exact, then the Heart pulls it and credits poolBalance.
-        //    If this contract is not in the Heart's authorizedSources the call
-        //    reverts - unwinding the whole open, fee included (Invariant 3).
-        payTokenERC20.forceApprove(feeSink, PER_TX_FEE);
-        IPossessioPool(feeSink).receiveInfraFunds(PER_TX_FEE);
+        // 3. Push the fee to the TOLL_SINK (Option B — plain transfer, exact
+        //    amount, immutable destination). Still atomic with the open: a
+        //    failed push unwinds the whole call, fee included (Invariant 3).
+        //    No approval is ever left standing; nothing here can pull.
+        payTokenERC20.safeTransfer(feeSink, PER_TX_FEE);
 
         // 4. Record the intent. The stop is written from the constant - it is
         //    NOT a caller input (Invariant 1). id starts at 1.
