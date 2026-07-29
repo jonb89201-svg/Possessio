@@ -3703,11 +3703,36 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     rows.sort(function(a,b){return Number(b.ts_ms)-Number(a.ts_ms);});
     L.innerHTML=rows.map(row).join("");
   }
+  // Council faults were indistinguishable from an empty ledger (audit 2026-07-29).
+  // Every failure path in /api/council/ledger returns a JSON body carrying an
+  // `error` code with a non-2xx status — COUNCIL_DB_UNBOUND / ALLOWLIST_UNCONFIGURED
+  // (503), NOT_A_SEAT (403), SIGNER_MISMATCH (401), BAD_FIELDS (400). Those parse
+  // as valid JSON, so the old bare .catch() never fired; `d.rows` was simply
+  // undefined and the view rendered "No council messages yet" — a misconfigured
+  // binding looked exactly like a quiet council. The radar feed already gates on
+  // r.ok; this does the same AND reports the error code, so the failure names
+  // itself. It also logs, which is the part that matters on a phone: MIB DEBUG
+  // mirrors the console, and nothing here was ever written to it, so council
+  // errors could not be seen in the inspector at all.
+  function fail(code,status,e){
+    console.error("[council] ledger poll failed:",code,"http",status||0,e||"");
+    $("#cl-status").textContent="ledger error: "+code;
+    if(!seen)$("#cl-list").innerHTML='<div class="cl-empty">Ledger error <b>'+esc(code)+'</b>'+(status?' (HTTP '+status+')':'')+
+      '.<br>This is a worker or binding fault, not an empty ledger — an empty ledger returns HTTP 200 with <code>rows: []</code>.</div>';
+  }
   function poll(){
-    fetch(URL_+"?since=0",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
-      var rows=(d&&d.rows)||[]; seen=rows.length; render(rows);
+    var status=0;
+    fetch(URL_+"?since=0",{cache:"no-store"}).then(function(r){
+      status=r.status;
+      return r.json().then(function(d){return {ok:r.ok,d:d};},function(){return {ok:false,d:null};});
+    }).then(function(res){
+      var code=(res.d&&res.d.error)||null;
+      // An empty ledger is rows:[] — truthy — so it still renders the normal
+      // empty state. Only a missing/!ok/error-coded payload trips the fault path.
+      if(!res.ok||code||!res.d||!res.d.rows){ fail(code||("HTTP "+status),status); return; }
+      var rows=res.d.rows; seen=rows.length; render(rows);
       $("#cl-status").textContent=rows.length+" signed · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
-    }).catch(function(){ $("#cl-status").textContent="ledger unreachable"; if(!seen)$("#cl-list").innerHTML='<div class="cl-empty">Ledger not reachable yet. It goes live when the console worker deploys.</div>'; });
+    }).catch(function(e){ fail("unreachable",status,e); });
   }
   window.Council={
     open:function(){var v=$("#council-view");if(!v)return;v.hidden=false;document.body.style.overflow="hidden";poll();if(timer)clearInterval(timer);timer=setInterval(poll,10000);},
