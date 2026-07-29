@@ -93,8 +93,9 @@ contract TradingDeskCreate3Test is Test {
 
     // ── the deploy the operator will run, proven end-to-end ──────────────────
     function test_deskDeploy_prewires_vaultRailAutoTarget() public {
-        // 1. AutoTarget — feeSink is the live infra pool (brick-guard passes).
-        PossessioAutoTarget at = new PossessioAutoTarget(address(usdc), address(pool), keeper, PER_TX_FEE);
+        // 1. AutoTarget V2 — feeSink is a plain TOLL_SINK address (the ctor
+        //    now REJECTS an accounted pool: a plain push there would strand).
+        PossessioAutoTarget at = new PossessioAutoTarget(address(usdc), makeAddr("tollSink"), keeper, PER_TX_FEE);
 
         // 2. Predict the Rail's CREATE3 address BEFORE the vault exists.
         bytes32 salt = _saltFor(DESK_EOA, uint88(0x1234));
@@ -121,7 +122,7 @@ contract TradingDeskCreate3Test is Test {
         assertEq(address(PossessioRail(rail).autoTarget()), address(at), "rail.autoTarget");
         assertEq(address(PossessioRail(rail).usdc()), address(usdc),     "rail.usdc");
         assertEq(PossessioRail(rail).keeper(), keeper,                   "rail.keeper");
-        assertEq(at.feeSink(), address(pool),                           "autoTarget.feeSink");
+        assertEq(at.feeSink(), makeAddr("tollSink"),                    "autoTarget.feeSink");
         assertGt(rail.code.length, 0, "rail no code");
     }
 
@@ -129,7 +130,7 @@ contract TradingDeskCreate3Test is Test {
     // launch — the vault.trader() will not equal the Rail that actually deploys.
     // This is exactly the mismatch the deploy script's prediction guard blocks.
     function test_prewireMismatch_isObservablePreLaunch() public {
-        PossessioAutoTarget at = new PossessioAutoTarget(address(usdc), address(pool), keeper, PER_TX_FEE);
+        PossessioAutoTarget at = new PossessioAutoTarget(address(usdc), makeAddr("tollSink"), keeper, PER_TX_FEE);
 
         bytes32 salt = _saltFor(DESK_EOA, uint88(0x1234));
         address predictedRail = CREATEX.computeCreate3Address(_guarded(DESK_EOA, salt));

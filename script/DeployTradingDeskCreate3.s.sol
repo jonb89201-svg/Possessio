@@ -10,14 +10,15 @@
 // Rail address, deploy the vault pointed at it, deploy the Rail into that slot.
 // Only the Rail needs CREATE3; AutoTarget and the vault are plain CREATE.
 //
-// ORDER: AutoTarget (feeSink = the LIVE Heart pool; brick-guard) → Vault
+// ORDER (V2): AutoTarget (feeSink = TOLL_SINK address, plain push — NOT the
+// Heart: the desk ctor rejects an accounted pool as sink) → Vault
 // (prewired to predicted Rail) → Rail (CREATE3 at the predicted address).
 //
 // SALT: mine a msg.sender-locked salt for the desk EOA with MineCreate3Salt, set
 // RAIL_SALT + RAIL_PREDICTED. Proven offline by test/TradingDeskCreate3.t.sol.
 //
 // RUN (fork first — NEVER blind-fire an immutable prewire):
-//   DEPLOYER_PK=<desk EOA> USDC=0x833589.. HEART_POOL=0x.. KEEPER=0x.. DEX_ROUTER=0x.. \
+//   DEPLOYER_PK=<desk EOA> USDC=0x833589.. TOLL_SINK=0x.. KEEPER=0x.. DEX_ROUTER=0x.. \
 //   VAULT_OWNER=0x.. AT_PER_TX_FEE=.. MAX_PER_TRADE=.. MAX_OUTSTANDING=.. DAILY_DRAW_CAP=.. \
 //   RAIL_SALT=0x.. RAIL_PREDICTED=0x.. \
 //   forge script script/DeployTradingDeskCreate3.s.sol --rpc-url $BASE_RPC_URL -vvv
@@ -44,7 +45,8 @@ contract DeployTradingDeskCreate3 is Script {
     error KeyMismatch(address got);
     error SaltNotSenderLocked();
     error PredictionMismatch(address computed, address pinned);
-    error FeeSinkNotLiveInfra(address feeSink);
+    error TollSinkIsAccountedPool(address feeSink);
+    error TollSinkZero();
     error DeployedMismatch(address deployed, address predicted);
     error PrewireBroken(address vaultTrader, address rail);
 
@@ -53,7 +55,10 @@ contract DeployTradingDeskCreate3 is Script {
 
         uint256 pk        = vm.envUint("DEPLOYER_PK");
         address usdc      = vm.envAddress("USDC");
-        address heartPool = vm.envAddress("HEART_POOL");     // AutoTarget feeSink (live Heart)
+        address tollSink  = vm.envAddress("TOLL_SINK");      // V2 fee destination: operator EOA /
+                                                             // Payments account — NEVER the Heart
+                                                             // (plain push there is dead weight;
+                                                             // ctor + this guard both reject it)
         address keeper    = vm.envAddress("KEEPER");
         address dexRouter = vm.envAddress("DEX_ROUTER");
         address vOwner    = vm.envAddress("VAULT_OWNER");
@@ -75,16 +80,21 @@ contract DeployTradingDeskCreate3 is Script {
         address predicted = CREATEX.computeCreate3Address(gs);
         if (predicted != railPinned) revert PredictionMismatch(predicted, railPinned);
 
-        // AutoTarget's feeSink must be a LIVE infra pool or every openIntent bricks.
-        if (heartPool.code.length == 0) revert FeeSinkNotLiveInfra(heartPool);
-        try IInfraSink(heartPool).isInfraSink() returns (bool ok) {
-            if (!ok) revert FeeSinkNotLiveInfra(heartPool);
-        } catch { revert FeeSinkNotLiveInfra(heartPool); }
+        // V2 sink rules, mirrored from the desk ctor so a bad wire fails before
+        // any gas is spent broadcasting: any EOA or plain contract is a valid
+        // TOLL_SINK; an accounted pool (isInfraSink()==true) is rejected — a
+        // plain push there strands the fee uncredited.
+        if (tollSink == address(0)) revert TollSinkZero();
+        if (tollSink.code.length > 0) {
+            try IInfraSink(tollSink).isInfraSink() returns (bool isPool) {
+                if (isPool) revert TollSinkIsAccountedPool(tollSink);
+            } catch { /* plain contract — fine */ }
+        }
 
         vm.startBroadcast(pk);
 
-        // 1. AutoTarget (independent; brick-guard on feeSink runs in its ctor).
-        at = address(new PossessioAutoTarget(usdc, heartPool, keeper, perTxFee));
+        // 1. AutoTarget V2 (independent; the inverted sink guard runs in its ctor).
+        at = address(new PossessioAutoTarget(usdc, tollSink, keeper, perTxFee));
 
         // 2. Vault, immutably prewired to the PREDICTED Rail address.
         vault = address(new PossessioFundingVault(
