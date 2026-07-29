@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<title>POSSESSIO — Operator Console v0.5.1</title>
+<title>POSSESSIO — Operator Console v0.5.2</title>
 <meta name="base:app_id" content="6a4b1d5d02e2e34e3e7fbd30" />
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","name":"Possessio","url":"https://possessio.io","splashImageUrl":"https://possessio.io/splash-200.png","splashBackgroundColor":"#556870"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -387,7 +387,7 @@ mibLog('MIB bridge active.','#0ff');})();</script>
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
     <span class="wallet-pill" id="chain-pill">Chain 8453</span>
     <div class="spacer"></div>
-    <span class="tag">v0.5.1 · 2026-07-29</span>
+    <span class="tag">v0.5.2 · 2026-07-29</span>
   </div>
 </header>
 
@@ -1449,6 +1449,47 @@ async function getReadProvider(targetChainId) {
   const url = RPC_BY_CHAIN[targetChainId];
   if (!url) throw new Error(`no RPC configured for chain ${targetChainId}`);
   return new ethers.JsonRpcProvider(url);
+}
+
+// Read ladder (Base). In-app wallet RPCs drop eth_call bursts, and public RPCs
+// rate-limit shared mobile IPs — and ethers v6 reports BOTH as
+// CALL_EXCEPTION "missing revert data", identical to a real revert. So reads
+// walk a ladder of independent providers instead of trusting any single one.
+// staticNetwork skips the eth_chainId probe (fewer calls = fewer 429s), and
+// JsonRpcProvider auto-batches a Promise.all into one HTTP request.
+const READ_RPCS_8453 = [
+  "https://mainnet.base.org",
+  "https://base-rpc.publicnode.com",
+  "https://1rpc.io/base",
+];
+function readProviderLadder(targetChainId) {
+  const ladder = [];
+  if (state.provider && state.walletChainId === targetChainId) ladder.push(state.provider);
+  const urls = targetChainId === 8453 ? READ_RPCS_8453 : [RPC_BY_CHAIN[targetChainId]].filter(Boolean);
+  for (const u of urls) {
+    try { ladder.push(new ethers.JsonRpcProvider(u, targetChainId, { staticNetwork: true })); }
+    catch (_) { ladder.push(new ethers.JsonRpcProvider(u)); }
+  }
+  return ladder;
+}
+// Run `fn(provider)` down the ladder. Resolves with {result, revertVotes}
+// from the first success; rejects only when every rung failed, carrying the
+// last error plus how many DISTINCT rungs looked like a genuine revert —
+// one CALL_EXCEPTION can be a rate limit in disguise, two independent
+// providers agreeing is a real revert.
+async function tryReadLadder(targetChainId, fn) {
+  const ladder = readProviderLadder(targetChainId);
+  let lastErr = null, revertVotes = 0;
+  for (const p of ladder) {
+    try { return { result: await fn(p), revertVotes }; }
+    catch (e) {
+      lastErr = e;
+      if (e && (e.code === "CALL_EXCEPTION" || e.code === "BAD_DATA")) revertVotes++;
+    }
+  }
+  const err = lastErr || new Error("no read provider available");
+  err.revertVotes = revertVotes;
+  throw err;
 }
 
 function formatValue(v) {
@@ -2816,10 +2857,19 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         return render();
       }
 
-      const factory = new ethers.Contract(factoryAddr, FACTORY_ABI, provider);
-      // D4: the chain is the price authority.
-      S.fee = await factory.DEPLOYMENT_FEE();
-      S.codehash = await factory.templateCodehash();
+      // D4: the chain is the price authority. Reads go down the provider
+      // ladder (wallet RPCs drop eth_call bursts and rate-limits masquerade
+      // as reverts in ethers v6) — the wallet is for identity and signing,
+      // never the only read path.
+      const readFactory = (p) => {
+        const f = new ethers.Contract(factoryAddr, FACTORY_ABI, p);
+        return Promise.all([f.DEPLOYMENT_FEE(), f.templateCodehash()]);
+      };
+      const fr = (typeof tryReadLadder === "function")
+        ? (await tryReadLadder(chainId, readFactory)).result
+        : await readFactory(provider);
+      S.fee = fr[0];
+      S.codehash = fr[1];
 
       // D2: fetch + pre-verify the template bytes.
       const res = await fetch(CFG.TEMPLATE_ARTIFACT_URL, { cache: "no-store" });
@@ -3628,31 +3678,26 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(!window.ethers||!ethers.isAddress(addr)){ set("Invalid address (bad checksum or format).","err"); return; }
     set("Connecting to vault…","info"); S.connected=false; S.vault=null; box.classList.remove("on");
     try{
-      // Read the vault surface. Reads need no wallet, and in-app wallet
-      // providers drop/rate-limit eth_call bursts — which used to surface as a
-      // false "isn't a Funding Vault". So: batch the reads, try the session
-      // provider first, and on ANY failure retry once on the public Base RPC
-      // before judging. Only a failure on BOTH providers is diagnosed, and
-      // "not a vault" is only claimed for a surface mismatch, never for an
-      // RPC fault — the error says which one actually happened.
+      // Read the vault surface down the provider ladder. Wallet in-app RPCs
+      // drop eth_call bursts and public RPCs rate-limit mobile IPs — and
+      // ethers v6 reports both as CALL_EXCEPTION "missing revert data",
+      // identical to a real revert. So: walk independent providers, and only
+      // claim "not a vault" when at least TWO distinct providers agree it is
+      // a genuine revert/decode failure. Anything less is called what it is:
+      // RPC trouble, retry.
       function readSurface(p){ var v=new ethers.Contract(addr,VAULT_ABI,p);
         return Promise.all([v.trader(),v.owner(),v.maxPerTrade(),v.available(),v.outstanding(),v.paused()]); }
-      var pubProv=new ethers.JsonRpcProvider("https://mainnet.base.org");
-      var prov=(typeof getReadProvider==="function")? await getReadProvider(CHAIN_ID) : pubProv;
-      var code=await prov.getCode(addr).catch(function(){return pubProv.getCode(addr);});
-      if(!code||code==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
+      var codeRes=await tryReadLadder(CHAIN_ID,function(p){return p.getCode(addr);});
+      if(!codeRes.result||codeRes.result==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
       var reads;
-      try{ reads=await readSurface(prov); }
-      catch(e1){
-        try{ reads=await readSurface(pubProv); }
-        catch(e2){
-          var msg=String((e2&&(e2.shortMessage||e2.message))||e2);
-          var surfaceMiss=(e2&&(e2.code==="BAD_DATA"||e2.code==="CALL_EXCEPTION"))||/revert|decode|returned no data/i.test(msg);
-          set(surfaceMiss
-            ? "Contract found, but it isn't a Funding Vault (no vault surface: "+msg.slice(0,90)+"). Buys need a Funding Vault."
-            : "RPC read failed twice ("+msg.slice(0,120)+") — network trouble, not the contract. Try Connect again.","err");
-          renderList(); return;
-        }
+      try{ reads=(await tryReadLadder(CHAIN_ID,readSurface)).result; }
+      catch(e2){
+        var msg=String((e2&&(e2.shortMessage||e2.message))||e2);
+        var surfaceMiss=(e2.revertVotes||0)>=2;
+        set(surfaceMiss
+          ? "Contract found, but it isn't a Funding Vault (no vault surface: "+msg.slice(0,90)+"). Buys need a Funding Vault."
+          : "RPC reads failed on every provider ("+msg.slice(0,100)+") — network/rate-limit trouble, not the contract. Wait a few seconds and hit Connect again.","err");
+        renderList(); return;
       }
       var trader=reads[0],owner=reads[1],mpt=reads[2],avail=reads[3],outs=reads[4],paused=reads[5];
       var wallet=""; try{ if(window.ethereum){ var a=await window.ethereum.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
