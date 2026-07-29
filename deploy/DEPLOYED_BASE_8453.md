@@ -1,11 +1,14 @@
 # POSSESSIO constellation — Base mainnet (8453)
 
-Deployed 2026-07-28. Four organs, four transactions, one anchor key.
+Seven contracts, one anchor key. The four-organ constellation deployed
+2026-07-28 ([§1](#1-the-four-organs)); the AI trading desk deployed 2026-07-29
+([§5](#5-the-trading-desk)); the salt pool refilled and proven from the caller's
+side the same day ([§4](#4-the-salt-pool-refilled-and-proven-from-the-callers-side)).
 
 **Every value below was read from Base by `eth_call` / `eth_getCode`, not from a
 deploy log.** A broadcast log records what a script *intended* to send. This
 records what the chain *actually holds*, and anyone can re-derive all of it from
-the addresses in the first table — see [Reproducing this](#reproducing-this).
+the addresses in the tables — see [Reproducing this](#6-reproducing-this).
 
 ---
 
@@ -21,11 +24,25 @@ the addresses in the first table — see [Reproducing this](#reproducing-this).
 All four landed on **exactly** the addresses `deploy/anchor.json` predicted
 before any of them existed.
 
-**Anchor EOA** `0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC` — **nonce 4**.
+**Anchor EOA** `0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC` — **nonce 4** at the
+time of this section; **nonce 8** as of 2026-07-29, and every one of the eight is
+accounted for:
 
-That nonce is the tightest statement available here: four deploys, no fifth, no
-rehearsal, nothing else ever signed by this key on this chain. The addresses are
-CREATE3 (`f(deployer, guardedSalt)`, initcode-independent) and the salts are
+| Nonce | What it was |
+|---|---|
+| 0–3 | The four organs above |
+| 4 | ETH transfer funding the SaltPool keeper `0x319E6728…` |
+| 5 | `PossessioAutoTarget` — plain `CREATE` |
+| 6 | `PossessioFundingVault` — plain `CREATE` |
+| 7 | `PossessioRail` — the CreateX call (CREATE3) |
+
+That reconciles: nonces 5 and 6 are ordinary `CREATE`, so their addresses are
+`f(anchor, nonce)` — and the deployed AutoTarget and Vault sit at exactly the
+addresses that formula gives for 5 and 6. See [§5](#5-the-trading-desk).
+
+The nonce remains the tightest statement available: no rehearsal, nothing else
+ever signed by this key on this chain. The four organs' addresses are CREATE3
+(`f(deployer, guardedSalt)`, initcode-independent) and the salts are
 sender-locked — the anchor's address is the first 20 bytes of each — so no other
 key could have produced them.
 
@@ -129,27 +146,91 @@ reads this getter live and refuses to deploy on a mismatch.
 |---|---|
 | `factory()` | `0x0DD06656…` |
 | `keeper()` | `0x319E6728a3c326D7cCc8b406052E8B5dCf04e6B9` |
-| `depth()` | **`0`** |
+| `depth()` | **`8`** — loaded 2026-07-29 |
 
 ---
 
-## 4. Open: the salt pool is empty
+## 4. The salt pool, refilled and proven from the caller's side
 
-`depth() == 0`. Step 5 of `deploy/anchor.json`'s `deployOrder` — *"keeper refills
-saltpool with hookSalts"* — has not run.
+This section previously recorded `depth() == 0` as an open item. It is closed.
 
-This does not affect the Account launch path, which does not draw from the salt
-pool. It does mean any flow that requires a flag-mined `0x…08C8` hook salt has
-nothing to draw. The eight mined salts are sitting in `deploy/anchor.json`
-under `hookSalts`, unconsumed, and they are factory-keyed (first 20 bytes =
-`0x0dd06656…`) so only the live Factory can spend them.
+Step 5 of `deploy/anchor.json`'s `deployOrder` — *"keeper refills saltpool with
+hookSalts"* — ran on 2026-07-29. The keeper `0x319E6728…` sent one transaction
+(its nonce went `0 → 1`, so there is exactly one and no rehearsal) carrying the
+eight mined salts from `deploy/anchor.json` under `hookSalts`. `depth()` reads
+**8**.
 
-Recorded here as an open item rather than left to be discovered at the point of
-use.
+Depth alone would only prove the array grew. The launch path was therefore
+checked from the side that actually uses it — `eth_call` of `pullSalt()` with
+`from` set to the live Factory, which is the exact call
+`PossessioFactory.sol:251` makes:
+
+| Check | Result |
+|---|---|
+| `pullSalt()` from `Factory` | returns `0x0dd06656…47c7` — a real salt, not `PoolEmpty()` |
+| that salt's first 20 bytes | `0x0dd06656…` — the Factory's own address |
+| `pullSalt()` from `0x…dEaD` | reverts — the gate still holds |
+
+Factory-keying is what makes the salts safe to publish: only the live Factory
+can spend them. Loading the pool did not widen who may draw from it.
 
 ---
 
-## 5. Reproducing this
+## 5. The trading desk
+
+Deployed 2026-07-29 by the same anchor key, one script run, nonces 5–7. Runtime
+sizes and every value below were read back from chain after the broadcast.
+
+| Contract | Address | Runtime |
+|---|---|---|
+| **PossessioAutoTarget** | `0x0682003333103814AA721c3B624383a4652b3009` | 4,171 B |
+| **PossessioFundingVault** | `0xF586a9D2d860858B2E3528F2A0EA7Ca9824317Dd` | 4,261 B |
+| **PossessioRail** | `0xbcCd42344fB8Dd0cE54e0Cf4676ec264C927d5B5` | 5,857 B |
+
+### The prewire
+
+The Vault's `trader` and `tradeDestination` are immutable with no setter, and
+both had to be set to the Rail's address *before the Rail existed*. The Rail was
+therefore placed by CREATE3 at an address computed in advance from
+`(anchor, salt)` — initcode-independent, so a recompile could not move it. The
+deploy script pins that prediction and reverts `PredictionMismatch` /
+`DeployedMismatch` / `PrewireBroken` rather than land a half-wired pair.
+
+| Read | Value | Means |
+|---|---|---|
+| `Rail.vault()` | `0xF586a9D2…` | ✅ |
+| `Vault.trader()` | `0xbcCd4234…` | ✅ |
+| `Vault.tradeDestination()` | `0xbcCd4234…` | ✅ |
+
+The Rail landed byte-identical to the predicted address. The ring is closed and
+there is no admin path to alter it.
+
+### Authority and caps
+
+| | |
+|---|---|
+| `Vault.owner()` | `0x9Ce4cb26…` |
+| `Rail.keeper()` | `0x9Ce4cb26…` |
+| `AutoTarget.keeper()` | `0x9Ce4cb26…` |
+| `AutoTarget.feeSink()` | `0xE0612f38…` — the live Heart |
+| `AutoTarget.payToken()` | `0x833589fC…` — canonical Base USDC |
+| `AutoTarget.PER_TX_FEE` | `20000` — $0.02 |
+| `Vault.maxPerTrade` | `3500000000` — $3,500 |
+| `Vault.maxOutstanding` | `10000000000` — $10,000 |
+| `Vault.dailyDrawCap` | `20000000000` — $20,000 |
+
+All three roles sit on one address deliberately: the operator console drives
+every contract from a single connected wallet, so the gates must all answer to
+it. `AutoTarget`'s constructor staticcalls `isInfraSink()` on the fee sink and
+reverts `FeeSinkNotLiveInfra` unless it is a live infra pool — the same
+brick-guard the Factory and x402Core constructors use, so the desk could not
+have been born pointing at a dead sink.
+
+Cost: 4,743,076 gas at 0.01 gwei — `0.0000475 ETH`.
+
+---
+
+## 6. Reproducing this
 
 Nothing above needs to be trusted. Given only the four addresses:
 
@@ -188,4 +269,5 @@ the values recorded independently at broadcast time (PR #69), which is a
 corroboration the log alone could not provide.
 
 Deploy transaction hashes remain recoverable from the anchor EOA's transaction
-history on any Base explorer — four transactions, nonces 0–3.
+history on any Base explorer — the four organs at nonces 0–3, the trading desk
+at nonces 5–7, and one ETH transfer at nonce 4 funding the SaltPool keeper.
