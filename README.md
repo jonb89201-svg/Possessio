@@ -265,7 +265,7 @@ That is the shape that makes a fully digital economy workable from one address: 
 | [`src/ServiceAccountabilityVault.sol`](src/ServiceAccountabilityVault.sol) | v1 standalone SAV | Certified -- superseded by v2 embedded SAV |
 | [`src/PLATEStaking.sol`](src/PLATEStaking.sol) | SAV staking-lock primitive | Intact in build -- retained |
 | [`src/PossessioFactory.sol`](src/PossessioFactory.sol) | Deployment-fee engine -- one atomic tx: template-codehash check -> EIP-3009 USDC fee settle -> forward to the shared sink -> pull a pre-mined salt -> CreateX CREATE3 deploy -> ownership to the caller; immutable per-tier fee, no admin setter | **LIVE Base mainnet** `0x0DD06656...49Bd` |
-| [`src/PossessioSaltPool.sol`](src/PossessioSaltPool.sol) | Pre-mined CREATE3 salt pool the factory draws from -- factory-only pull, compute-only keeper refill, honest `PoolEmpty()` revert | **LIVE Base mainnet** `0x7181a6Da...61B6` -- `depth() == 0`, keeper refill pending |
+| [`src/PossessioSaltPool.sol`](src/PossessioSaltPool.sol) | Pre-mined CREATE3 salt pool the factory draws from -- factory-only pull, compute-only keeper refill, honest `PoolEmpty()` revert | **LIVE Base mainnet** `0x7181a6Da...61B6` -- loaded, `depth() == 8` |
 | [`src/PossessioPool.sol`](src/PossessioPool.sol) | "The Heart" -- standalone economic pool: every organ's fee inflow lands in one USDC balance; velocity floor keeps infrastructure funded; only surplus draws one-way to the immutable operator | **LIVE Base mainnet** `0xE0612f38...19Ce` |
 | [`src/PossessioX402Core.sol`](src/PossessioX402Core.sol) | Reusable pay-per-call payment engine (EIP-3009) -- the foundation the data-product APIs are built on | **LIVE Base mainnet** `0x60d867Af...6c05` |
 | [`src/PossessioFundingVault.sol`](src/PossessioFundingVault.sol) | AI trading desk: the trader's **hard-capped closed-loop vault** -- owner funds/withdraws/caps, trader draws for a trade and returns proceeds; `available()` reconciled to on-vault balance; both never-regress invariants mutation-verified | **LIVE Base mainnet** `0xF586a9D2...17Dd` (spec [`SPEC_FundingVault.md`](SPEC_FundingVault.md)) |
@@ -312,11 +312,14 @@ written once in its constructor and has no setter -- it was sealed at
 `[factory, x402Core]` from *predicted* addresses, and both halves of that
 handshake now read `true` from chain.
 
-**Open:** `SaltPool.depth() == 0`. The eight mined hook salts sit in
-`deploy/anchor.json` unconsumed, and they are factory-keyed, so only the live
-Factory can spend them. Any flow needing a flag-mined `0x…08C8` hook salt has
-nothing to draw until the keeper refills; the Account launch path does not draw
-from the pool and is unaffected.
+**The pool is loaded: `SaltPool.depth() == 8`.** The keeper refilled it from the
+eight mined hook salts in [`deploy/anchor.json`](deploy/anchor.json), and the
+launch path was then confirmed from the caller's side -- simulating the exact
+call the Factory makes at `PossessioFactory.sol:251`, `pullSalt()` returns a
+real salt rather than reverting `PoolEmpty()`, and the salt it returns is
+factory-keyed (first 20 bytes are the Factory's own address, so no other
+deployer can spend it). The same call from an unauthorized sender still
+reverts -- loading the pool did not open the gate.
 
 **AI trading desk -- deployed 2026-07-29, one transaction.**
 
