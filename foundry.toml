@@ -30,7 +30,10 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 ffi = true  # SymmetryGuardCore.t.sol shells to script/gen_proof.py via vm.ffi
-fs_permissions = [{ access = "read", path = "./test/fixtures" }]  # vm.etch CreateX runtime for the offline salt-pool CREATE3 test
+fs_permissions = [
+  { access = "read", path = "./test/fixtures" },       # vm.etch CreateX runtime for the offline salt-pool CREATE3 test
+  { access = "write", path = "./public/artifacts" },   # script/GenTemplateArtifact.s.sol writes the pinned launch-rail template
+]
 
 remappings = [
     "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/",
