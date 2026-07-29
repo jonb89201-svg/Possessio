@@ -57,6 +57,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {deployPayments} from "../test/PaymentsDeployHelper.sol";
 
 contract DeployPayments is Script {
     /// @notice EXPECTED_DEPLOYER was set and the signing key resolves elsewhere.
@@ -123,7 +124,7 @@ contract DeployPayments is Script {
         });
 
         vm.startBroadcast(pk);
-        PossessioPayments payments = new PossessioPayments(p);
+        PossessioPayments payments = deployPayments(p);
         vm.stopBroadcast();
 
         paymentsAddr = address(payments);

@@ -36,6 +36,7 @@ import "forge-std/StdStorage.sol";
 import {PossessioHook} from "../src/POSSESSIO_v2-6-3.sol";
 import {STEEL}         from "../src/POSSESSIO_v2-6-3.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {deployPayments} from "./PaymentsDeployHelper.sol";
 
 // ===========================================================================
 //                              MOCK CONTRACTS
@@ -1341,7 +1342,7 @@ contract PaymentsAutomationInvariants is Test {
         lstRates    = new MockLSTRates_A();
 
         // v2.4.2 — Constructor takes single DeployParams struct
-        payments = new PossessioPayments(PossessioPayments.DeployParams({
+        payments = deployPayments(PossessioPayments.DeployParams({
             owner:            OWNER,
             usdc:             address(usdc),
             cbeth:            address(cbeth),
