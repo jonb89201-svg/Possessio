@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<title>POSSESSIO — Operator Console v0.5.2</title>
+<title>POSSESSIO — Operator Console v0.5.3</title>
 <meta name="base:app_id" content="6a4b1d5d02e2e34e3e7fbd30" />
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","name":"Possessio","url":"https://possessio.io","splashImageUrl":"https://possessio.io/splash-200.png","splashBackgroundColor":"#556870"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -387,7 +387,7 @@ mibLog('MIB bridge active.','#0ff');})();</script>
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
     <span class="wallet-pill" id="chain-pill">Chain 8453</span>
     <div class="spacer"></div>
-    <span class="tag">v0.5.2 · 2026-07-29</span>
+    <span class="tag">v0.5.3 · 2026-07-29</span>
   </div>
 </header>
 
@@ -3438,7 +3438,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{}};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[]};
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3476,8 +3476,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var now=Math.max(t.entry*(1+drift),t.entry*0.15);
     return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
   // Map a real /radar/candidates `live` row into a desk coin. Radar screens
-  // Solana/pump.fun, so ch="sol" — these route to the Solana-trader gate until
-  // that desk ships; Base coins appear here only once the radar screens Base.
+  // Solana/pump.fun, so ch="sol". Base coins come from the Base screen
+  // (pollBase, GeckoTerminal) and merge into the same list. Every pick trades
+  // through the connected BASE vault — the chain tag is the keeper's
+  // execution leg, not a gate.
   function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
   // Normalizes a candidates row (live/recent: entry_mc/last_mc/qualified_ms) OR an
   // earlies row (early: first_hit_mc/dex_mc/first_hit_ms) into one desk coin shape.
@@ -3532,6 +3534,49 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
     $("#dk-dropnote").textContent="preview · demo data · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
 
+  /* THE BASE SCREEN — real Base-chain coins for the live Base desk. Source is
+     GeckoTerminal's public per-network feeds (keyless, CORS-open): trending
+     pools for momentum picks, new pools for newborns. Rows are REAL (token
+     address, live mc, pool age) and merge into the same list as the radar's
+     Solana rows. On any failure S.baseRows just stays empty — never faked. */
+  var GT_BASE="https://api.geckoterminal.com/api/v2/networks/base";
+  function mapGT(p,kind){ try{
+    var a=p.attributes||{}; var rel=(p.relationships&&p.relationships.base_token&&p.relationships.base_token.data&&p.relationships.base_token.data.id)||"";
+    var addr=rel.replace(/^base_/,""); if(!addr)return null;
+    var sym=String(a.name||"?").split("/")[0].trim(); if(/^(WETH|USDC|USDbC|cbETH|cbBTC|DAI|EURC|wstETH)$/i.test(sym))return null; // majors are venues, not picks
+    var mc=Number(a.market_cap_usd!=null?a.market_cap_usd:a.fdv_usd)||0; if(!(mc>0))return null;
+    var pc=a.price_change_percentage||{}; var h1=Number(pc.h1)||0, m5=Number(pc.m5)||0;
+    var entry=h1? mc/(1+h1/100):mc;
+    var read=kind==="newborn"?["reading","newborn"]:(m5>2?["go","▲ trending"]:(m5>0?["flow","● flow in"]:["reading","screening"]));
+    return {id:"base-"+addr, s:sym.slice(0,10), n:String(a.name||"").slice(0,24), ch:"base", ico:"🔵", img:null,
+      entry:entry, now:mc, peak:mc, born:a.pool_created_at?Date.parse(a.pool_created_at):Date.now(),
+      read:read, hot:m5>2, addr:addr, dev:"", devN:null};
+  }catch(e){ return null; } }
+  function pollBase(){
+    var get=function(u){ return fetch(u,{cache:"no-store"}).then(function(r){return r.ok?r.json():{data:[]};}).catch(function(){return {data:[]};}); };
+    Promise.all([get(GT_BASE+"/trending_pools?page=1"),get(GT_BASE+"/new_pools?page=1")]).then(function(res){
+      var tr=((res[0]&&res[0].data)||[]).slice(0,8).map(function(p){return mapGT(p,"trend");});
+      var nw=((res[1]&&res[1].data)||[]).slice(0,6).map(function(p){return mapGT(p,"newborn");});
+      var seen={}, out=[];
+      tr.concat(nw).forEach(function(c){ if(c&&!seen[c.addr]){ seen[c.addr]=1; out.push(c); } });
+      S.baseRows=out.slice(0,5);
+      mergeRender();
+    });
+  }
+  // One list, two screens: radar's Solana rows lead (the entry window is the
+  // signal), Base rows interleave after every second Solana row. Real rows
+  // only — the demo pool appears solely when BOTH screens are unreachable.
+  function mergeRender(){
+    var sol=S.solRows||[], base=S.baseRows||[];
+    if(!sol.length&&!base.length){ if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
+    var out=[], si=0, bi=0;
+    while(out.length<15&&(si<sol.length||bi<base.length)){
+      if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
+      if(bi<base.length){ out.push(base[bi++]); }
+    }
+    S.source="live"; S.live=out.slice(0,15); renderList();
+  }
+
   // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
   // pool with actual /radar/candidates `live` rows. On any failure, stays in (or
   // falls back to) preview — never a fabricated "live" state.
@@ -3550,24 +3595,29 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
-        S.source="live"; S.live=rows; S.inWindow=live.length; renderList();
+        S.solRows=rows; S.inWindow=live.length; mergeRender();
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
         var t=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-        $("#dk-dropnote").textContent=rows.length? ("live · "+live.length+" in the entry window · "+rows.length+" on screen · "+t)
-                                                 : "live · screen is quiet right now · "+t;
+        var baseN=(S.baseRows||[]).length;
+        $("#dk-dropnote").textContent=S.live.length? ("live · "+live.length+" in the entry window · "+S.live.length+" on screen"+(baseN?(" · "+baseN+" Base"):"")+" · "+t)
+                                                   : "live · screen is quiet right now · "+t;
       })
       .catch(function(){
+        S.solRows=[];
+        if((S.baseRows||[]).length){ mergeRender(); $("#dk-dropnote").textContent="live · Solana radar unreachable · Base screen live"; return; }
         if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
           $("#dk-dropnote").textContent="preview · demo data (live feed unreachable)"; }
       });
   }
 
-  /* pick — GATED. Base needs the connected Base trader; Solana needs its own desk. */
+  /* pick — GATED on the connected Base trader only. The BASE DESK IS THE
+     TRADER for every pick: capital draws from the Base vault via drawForTrade
+     regardless of where the coin lives; the pick's chain is the keeper's
+     execution leg (Base DEX at the rail, or the keeper's Solana route). */
   var pending=null;
   function pick(id,bps){ var c=S.live.filter(function(x){return x.id===id;})[0]; if(!c)return;
-    if(c.ch==="sol"){ sheetGate("sol"); return; }
     if(!S.connected){ sheetGate("base"); return; }
     pending={c:c,bps:bps};
     var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
@@ -3577,8 +3627,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var act=canDraw
       ? '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Draw &amp; open</button>'
       : '<button class="b-pri" style="opacity:.5" disabled>'+(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault'))+'</button>';
+    var isSol=c.ch==="sol";
     $("#dk-sheet").innerHTML=
-      '<h3>Open '+esc(c.s)+' <span class="ctag base" style="vertical-align:2px">BASE</span></h3>'+
+      '<h3>Open '+esc(c.s)+' <span class="ctag '+esc(c.ch)+'" style="vertical-align:2px">'+(isSol?"SOL":"BASE")+'</span></h3>'+
       '<p class="sub">'+esc(c.n)+' · you set the upside, the desk holds the exit.</p>'+
       '<div class="terms">'+
         '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
@@ -3588,19 +3639,18 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '</div>'+
       '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC drawn from your vault</label>'+
         '<input id="dk-size" inputmode="decimal" value="'+(defUsd>0?defUsd.toFixed(2):"")+'" placeholder="e.g. 500" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
-      '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>). The stop is a trigger, not a guaranteed fill.</div>'+
+      '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your <b>Base</b> vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. '+(isSol
+        ? 'This is a <b>Solana</b> pick: the capital and caps live on Base; the keeper executes the Solana leg (Jupiter route) and fires the −10%/target exit (<b>keeper cross-chain execution is the next build</b>).'
+        : 'The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>).')+' The stop is a trigger, not a guaranteed fill.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+act+'</div>';
     $("#dk-scrim").classList.add("on");
   }
   function sheetGate(chain){
-    var isSol=chain==="sol";
-    $("#dk-sheet").innerHTML='<h3>'+(isSol?"Solana trade":"Connect your Base trader")+'</h3>'+
+    $("#dk-sheet").innerHTML='<h3>Connect your Base trader</h3>'+
       '<p class="sub">The list is open to watch. Placing a trade needs a trader.</p>'+
-      '<div class="note-h">'+(isSol
-        ? 'This is a <b>Solana</b> pick. A Solana trade routes through a Solana trader (its own capped vault + Jupiter rail) — <b>not launched yet</b>. Base picks work today once you connect your Base vault.'
-        : 'To place a <b>Base</b> trade, connect your deployed Base trading vault in the bar at the top — the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds.')+'</div>'+
+      '<div class="note-h">Every pick — Base or Solana — trades through your deployed <b>Base</b> trading vault: connect it in the bar at the top, the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds. The pick&#39;s chain only decides where the keeper executes.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button>'+
-      (isSol?'':'<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button>')+'</div>';
+      '<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button></div>';
     $("#dk-scrim").classList.add("on");
   }
   function closeSheet(){ $("#dk-scrim").classList.remove("on"); pending=null; }
@@ -3717,7 +3767,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ set("Connect failed: "+((e&&e.message)||e),"err"); }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(driftPositions,650));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650));
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
@@ -3733,7 +3783,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       try{ var savedVault=localStorage.getItem("possessio_desk_vault");
         if(savedVault&&!S.connected){ var ai=$("#dk-addr");
           if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
-      stopTimers(); startTimers(); pollFeed(); connectWS(); },
+      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
