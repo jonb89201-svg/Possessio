@@ -1297,6 +1297,10 @@ const state = {
   walletChainId: null,
   selectedChainId: 8453,
   addresses: {},
+  // Per-contract verified connections: key -> {addr, chainId, at}. Persisted, so
+  // every contract that has been connected STAYS connected (and green) across
+  // tab switches and reloads. One wallet at a time; many contracts at once.
+  connections: {},
 };
 
 // Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
@@ -1311,6 +1315,25 @@ function loadAddresses() {
 function persistAddresses() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.addresses)); }
   catch (_) { /* private mode or quota — silent */ }
+}
+
+const CONNECTIONS_KEY = STORAGE_KEY + "_connections";
+function loadConnections() {
+  try {
+    const raw = localStorage.getItem(CONNECTIONS_KEY);
+    if (raw) state.connections = JSON.parse(raw) || {};
+  } catch (_) { state.connections = {}; }
+}
+function persistConnections() {
+  try { localStorage.setItem(CONNECTIONS_KEY, JSON.stringify(state.connections)); }
+  catch (_) { /* private mode or quota — silent */ }
+}
+// A contract counts as connected only while the panel's address is still the
+// one that was verified — editing the address drops that contract (and only
+// that contract) back to unconnected.
+function isConnected(key) {
+  const c = state.connections[key];
+  return !!(c && c.addr && (state.addresses[key] || "").toLowerCase() === c.addr.toLowerCase());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1679,12 +1702,21 @@ function renderPanels() {
     <div class="desc">${escapeHtml(c.desc)}</div>
     <label>Deployed address (chain ${c.chainId})</label>
     <input class="addr" data-contract="${c.key}" placeholder="0x… (not yet deployed)" value="${escapeHtml(state.addresses[c.key] || "")}" />
-    <button class="connect-contract-btn" data-contract="${c.key}" style="margin-top:8px;padding:10px 16px;background:var(--accent,#2563eb);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;width:100%;">Connect Contract</button>
-    <div class="cc-status" data-contract="${c.key}" style="margin-top:6px;font-size:12px;color:var(--ink-faint,#64748b);"></div>
+    <button class="connect-contract-btn" data-contract="${c.key}" style="margin-top:8px;padding:10px 16px;background:var(--accent,#2563eb);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;width:100%;">${isConnected(c.key) ? "Connected ✓" : "Connect Contract"}</button>
+    <div class="cc-status" data-contract="${c.key}" style="margin-top:6px;font-size:12px;color:${isConnected(c.key) ? "#16a34a" : "var(--ink-faint,#64748b)"};">${isConnected(c.key) ? "Contract connected ✓ — code verified on chain " + c.chainId + ". Reads enabled." : ""}</div>
   `;
   meta.querySelector("input.addr").addEventListener("input", e => {
     state.addresses[c.key] = e.target.value.trim();
     persistAddresses();
+    // A changed address is no longer the verified one — drop THIS contract's
+    // connection only; every other connected contract stays connected.
+    if (state.connections[c.key] && !isConnected(c.key)) {
+      delete state.connections[c.key];
+      persistConnections();
+      var b = meta.querySelector(".connect-contract-btn"), s = meta.querySelector(".cc-status");
+      if (b) b.textContent = "Connect Contract";
+      if (s) { s.textContent = ""; s.style.color = "var(--ink-faint,#64748b)"; }
+    }
     if (c.key === "PAY") scheduleTreasuryRefresh(800);
   });
   // Connect Contract: verify + read the contract at the entered address (read-only, no wallet needed)
@@ -1700,6 +1732,9 @@ function renderPanels() {
       var prov = await getReadProvider(c.chainId);
       var code = await prov.getCode(addr);
       if (!code || code === "0x") { setStatus("No contract at this address on chain " + c.chainId + ".", "#dc2626"); return; }
+      state.connections[c.key] = { addr: addr, chainId: c.chainId, at: Date.now() };
+      persistConnections();
+      if (__ccBtn) __ccBtn.textContent = "Connected ✓";
       setStatus("Contract connected ✓ — code verified on chain " + c.chainId + ". Reads enabled.", "#16a34a");
       if (c.key === "PAY") scheduleTreasuryRefresh(200);
     } catch (err) {
@@ -2472,6 +2507,7 @@ var __tcRefresh = document.getElementById("tc-refresh");
 if (__tcRefresh) __tcRefresh.onclick = () => refreshTreasury();
 
 loadAddresses();
+loadConnections();
 renderTabs();
 renderPanels();
 updateWalletUI();
@@ -3592,19 +3628,39 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(!window.ethers||!ethers.isAddress(addr)){ set("Invalid address (bad checksum or format).","err"); return; }
     set("Connecting to vault…","info"); S.connected=false; S.vault=null; box.classList.remove("on");
     try{
-      var prov=(typeof getReadProvider==="function")? await getReadProvider(CHAIN_ID) : new ethers.JsonRpcProvider("https://mainnet.base.org");
-      var code=await prov.getCode(addr);
+      // Read the vault surface. Reads need no wallet, and in-app wallet
+      // providers drop/rate-limit eth_call bursts — which used to surface as a
+      // false "isn't a Funding Vault". So: batch the reads, try the session
+      // provider first, and on ANY failure retry once on the public Base RPC
+      // before judging. Only a failure on BOTH providers is diagnosed, and
+      // "not a vault" is only claimed for a surface mismatch, never for an
+      // RPC fault — the error says which one actually happened.
+      function readSurface(p){ var v=new ethers.Contract(addr,VAULT_ABI,p);
+        return Promise.all([v.trader(),v.owner(),v.maxPerTrade(),v.available(),v.outstanding(),v.paused()]); }
+      var pubProv=new ethers.JsonRpcProvider("https://mainnet.base.org");
+      var prov=(typeof getReadProvider==="function")? await getReadProvider(CHAIN_ID) : pubProv;
+      var code=await prov.getCode(addr).catch(function(){return pubProv.getCode(addr);});
       if(!code||code==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
-      var v=new ethers.Contract(addr,VAULT_ABI,prov);
-      var trader,owner,mpt,avail,outs,paused;
-      try{ trader=await v.trader(); owner=await v.owner(); mpt=await v.maxPerTrade();
-        avail=await v.available(); outs=await v.outstanding(); paused=await v.paused(); }
-      catch(_){ set("Contract found, but it isn't a Funding Vault (no vault surface). Buys need a Funding Vault.","err"); renderList(); return; }
+      var reads;
+      try{ reads=await readSurface(prov); }
+      catch(e1){
+        try{ reads=await readSurface(pubProv); }
+        catch(e2){
+          var msg=String((e2&&(e2.shortMessage||e2.message))||e2);
+          var surfaceMiss=(e2&&(e2.code==="BAD_DATA"||e2.code==="CALL_EXCEPTION"))||/revert|decode|returned no data/i.test(msg);
+          set(surfaceMiss
+            ? "Contract found, but it isn't a Funding Vault (no vault surface). Buys need a Funding Vault."
+            : "RPC read failed twice ("+msg.slice(0,120)+") — network trouble, not the contract. Try Connect again.","err");
+          renderList(); return;
+        }
+      }
+      var trader=reads[0],owner=reads[1],mpt=reads[2],avail=reads[3],outs=reads[4],paused=reads[5];
       var wallet=""; try{ if(window.ethereum){ var a=await window.ethereum.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
       S.wallet=wallet;
       var role=wallet? (wallet.toLowerCase()===String(trader).toLowerCase()?"trader":(wallet.toLowerCase()===String(owner).toLowerCase()?"owner":"other")) : "none";
       S.vault={ addr:addr, trader:String(trader), owner:String(owner), maxPerTrade:BigInt(mpt), available:BigInt(avail), outstanding:BigInt(outs), paused:!!paused, role:role };
       S.connected=true; box.classList.add("on"); $("#dk-cbtn").textContent="Connected ✓";
+      try{ localStorage.setItem("possessio_desk_vault", addr); }catch(e){}
       var roleMsg = role==="trader" ? "you hold the trader key — Base buys are live."
                    : role==="none"  ? "connect your wallet to buy (drawForTrade needs the trader key)."
                    : "this wallet is the "+role+", not the trader — buys need the trader key.";
@@ -3626,6 +3682,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       renderTicks(); setRegime();
       if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
       renderList(); renderPos();
+      // Stay connected: a vault verified in an earlier visit reconnects on
+      // open — prefill the saved address and re-run the same verify path, so
+      // the green state is re-earned from the chain, never assumed.
+      try{ var savedVault=localStorage.getItem("possessio_desk_vault");
+        if(savedVault&&!S.connected){ var ai=$("#dk-addr");
+          if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
       stopTimers(); startTimers(); pollFeed(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
