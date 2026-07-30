@@ -1,47 +1,14 @@
 {
-  "accountAssociation": {
-    "header": "eyJmaWQiOjEzMjI3MjAsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHhlYWEwMTNkYjZCNmJkNjkyNzMzMmIxNTM0YWRjMmU5NjI4NjViNTU1In0",
-    "payload": "eyJkb21haW4iOiJwb3NzZXNzaW8uaW8ifQ",
-    "signature": "uRecAktV8YgT/WLSYg2Cau790c72tswxwJL8hXrAr/ck1+FOaxzLzSQnhqA9fXV9zt90n4xWy/W74xT/+RdnCxs="
-  },
-  "miniapp": {
-    "version": "1",
-    "name": "Possessio",
-    "homeUrl": "https://possessio.io",
-    "iconUrl": "https://possessio.io/icon-1024.png",
-    "splashImageUrl": "https://possessio.io/splash-200.png",
-    "splashBackgroundColor": "#556870",
-    "subtitle": "Own your protocol on Base",
-    "description": "Connect a wallet and auto-deploy your own protocol contracts on Base in one signature — then operate and verify them from a single operator console.",
-    "tagline": "Deploy. Operate. Verify.",
-    "primaryCategory": "finance",
-    "tags": ["base", "deploy", "defi", "onchain", "protocol"],
-    "heroImageUrl": "https://possessio.io/og.png",
-    "ogTitle": "Possessio — Own Your Protocol",
-    "ogDescription": "Auto-deploy, operate, and verify your protocol contracts on Base from one console.",
-    "ogImageUrl": "https://possessio.io/og.png",
-    "noindex": false,
-    "requiredChains": ["eip155:8453"],
-    "canonicalDomain": "possessio.io"
-  },
   "frame": {
     "version": "1",
     "name": "Possessio",
-    "homeUrl": "https://possessio.io",
     "iconUrl": "https://possessio.io/icon-1024.png",
+    "homeUrl": "https://possessio.io",
     "splashImageUrl": "https://possessio.io/splash-200.png",
-    "splashBackgroundColor": "#556870",
-    "subtitle": "Own your protocol on Base",
-    "description": "Connect a wallet and auto-deploy your own protocol contracts on Base in one signature — then operate and verify them from a single operator console.",
-    "tagline": "Deploy. Operate. Verify.",
+    "splashBackgroundColor": "#0B1220",
+    "subtitle": "You pick. The desk holds the exit.",
+    "description": "A live screen of newborn coins across Solana and Base. You pick one and tap a target; a hard -10% stop is always on and the desk fires the exit. Your coin stays in your own wallet - the desk only ever holds a bounded, revocable permission to sell that one position.",
     "primaryCategory": "finance",
-    "tags": ["base", "deploy", "defi", "onchain", "protocol"],
-    "heroImageUrl": "https://possessio.io/og.png",
-    "ogTitle": "Possessio — Own Your Protocol",
-    "ogDescription": "Auto-deploy, operate, and verify your protocol contracts on Base from one console.",
-    "ogImageUrl": "https://possessio.io/og.png",
-    "noindex": false,
-    "requiredChains": ["eip155:8453"],
-    "canonicalDomain": "possessio.io"
+    "tags": ["trading", "solana", "base", "self-custody", "memecoins"]
   }
 }
