@@ -240,7 +240,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.6.0";
+const MCP_VERSION = "0.6.1";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -471,12 +471,22 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
     const id = msg?.id ?? null;
     const method = msg?.method;
     if (typeof method === "string" && method.startsWith("notifications/")) return null; // notification: no reply
-    if (method === "initialize")
+    if (method === "initialize") {
+      // Version negotiation, honest version: echo the client's revision only
+      // when this server actually complies with it. This worker has been
+      // stateless request/response since increment 1, which is 2026-07-28's
+      // core model, so every listed revision is genuinely supported. An
+      // UNKNOWN (future) revision gets our newest supported one instead of a
+      // blind echo — per spec the client then accepts it or disconnects,
+      // rather than assuming behaviors we never implemented.
+      const SUPPORTED = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"];
+      const asked = msg?.params?.protocolVersion;
       return ok(id, {
-        protocolVersion: msg?.params?.protocolVersion || "2025-06-18",
+        protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
         capabilities: { tools: {} },
         serverInfo: { name: "possessio-council", version: MCP_VERSION },
       });
+    }
     if (method === "ping") return ok(id, {});
     if (method === "tools/list") return ok(id, { tools: MCP_TOOLS });
     if (method === "tools/call") {
