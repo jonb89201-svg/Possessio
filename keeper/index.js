@@ -22,7 +22,7 @@
 
 const { Connection, PublicKey, VersionedTransaction } = require("@solana/web3.js");
 const L = require("../miniapp/solana-leg");
-const { onchainSource, ledgerSource, readLiveDelegate } = require("./positions");
+const { onchainSource, ledgerSource, deskSource, readLiveDelegate } = require("./positions");
 
 const env = (k, d) => (process.env[k] == null || process.env[k] === "" ? d : process.env[k]);
 const RPC = env("SOLANA_RPC_URL");
@@ -30,8 +30,9 @@ const KEEPER_KEY = env("SOLANA_KEEPER_KEY", "");
 const DRY_RUN = env("DRY_RUN", "1") !== "0";
 const POLL_MS = Number(env("POLL_MS", "5000"));
 const SLIPPAGE_BPS = Number(env("SLIPPAGE_BPS", "300"));
-const SOURCE_KIND = env("POSITION_SOURCE", "ledger");   // "onchain" | "ledger"
+const SOURCE_KIND = env("POSITION_SOURCE", "desk");   // "desk" | "onchain" | "ledger"
 const LEDGER_FILE = env("LEDGER_FILE", "./keeper/positions.json");
+const DESK_URL = env("DESK_URL", "https://possessio.io");
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -157,9 +158,10 @@ async function main() {
   const keeper = loadKeeper();
   if (!DRY_RUN && !keeper) throw new Error("live mode needs SOLANA_KEEPER_KEY");
 
-  const source = SOURCE_KIND === "onchain"
-    ? onchainSource({ baseRpc: env("BASE_RPC_URL"), autoTarget: env("AUTOTARGET_ADDRESS") })
-    : ledgerSource({ file: LEDGER_FILE });
+  const source =
+    SOURCE_KIND === "onchain" ? onchainSource({ baseRpc: env("BASE_RPC_URL"), autoTarget: env("AUTOTARGET_ADDRESS") })
+    : SOURCE_KIND === "ledger" ? ledgerSource({ file: LEDGER_FILE })
+    : deskSource({ base: DESK_URL });
 
   log("Model B keeper starting", JSON.stringify({
     mode: DRY_RUN ? "DRY_RUN (signs nothing)" : "LIVE",

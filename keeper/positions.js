@@ -91,6 +91,48 @@ function ledgerSource({ file }) {
   };
 }
 
+/* ─────────────────────────── desk (worker) ─────────────────────────── */
+
+/// What the console's trading desk actually wrote. This is the source that
+/// makes the desk work end to end: the human picks a coin and a target, the
+/// mini-app signs the rule, the worker verifies that signature and stores it,
+/// and the keeper reads it here.
+///
+/// The worker verified an Ed25519 signature from the owner before storing the
+/// row, so `user` is a wallet that really did author this instruction — not a
+/// claim in a request body. The keeper still checks the chain for a live
+/// delegate before acting; a rule alone has never been authority.
+function deskSource({ base, timeoutMs = 10000 }) {
+  const url = String(base).replace(/\/+$/, "") + "/api/desk/rules";
+  return {
+    name: `desk(${url})`,
+    async list() {
+      // An unreachable desk must not look like a desk with no positions:
+      // silently returning [] would stand every stop down during an outage.
+      // Throw instead — cycle() logs it and retries next tick, rules intact.
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { signal: ctl.signal, headers: { accept: "application/json" } });
+        if (!res.ok) throw new Error(`desk returned ${res.status}`);
+        const body = await res.json();
+        return (body.positions || []).filter((p) => p.status === "open");
+      } finally { clearTimeout(t); }
+    },
+    async markExited(id, detail) {
+      // Best-effort. A bookkeeping failure must never block or reverse an exit
+      // that already landed on chain; the in-run `exited` set stops a second
+      // sell regardless of whether this write succeeds.
+      try {
+        await fetch(url, {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, ...detail }),
+        });
+      } catch { /* the chain is the record of truth, not this */ }
+    },
+  };
+}
+
 /* ─────────────── live authority: what MAY I touch, right now? ─────────────── */
 
 // DESIGN NOTE, learned the hard way against live infrastructure: the obvious
@@ -149,4 +191,4 @@ async function readLiveDelegate({ connection, owner, mint, keeper }) {
   }
 }
 
-module.exports = { onchainSource, ledgerSource, readLiveDelegate, decide };
+module.exports = { onchainSource, ledgerSource, deskSource, readLiveDelegate, decide };

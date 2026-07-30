@@ -3783,14 +3783,22 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     try{
       var res=await M.buyAndDelegate({
         mint:c.addr, usdcAmount:sizeUsd, keeper:M.keeper,
+        // The target the human tapped, carried through to the signed rule. The
+        // keeper reads that rule; without it the delegate is power with no
+        // instruction and nothing ever fires.
+        targetBps:bps,
         onStep:function(s){ if(btn) btn.textContent =
           s.step==="quote" ? "Finding a route…" :
-          s.step==="buy" ? "Confirm the buy…" : "Authorize the stop…"; }
+          s.step==="buy" ? "Confirm the buy…" :
+          s.step==="rule" ? "Sign your exit rule…" : "Authorize the stop…"; }
       });
       if(res.armed){
-        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,
-          target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,
-          born:Date.now(),live:true,selfCustody:true,mint:c.addr});
+        // entry is the FILLED price from the swap, not the screen price that
+        // was tapped: the stop is measured from what the user actually paid.
+        var entry=res.entryPrice||c.now;
+        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:entry,now:c.now,
+          target:entry*(1+bps/10000),stop:entry*0.9,state:"armed",exitPnl:0,
+          born:Date.now(),live:true,selfCustody:true,mint:c.addr,ruleId:res.rule&&res.rule.id});
         renderPos(); renderList(); closeSheet();
         toast("✓ "+c.s+" — yours, and the stop is armed");
       } else {
@@ -3798,7 +3806,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // holds a coin with NO automated exit, and pretending otherwise would
         // be the single most dangerous lie this UI could tell.
         closeSheet();
-        toast("⚠ "+c.s+" bought — but the STOP IS NOT ARMED. Grant the permission or sell it yourself.");
+        toast("⚠ "+c.s+" bought — but the STOP IS NOT ARMED. "+(res.warning||"Grant the permission or sell it yourself."));
       }
     }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
       if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing signed.");
