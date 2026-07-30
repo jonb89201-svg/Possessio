@@ -240,7 +240,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.6.1";
+const MCP_VERSION = "0.6.2";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -472,17 +472,20 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
     const method = msg?.method;
     if (typeof method === "string" && method.startsWith("notifications/")) return null; // notification: no reply
     if (method === "initialize") {
-      // Version negotiation, honest version: echo the client's revision only
-      // when this server actually complies with it. This worker has been
-      // stateless request/response since increment 1, which is 2026-07-28's
-      // core model, so every listed revision is genuinely supported. An
-      // UNKNOWN (future) revision gets our newest supported one instead of a
-      // blind echo — per spec the client then accepts it or disconnects,
-      // rather than assuming behaviors we never implemented.
-      const SUPPORTED = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"];
+      // Version negotiation (0.6.2, council WO after the 0.6.1 outage): echo
+      // the client's revision when it is one we comply with; for an UNKNOWN
+      // revision offer the SAFEST widely-accepted one, NOT the newest. 0.6.1
+      // offered the newest (2026-07-28) as fallback and it broke the live
+      // claude.ai handshake: the client was on 2025-11-25 — absent from the
+      // list — got counter-offered a version it cannot speak, and refused
+      // ("unsupported protocol version"). A client that asks for a version
+      // you don't know has just proven it is not on your newest — offering
+      // the newest guarantees rejection. Meet the client where it is.
+      const SUPPORTED = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+      const SAFEST = "2025-06-18";
       const asked = msg?.params?.protocolVersion;
       return ok(id, {
-        protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
+        protocolVersion: SUPPORTED.includes(asked) ? asked : SAFEST,
         capabilities: { tools: {} },
         serverInfo: { name: "possessio-council", version: MCP_VERSION },
       });
