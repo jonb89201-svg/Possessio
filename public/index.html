@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<title>POSSESSIO — Operator Console v0.5.0</title>
+<title>POSSESSIO — Operator Console v0.5.4</title>
 <meta name="base:app_id" content="6a4b1d5d02e2e34e3e7fbd30" />
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","name":"Possessio","url":"https://possessio.io","splashImageUrl":"https://possessio.io/splash-200.png","splashBackgroundColor":"#556870"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -37,7 +37,7 @@
   --radius-pill:9999px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh;width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior:none;letter-spacing:-0.005em}
+html,body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;min-height:100vh;width:100%;max-width:100%;overflow-x:hidden;overflow-x:clip;overscroll-behavior:none;letter-spacing:-0.005em}
 button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit;background:transparent;border:1px solid var(--line);outline:none}
 button{cursor:pointer;-webkit-tap-highlight-color:transparent}
 a{color:var(--oxide);text-decoration:none;font-weight:500}
@@ -387,20 +387,20 @@ mibLog('MIB bridge active.','#0ff');})();</script>
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
     <span class="wallet-pill" id="chain-pill">Chain 8453</span>
     <div class="spacer"></div>
-    <span class="tag">v0.5.0 · 2026-05-27</span>
+    <span class="tag">v0.5.4 · 2026-07-29</span>
   </div>
 </header>
 
 <section class="treasury-card" id="treasury-card">
   <div class="tc-head">
-    <span class="tc-label">Your Treasury</span>
+    <span class="tc-label" id="tc-label">Your Treasury</span>
     <button class="tc-refresh" id="tc-refresh" title="Refresh">↻</button>
   </div>
   <div class="tc-total">
     <span class="tc-amount" id="tc-amount">$—</span>
     <span class="tc-delta" id="tc-delta"></span>
   </div>
-  <div class="tc-breakdown">
+  <div class="tc-breakdown" id="tc-breakdown">
     <div class="tc-row">
       <span class="tc-row-k">Liquid</span>
       <span class="tc-row-v" id="tc-liquid">$—</span>
@@ -1297,6 +1297,10 @@ const state = {
   walletChainId: null,
   selectedChainId: 8453,
   addresses: {},
+  // Per-contract verified connections: key -> {addr, chainId, at}. Persisted, so
+  // every contract that has been connected STAYS connected (and green) across
+  // tab switches and reloads. One wallet at a time; many contracts at once.
+  connections: {},
 };
 
 // Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
@@ -1311,6 +1315,25 @@ function loadAddresses() {
 function persistAddresses() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.addresses)); }
   catch (_) { /* private mode or quota — silent */ }
+}
+
+const CONNECTIONS_KEY = STORAGE_KEY + "_connections";
+function loadConnections() {
+  try {
+    const raw = localStorage.getItem(CONNECTIONS_KEY);
+    if (raw) state.connections = JSON.parse(raw) || {};
+  } catch (_) { state.connections = {}; }
+}
+function persistConnections() {
+  try { localStorage.setItem(CONNECTIONS_KEY, JSON.stringify(state.connections)); }
+  catch (_) { /* private mode or quota — silent */ }
+}
+// A contract counts as connected only while the panel's address is still the
+// one that was verified — editing the address drops that contract (and only
+// that contract) back to unconnected.
+function isConnected(key) {
+  const c = state.connections[key];
+  return !!(c && c.addr && (state.addresses[key] || "").toLowerCase() === c.addr.toLowerCase());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1428,6 +1451,47 @@ async function getReadProvider(targetChainId) {
   return new ethers.JsonRpcProvider(url);
 }
 
+// Read ladder (Base). In-app wallet RPCs drop eth_call bursts, and public RPCs
+// rate-limit shared mobile IPs — and ethers v6 reports BOTH as
+// CALL_EXCEPTION "missing revert data", identical to a real revert. So reads
+// walk a ladder of independent providers instead of trusting any single one.
+// staticNetwork skips the eth_chainId probe (fewer calls = fewer 429s), and
+// JsonRpcProvider auto-batches a Promise.all into one HTTP request.
+const READ_RPCS_8453 = [
+  "https://mainnet.base.org",
+  "https://base-rpc.publicnode.com",
+  "https://1rpc.io/base",
+];
+function readProviderLadder(targetChainId) {
+  const ladder = [];
+  if (state.provider && state.walletChainId === targetChainId) ladder.push(state.provider);
+  const urls = targetChainId === 8453 ? READ_RPCS_8453 : [RPC_BY_CHAIN[targetChainId]].filter(Boolean);
+  for (const u of urls) {
+    try { ladder.push(new ethers.JsonRpcProvider(u, targetChainId, { staticNetwork: true })); }
+    catch (_) { ladder.push(new ethers.JsonRpcProvider(u)); }
+  }
+  return ladder;
+}
+// Run `fn(provider)` down the ladder. Resolves with {result, revertVotes}
+// from the first success; rejects only when every rung failed, carrying the
+// last error plus how many DISTINCT rungs looked like a genuine revert —
+// one CALL_EXCEPTION can be a rate limit in disguise, two independent
+// providers agreeing is a real revert.
+async function tryReadLadder(targetChainId, fn) {
+  const ladder = readProviderLadder(targetChainId);
+  let lastErr = null, revertVotes = 0;
+  for (const p of ladder) {
+    try { return { result: await fn(p), revertVotes }; }
+    catch (e) {
+      lastErr = e;
+      if (e && (e.code === "CALL_EXCEPTION" || e.code === "BAD_DATA")) revertVotes++;
+    }
+  }
+  const err = lastErr || new Error("no read provider available");
+  err.revertVotes = revertVotes;
+  throw err;
+}
+
 function formatValue(v) {
   if (v === null || v === undefined) return "null";
   if (typeof v === "bigint") return v.toString();
@@ -1479,6 +1543,7 @@ function renderTabs() {
       state.activeCategory = null;   // reset to category list when switching contracts
       renderTabs();
       renderPanels();
+      scheduleTreasuryRefresh(150);  // the treasury card follows the spine
     };
     tabs.appendChild(b);
   });
@@ -1679,12 +1744,21 @@ function renderPanels() {
     <div class="desc">${escapeHtml(c.desc)}</div>
     <label>Deployed address (chain ${c.chainId})</label>
     <input class="addr" data-contract="${c.key}" placeholder="0x… (not yet deployed)" value="${escapeHtml(state.addresses[c.key] || "")}" />
-    <button class="connect-contract-btn" data-contract="${c.key}" style="margin-top:8px;padding:10px 16px;background:var(--accent,#2563eb);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;width:100%;">Connect Contract</button>
-    <div class="cc-status" data-contract="${c.key}" style="margin-top:6px;font-size:12px;color:var(--ink-faint,#64748b);"></div>
+    <button class="connect-contract-btn" data-contract="${c.key}" style="margin-top:8px;padding:10px 16px;background:var(--accent,#2563eb);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;width:100%;">${isConnected(c.key) ? "Connected ✓" : "Connect Contract"}</button>
+    <div class="cc-status" data-contract="${c.key}" style="margin-top:6px;font-size:12px;color:${isConnected(c.key) ? "#16a34a" : "var(--ink-faint,#64748b)"};">${isConnected(c.key) ? "Contract connected ✓ — code verified on chain " + c.chainId + ". Reads enabled." : ""}</div>
   `;
   meta.querySelector("input.addr").addEventListener("input", e => {
     state.addresses[c.key] = e.target.value.trim();
     persistAddresses();
+    // A changed address is no longer the verified one — drop THIS contract's
+    // connection only; every other connected contract stays connected.
+    if (state.connections[c.key] && !isConnected(c.key)) {
+      delete state.connections[c.key];
+      persistConnections();
+      var b = meta.querySelector(".connect-contract-btn"), s = meta.querySelector(".cc-status");
+      if (b) b.textContent = "Connect Contract";
+      if (s) { s.textContent = ""; s.style.color = "var(--ink-faint,#64748b)"; }
+    }
     if (c.key === "PAY") scheduleTreasuryRefresh(800);
   });
   // Connect Contract: verify + read the contract at the entered address (read-only, no wallet needed)
@@ -1700,6 +1774,9 @@ function renderPanels() {
       var prov = await getReadProvider(c.chainId);
       var code = await prov.getCode(addr);
       if (!code || code === "0x") { setStatus("No contract at this address on chain " + c.chainId + ".", "#dc2626"); return; }
+      state.connections[c.key] = { addr: addr, chainId: c.chainId, at: Date.now() };
+      persistConnections();
+      if (__ccBtn) __ccBtn.textContent = "Connected ✓";
       setStatus("Contract connected ✓ — code verified on chain " + c.chainId + ". Reads enabled.", "#16a34a");
       if (c.key === "PAY") scheduleTreasuryRefresh(200);
     } catch (err) {
@@ -2258,7 +2335,78 @@ function compute24hDelta(currentTotal, history) {
 }
 
 // Main refresh — reads PossessioPayments treasury balances
+// The treasury card follows the spine: the active contract tab decides which
+// view it renders. VAULT gets its own live view (the desk's capital); every
+// other tab shows the Payments treasury as before.
+async function refreshTreasuryVault() {
+  const amountEl  = document.getElementById("tc-amount");
+  const deltaEl   = document.getElementById("tc-delta");
+  const statusEl  = document.getElementById("tc-status");
+  const refreshBtn= document.getElementById("tc-refresh");
+  const bd        = document.getElementById("tc-breakdown");
+  const posEl     = document.getElementById("tc-positions");
+  if (posEl) posEl.hidden = true; // the send rows are Payments-only
+
+  const addr = state.addresses["VAULT"];
+  const usd6 = (x) => "$" + Number(ethers.formatUnits(x, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const row  = (k, v) => `<div class="tc-row"><span class="tc-row-k">${k}</span><span class="tc-row-v">${v}</span></div>`;
+
+  if (!addr || !ethers.isAddress(addr)) {
+    amountEl.textContent = "$—";
+    deltaEl.textContent = ""; deltaEl.className = "tc-delta";
+    if (bd) bd.innerHTML = row("Available", "$—") + row("At the rail", "$—");
+    statusEl.className = "tc-status";
+    statusEl.textContent = "Paste your Funding Vault address in the Vault tab to see live amounts.";
+    return;
+  }
+
+  statusEl.className = "tc-status loading";
+  statusEl.textContent = "Reading vault state…";
+  if (refreshBtn) refreshBtn.classList.add("spinning");
+  try {
+    const ABI = [
+      "function available() view returns (uint256)", "function outstanding() view returns (uint256)",
+      "function maxPerTrade() view returns (uint256)", "function dailyDrawCap() view returns (uint256)",
+      "function drawableToday() view returns (uint256)", "function paused() view returns (bool)",
+    ];
+    const r = (await tryReadLadder(8453, (p) => {
+      const v = new ethers.Contract(addr, ABI, p);
+      return Promise.all([v.available(), v.outstanding(), v.maxPerTrade(), v.dailyDrawCap(), v.drawableToday(), v.paused()]);
+    })).result;
+    const avail = r[0], outs = r[1], mpt = r[2], cap = r[3], today = r[4], paused = r[5];
+    amountEl.textContent = usd6(avail + outs);
+    deltaEl.textContent = paused ? "PAUSED" : "";
+    deltaEl.className = "tc-delta" + (paused ? " down" : "");
+    if (bd) bd.innerHTML =
+      row("Available <span style='color:var(--ink-faint)'>(idle — owner-withdrawable)</span>", usd6(avail)) +
+      row("At the rail <span style='color:var(--ink-faint)'>(outstanding)</span>", usd6(outs)) +
+      row("Drawable today", usd6(today)) +
+      row("Max per trade", usd6(mpt)) +
+      row("Daily cap", usd6(cap));
+    statusEl.className = "tc-status";
+    statusEl.textContent = "Funding Vault · live on Base 8453 · total = available + capital at the rail.";
+  } catch (e) {
+    statusEl.className = "tc-status err";
+    statusEl.textContent = "Vault read failed on every provider (" + String((e && (e.shortMessage || e.message)) || e).slice(0, 100) + ") — retry.";
+  } finally {
+    if (refreshBtn) refreshBtn.classList.remove("spinning");
+  }
+}
+
 async function refreshTreasury(opts) {
+  const labelEl = document.getElementById("tc-label");
+  if (state.activeKey === "VAULT") {
+    if (labelEl) labelEl.textContent = "Funding Vault — desk capital";
+    return refreshTreasuryVault();
+  }
+  if (labelEl) labelEl.textContent = "Your Treasury";
+  // Restore the default breakdown if the vault view replaced it.
+  if (!document.getElementById("tc-liquid")) {
+    const bd = document.getElementById("tc-breakdown");
+    if (bd) bd.innerHTML =
+      '<div class="tc-row"><span class="tc-row-k">Liquid</span><span class="tc-row-v" id="tc-liquid">$—</span></div>' +
+      '<div class="tc-row"><span class="tc-row-k">Earning</span><span class="tc-row-v" id="tc-earning">$—</span></div>';
+  }
   const amountEl  = document.getElementById("tc-amount");
   const deltaEl   = document.getElementById("tc-delta");
   const liquidEl  = document.getElementById("tc-liquid");
@@ -2472,6 +2620,7 @@ var __tcRefresh = document.getElementById("tc-refresh");
 if (__tcRefresh) __tcRefresh.onclick = () => refreshTreasury();
 
 loadAddresses();
+loadConnections();
 renderTabs();
 renderPanels();
 updateWalletUI();
@@ -2780,10 +2929,19 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         return render();
       }
 
-      const factory = new ethers.Contract(factoryAddr, FACTORY_ABI, provider);
-      // D4: the chain is the price authority.
-      S.fee = await factory.DEPLOYMENT_FEE();
-      S.codehash = await factory.templateCodehash();
+      // D4: the chain is the price authority. Reads go down the provider
+      // ladder (wallet RPCs drop eth_call bursts and rate-limits masquerade
+      // as reverts in ethers v6) — the wallet is for identity and signing,
+      // never the only read path.
+      const readFactory = (p) => {
+        const f = new ethers.Contract(factoryAddr, FACTORY_ABI, p);
+        return Promise.all([f.DEPLOYMENT_FEE(), f.templateCodehash()]);
+      };
+      const fr = (typeof tryReadLadder === "function")
+        ? (await tryReadLadder(chainId, readFactory)).result
+        : await readFactory(provider);
+      S.fee = fr[0];
+      S.codehash = fr[1];
 
       // D2: fetch + pre-verify the template bytes.
       const res = await fetch(CFG.TEMPLATE_ARTIFACT_URL, { cache: "no-store" });
@@ -3352,7 +3510,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{}};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[]};
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3390,8 +3548,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var now=Math.max(t.entry*(1+drift),t.entry*0.15);
     return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
   // Map a real /radar/candidates `live` row into a desk coin. Radar screens
-  // Solana/pump.fun, so ch="sol" — these route to the Solana-trader gate until
-  // that desk ships; Base coins appear here only once the radar screens Base.
+  // Solana/pump.fun, so ch="sol". Base coins come from the Base screen
+  // (pollBase, GeckoTerminal) and merge into the same list. Every pick trades
+  // through the connected BASE vault — the chain tag is the keeper's
+  // execution leg, not a gate.
   function esc(x){ return (x==null?"":String(x)).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch];}); }
   // Normalizes a candidates row (live/recent: entry_mc/last_mc/qualified_ms) OR an
   // earlies row (early: first_hit_mc/dex_mc/first_hit_ms) into one desk coin shape.
@@ -3446,6 +3606,49 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
     $("#dk-dropnote").textContent="preview · demo data · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
 
+  /* THE BASE SCREEN — real Base-chain coins for the live Base desk. Source is
+     GeckoTerminal's public per-network feeds (keyless, CORS-open): trending
+     pools for momentum picks, new pools for newborns. Rows are REAL (token
+     address, live mc, pool age) and merge into the same list as the radar's
+     Solana rows. On any failure S.baseRows just stays empty — never faked. */
+  var GT_BASE="https://api.geckoterminal.com/api/v2/networks/base";
+  function mapGT(p,kind){ try{
+    var a=p.attributes||{}; var rel=(p.relationships&&p.relationships.base_token&&p.relationships.base_token.data&&p.relationships.base_token.data.id)||"";
+    var addr=rel.replace(/^base_/,""); if(!addr)return null;
+    var sym=String(a.name||"?").split("/")[0].trim(); if(/^(WETH|USDC|USDbC|cbETH|cbBTC|DAI|EURC|wstETH)$/i.test(sym))return null; // majors are venues, not picks
+    var mc=Number(a.market_cap_usd!=null?a.market_cap_usd:a.fdv_usd)||0; if(!(mc>0))return null;
+    var pc=a.price_change_percentage||{}; var h1=Number(pc.h1)||0, m5=Number(pc.m5)||0;
+    var entry=h1? mc/(1+h1/100):mc;
+    var read=kind==="newborn"?["reading","newborn"]:(m5>2?["go","▲ trending"]:(m5>0?["flow","● flow in"]:["reading","screening"]));
+    return {id:"base-"+addr, s:sym.slice(0,10), n:String(a.name||"").slice(0,24), ch:"base", ico:"🔵", img:null,
+      entry:entry, now:mc, peak:mc, born:a.pool_created_at?Date.parse(a.pool_created_at):Date.now(),
+      read:read, hot:m5>2, addr:addr, dev:"", devN:null};
+  }catch(e){ return null; } }
+  function pollBase(){
+    var get=function(u){ return fetch(u,{cache:"no-store"}).then(function(r){return r.ok?r.json():{data:[]};}).catch(function(){return {data:[]};}); };
+    Promise.all([get(GT_BASE+"/trending_pools?page=1"),get(GT_BASE+"/new_pools?page=1")]).then(function(res){
+      var tr=((res[0]&&res[0].data)||[]).slice(0,8).map(function(p){return mapGT(p,"trend");});
+      var nw=((res[1]&&res[1].data)||[]).slice(0,6).map(function(p){return mapGT(p,"newborn");});
+      var seen={}, out=[];
+      tr.concat(nw).forEach(function(c){ if(c&&!seen[c.addr]){ seen[c.addr]=1; out.push(c); } });
+      S.baseRows=out.slice(0,5);
+      mergeRender();
+    });
+  }
+  // One list, two screens: radar's Solana rows lead (the entry window is the
+  // signal), Base rows interleave after every second Solana row. Real rows
+  // only — the demo pool appears solely when BOTH screens are unreachable.
+  function mergeRender(){
+    var sol=S.solRows||[], base=S.baseRows||[];
+    if(!sol.length&&!base.length){ if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
+    var out=[], si=0, bi=0;
+    while(out.length<15&&(si<sol.length||bi<base.length)){
+      if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
+      if(bi<base.length){ out.push(base[bi++]); }
+    }
+    S.source="live"; S.live=out.slice(0,15); renderList();
+  }
+
   // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
   // pool with actual /radar/candidates `live` rows. On any failure, stays in (or
   // falls back to) preview — never a fabricated "live" state.
@@ -3464,24 +3667,29 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
-        S.source="live"; S.live=rows; S.inWindow=live.length; renderList();
+        S.solRows=rows; S.inWindow=live.length; mergeRender();
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
         var t=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-        $("#dk-dropnote").textContent=rows.length? ("live · "+live.length+" in the entry window · "+rows.length+" on screen · "+t)
-                                                 : "live · screen is quiet right now · "+t;
+        var baseN=(S.baseRows||[]).length;
+        $("#dk-dropnote").textContent=S.live.length? ("live · "+live.length+" in the entry window · "+S.live.length+" on screen"+(baseN?(" · "+baseN+" Base"):"")+" · "+t)
+                                                   : "live · screen is quiet right now · "+t;
       })
       .catch(function(){
+        S.solRows=[];
+        if((S.baseRows||[]).length){ mergeRender(); $("#dk-dropnote").textContent="live · Solana radar unreachable · Base screen live"; return; }
         if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
           $("#dk-dropnote").textContent="preview · demo data (live feed unreachable)"; }
       });
   }
 
-  /* pick — GATED. Base needs the connected Base trader; Solana needs its own desk. */
+  /* pick — GATED on the connected Base trader only. The BASE DESK IS THE
+     TRADER for every pick: capital draws from the Base vault via drawForTrade
+     regardless of where the coin lives; the pick's chain is the keeper's
+     execution leg (Base DEX at the rail, or the keeper's Solana route). */
   var pending=null;
   function pick(id,bps){ var c=S.live.filter(function(x){return x.id===id;})[0]; if(!c)return;
-    if(c.ch==="sol"){ sheetGate("sol"); return; }
     if(!S.connected){ sheetGate("base"); return; }
     pending={c:c,bps:bps};
     var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
@@ -3491,8 +3699,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var act=canDraw
       ? '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Draw &amp; open</button>'
       : '<button class="b-pri" style="opacity:.5" disabled>'+(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault'))+'</button>';
+    var isSol=c.ch==="sol";
     $("#dk-sheet").innerHTML=
-      '<h3>Open '+esc(c.s)+' <span class="ctag base" style="vertical-align:2px">BASE</span></h3>'+
+      '<h3>Open '+esc(c.s)+' <span class="ctag '+esc(c.ch)+'" style="vertical-align:2px">'+(isSol?"SOL":"BASE")+'</span></h3>'+
       '<p class="sub">'+esc(c.n)+' · you set the upside, the desk holds the exit.</p>'+
       '<div class="terms">'+
         '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
@@ -3502,19 +3711,18 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '</div>'+
       '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC drawn from your vault</label>'+
         '<input id="dk-size" inputmode="decimal" value="'+(defUsd>0?defUsd.toFixed(2):"")+'" placeholder="e.g. 500" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
-      '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>). The stop is a trigger, not a guaranteed fill.</div>'+
+      '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your <b>Base</b> vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. '+(isSol
+        ? 'This is a <b>Solana</b> pick: the capital and caps live on Base; the keeper executes the Solana leg (Jupiter route) and fires the −10%/target exit (<b>keeper cross-chain execution is the next build</b>).'
+        : 'The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>).')+' The stop is a trigger, not a guaranteed fill.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+act+'</div>';
     $("#dk-scrim").classList.add("on");
   }
   function sheetGate(chain){
-    var isSol=chain==="sol";
-    $("#dk-sheet").innerHTML='<h3>'+(isSol?"Solana trade":"Connect your Base trader")+'</h3>'+
+    $("#dk-sheet").innerHTML='<h3>Connect your Base trader</h3>'+
       '<p class="sub">The list is open to watch. Placing a trade needs a trader.</p>'+
-      '<div class="note-h">'+(isSol
-        ? 'This is a <b>Solana</b> pick. A Solana trade routes through a Solana trader (its own capped vault + Jupiter rail) — <b>not launched yet</b>. Base picks work today once you connect your Base vault.'
-        : 'To place a <b>Base</b> trade, connect your deployed Base trading vault in the bar at the top — the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds.')+'</div>'+
+      '<div class="note-h">Every pick — Base or Solana — trades through your deployed <b>Base</b> trading vault: connect it in the bar at the top, the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds. The pick&#39;s chain only decides where the keeper executes.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button>'+
-      (isSol?'':'<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button>')+'</div>';
+      '<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button></div>';
     $("#dk-scrim").classList.add("on");
   }
   function closeSheet(){ $("#dk-scrim").classList.remove("on"); pending=null; }
@@ -3592,19 +3800,34 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(!window.ethers||!ethers.isAddress(addr)){ set("Invalid address (bad checksum or format).","err"); return; }
     set("Connecting to vault…","info"); S.connected=false; S.vault=null; box.classList.remove("on");
     try{
-      var prov=(typeof getReadProvider==="function")? await getReadProvider(CHAIN_ID) : new ethers.JsonRpcProvider("https://mainnet.base.org");
-      var code=await prov.getCode(addr);
-      if(!code||code==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
-      var v=new ethers.Contract(addr,VAULT_ABI,prov);
-      var trader,owner,mpt,avail,outs,paused;
-      try{ trader=await v.trader(); owner=await v.owner(); mpt=await v.maxPerTrade();
-        avail=await v.available(); outs=await v.outstanding(); paused=await v.paused(); }
-      catch(_){ set("Contract found, but it isn't a Funding Vault (no vault surface). Buys need a Funding Vault.","err"); renderList(); return; }
+      // Read the vault surface down the provider ladder. Wallet in-app RPCs
+      // drop eth_call bursts and public RPCs rate-limit mobile IPs — and
+      // ethers v6 reports both as CALL_EXCEPTION "missing revert data",
+      // identical to a real revert. So: walk independent providers, and only
+      // claim "not a vault" when at least TWO distinct providers agree it is
+      // a genuine revert/decode failure. Anything less is called what it is:
+      // RPC trouble, retry.
+      function readSurface(p){ var v=new ethers.Contract(addr,VAULT_ABI,p);
+        return Promise.all([v.trader(),v.owner(),v.maxPerTrade(),v.available(),v.outstanding(),v.paused()]); }
+      var codeRes=await tryReadLadder(CHAIN_ID,function(p){return p.getCode(addr);});
+      if(!codeRes.result||codeRes.result==="0x"){ set("No contract at this address on Base (chain 8453).","err"); return; }
+      var reads;
+      try{ reads=(await tryReadLadder(CHAIN_ID,readSurface)).result; }
+      catch(e2){
+        var msg=String((e2&&(e2.shortMessage||e2.message))||e2);
+        var surfaceMiss=(e2.revertVotes||0)>=2;
+        set(surfaceMiss
+          ? "Contract found, but it isn't a Funding Vault (no vault surface: "+msg.slice(0,90)+"). Buys need a Funding Vault."
+          : "RPC reads failed on every provider ("+msg.slice(0,100)+") — network/rate-limit trouble, not the contract. Wait a few seconds and hit Connect again.","err");
+        renderList(); return;
+      }
+      var trader=reads[0],owner=reads[1],mpt=reads[2],avail=reads[3],outs=reads[4],paused=reads[5];
       var wallet=""; try{ if(window.ethereum){ var a=await window.ethereum.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
       S.wallet=wallet;
       var role=wallet? (wallet.toLowerCase()===String(trader).toLowerCase()?"trader":(wallet.toLowerCase()===String(owner).toLowerCase()?"owner":"other")) : "none";
       S.vault={ addr:addr, trader:String(trader), owner:String(owner), maxPerTrade:BigInt(mpt), available:BigInt(avail), outstanding:BigInt(outs), paused:!!paused, role:role };
       S.connected=true; box.classList.add("on"); $("#dk-cbtn").textContent="Connected ✓";
+      try{ localStorage.setItem("possessio_desk_vault", addr); }catch(e){}
       var roleMsg = role==="trader" ? "you hold the trader key — Base buys are live."
                    : role==="none"  ? "connect your wallet to buy (drawForTrade needs the trader key)."
                    : "this wallet is the "+role+", not the trader — buys need the trader key.";
@@ -3616,7 +3839,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ set("Connect failed: "+((e&&e.message)||e),"err"); }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(driftPositions,650));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650));
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
@@ -3626,7 +3849,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       renderTicks(); setRegime();
       if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
       renderList(); renderPos();
-      stopTimers(); startTimers(); pollFeed(); connectWS(); },
+      // Stay connected: a vault verified in an earlier visit reconnects on
+      // open — prefill the saved address and re-run the same verify path, so
+      // the green state is re-earned from the chain, never assumed.
+      try{ var savedVault=localStorage.getItem("possessio_desk_vault");
+        if(savedVault&&!S.connected){ var ai=$("#dk-addr");
+          if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
+      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect

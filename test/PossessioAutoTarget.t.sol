@@ -11,7 +11,8 @@ import {MockEIP3009USDC} from "./X402TestnetMocks.sol";
 contract PossessioAutoTargetTest is Test {
     PossessioAutoTarget internal desk;
     MockEIP3009USDC internal usdc;
-    MockHeart internal heart;
+    MockHeart internal heart;      // kept: proves V2 REJECTS an accounted pool as sink
+    address internal tollSink;     // V2: the fee's plain-push destination
 
     uint256 internal constant FEE = 20_000; // $0.02 in 6-dec USDC
     uint32 internal constant CHAIN = 8453; // Base (EVM rail) for these unit tests
@@ -27,7 +28,8 @@ contract PossessioAutoTargetTest is Test {
         tokenRef = bytes32(uint256(uint160(makeAddr("pickedToken"))));
         usdc = new MockEIP3009USDC();
         heart = new MockHeart(address(usdc));
-        desk = new PossessioAutoTarget(address(usdc), address(heart), keeper, FEE);
+        tollSink = makeAddr("tollSink");
+        desk = new PossessioAutoTarget(address(usdc), tollSink, keeper, FEE);
         usdc.mint(user, 1_000_000); // $1 of fees available
     }
 
@@ -129,13 +131,24 @@ contract PossessioAutoTargetTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-              DoD #3 - FEE SETTLES + ROUTES TO THE HEART
+              DoD #3 - FEE SETTLES + PUSHES TO THE TOLL SINK (V2)
     //////////////////////////////////////////////////////////////*/
 
-    function test_fee_routes_into_heart() public {
+    function test_fee_pushes_to_tollSink() public {
         _open(2500, 1e18, keccak256("n1"));
-        assertEq(heart.received(), FEE, "Heart credited the exact fee");
-        assertEq(usdc.balanceOf(address(heart)), FEE, "Heart holds the fee");
+        assertEq(usdc.balanceOf(tollSink), FEE, "toll sink holds the exact fee (plain push)");
+    }
+
+    /// V2 guard, inverted from V1: an accounted-pull pool (isInfraSink()==true)
+    /// is REJECTED as the sink — a plain push there is uncredited dead weight.
+    /// Any EOA or plain contract is accepted.
+    function test_constructor_rejects_accountedPool_acceptsAnythingElse() public {
+        vm.expectRevert(PossessioAutoTarget.TollSinkIsAccountedPool.selector);
+        new PossessioAutoTarget(address(usdc), address(heart), keeper, FEE);
+        // an EOA sink constructs fine…
+        new PossessioAutoTarget(address(usdc), makeAddr("eoaSink"), keeper, FEE);
+        // …and so does a plain contract without the pool marker (the mock token).
+        new PossessioAutoTarget(address(usdc), address(usdc), keeper, FEE);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -145,7 +158,7 @@ contract PossessioAutoTargetTest is Test {
     function test_non_custodial_zero_balance() public {
         _open(1000, 1e18, keccak256("n1"));
         assertEq(usdc.balanceOf(address(desk)), 0, "desk holds no USDC");
-        assertEq(usdc.allowance(address(desk), address(heart)), 0, "no residual allowance");
+        assertEq(usdc.allowance(address(desk), tollSink), 0, "no allowance exists at all (plain push, no approve)");
     }
 
     /*//////////////////////////////////////////////////////////////
