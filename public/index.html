@@ -4133,6 +4133,13 @@ try {
      the user's own wallet buys the coin and grants a bounded, revocable
      permission for the desk to fire the stop.
      ============================================================ -->
+<script>
+  /* The Solana keeper the delegate is granted to. PUBLIC by nature — it is the
+     address users authorise, so it belongs in the client. Treat it as
+     semi-permanent: existing grants point AT this pubkey, so rotating it means
+     every user must re-grant before their stop can fire again. */
+  window.POSSESSIO_SOLANA_KEEPER = "ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5";
+</script>
 <script type="module">
   window.PossessioMiniApp = { ready:false, address:null, keeper:null, reason:"not initialised" };
   try {

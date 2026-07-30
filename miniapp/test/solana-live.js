@@ -119,6 +119,18 @@ async function simulate(txBase64OrTx, label) {
   // earlier. A simulation does not persist that state, so the grant is
   // certified against a wallet that genuinely holds the coin — which is
   // exactly the state the user is in when they grant it.
+  // The keeper pays the fee on the delegated exit, so an UNFUNDED keeper makes
+  // that step fail with a bare "AccountNotFound" — which reads like a broken
+  // route and is really an empty wallet. Name it before it can mislead.
+  try {
+    const kbal = await conn.getBalance(new PublicKey(KEEPER));
+    if (kbal === 0) {
+      console.log(`  NOTE  keeper ${KEEPER.slice(0, 8)}… holds 0 SOL — it cannot pay fees yet, so the`);
+      console.log(`        delegated-exit step below will fail with AccountNotFound. Fund it (~0.05 SOL)`);
+      console.log(`        and re-run; every other step is independent of it.`);
+    }
+  } catch { /* balance probe is advisory only */ }
+
   let holder;
   try { holder = await findHolder(MINT, 0); }
   catch (e) { no("find a real holder of the coin", e.message); return done(); }
