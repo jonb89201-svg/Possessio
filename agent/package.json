@@ -1,0 +1,17 @@
+{
+  "name": "possessio-remote-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Solana execution leg for the Possessio trading desk. Executes human-authored intents; decides nothing.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dry": "DRY_RUN=1 node index.js",
+    "test": "node test/agent.test.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.0",
+    "bs58": "^6.0.0",
+    "viem": "^2.21.0"
+  }
+}
