@@ -18,7 +18,7 @@
 // RAIL_SALT + RAIL_PREDICTED. Proven offline by test/TradingDeskCreate3.t.sol.
 //
 // RUN (fork first — NEVER blind-fire an immutable prewire):
-//   DEPLOYER_PK=<desk EOA> USDC=0x833589.. TOLL_SINK=0x.. KEEPER=0x.. DEX_ROUTER=0x.. \
+//   DEPLOYER_PK=<desk EOA> USDC=0x833589.. TOLL_SINK=0x.. WETH=0x4200..0006 REMOTE_AGENT=0x.. REMOTE_LEG_TIMEOUT=86400 KEEPER=0x.. DEX_ROUTER=0x.. \
 //   VAULT_OWNER=0x.. AT_PER_TX_FEE=.. MAX_PER_TRADE=.. MAX_OUTSTANDING=.. DAILY_DRAW_CAP=.. \
 //   RAIL_SALT=0x.. RAIL_PREDICTED=0x.. \
 //   forge script script/DeployTradingDeskCreate3.s.sol --rpc-url $BASE_RPC_URL -vvv
@@ -66,6 +66,9 @@ contract DeployTradingDeskCreate3 is Script {
         uint256 maxPer    = vm.envUint("MAX_PER_TRADE");
         uint256 maxOut    = vm.envUint("MAX_OUTSTANDING");
         uint256 daily     = vm.envUint("DAILY_DRAW_CAP");
+        address weth      = vm.envAddress("WETH");           // the ONE permitted multi-hop middle
+        address remoteAgt = vm.envAddress("REMOTE_AGENT");   // Solana-leg capital destination
+        uint256 remoteTo  = vm.envUint("REMOTE_LEG_TIMEOUT");// owner may release a dead leg after this
         bytes32 railSalt  = vm.envBytes32("RAIL_SALT");
         address railPinned = vm.envAddress("RAIL_PREDICTED");
 
@@ -104,7 +107,7 @@ contract DeployTradingDeskCreate3 is Script {
         // 3. Rail via CREATE3 into the predicted slot.
         bytes memory initCode = abi.encodePacked(
             type(PossessioRail).creationCode,
-            abi.encode(usdc, vault, at, keeper, dexRouter)
+            abi.encode(usdc, vault, at, keeper, dexRouter, weth, remoteAgt, remoteTo)
         );
         rail = CREATEX.deployCreate3(railSalt, initCode);
 

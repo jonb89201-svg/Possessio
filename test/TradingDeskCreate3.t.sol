@@ -53,6 +53,8 @@ contract TradingDeskCreate3Test is Test {
     address internal owner     = makeAddr("vaultOwner");
     address internal keeper    = makeAddr("keeper");
     address internal dexRouter = makeAddr("dexRouter");
+    address internal constant WETH_BASE = 0x4200000000000000000000000000000000000006;
+    address internal constant REMOTE_AGENT = address(0xA6E47);
 
     uint256 constant MAX_PER_TRADE   = 3_500e6;
     uint256 constant MAX_OUTSTANDING = 10_000e6;
@@ -87,7 +89,7 @@ contract TradingDeskCreate3Test is Test {
     function _railInit(address vault, address at) internal view returns (bytes memory) {
         return abi.encodePacked(
             type(PossessioRail).creationCode,
-            abi.encode(address(usdc), vault, at, keeper, dexRouter)
+            abi.encode(address(usdc), vault, at, keeper, dexRouter, WETH_BASE, REMOTE_AGENT, uint256(24 hours))
         );
     }
 

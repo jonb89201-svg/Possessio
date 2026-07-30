@@ -21,6 +21,7 @@ contract PossessioRailForkTest is Test {
     address constant WETH   = 0x4200000000000000000000000000000000000006; // the swap "token"
     address constant ROUTER = 0x2626664c2603336E57B271c5C0b26F421741e481; // Uniswap V3 SwapRouter02
     uint24  constant FEE    = 500; // USDC/WETH 0.05% pool (deep)
+    address constant REMOTE_AGENT = address(0xA6E47); // stand-in agent (dual-leg fork proof)
 
     MockAutoTarget at;
     PossessioFundingVault vault;
@@ -44,7 +45,7 @@ contract PossessioRailForkTest is Test {
         uint256 n = vm.getNonce(address(this));
         address predictedRail = vm.computeCreateAddress(address(this), n + 1);
         vault = new PossessioFundingVault(IERC20(USDC), owner, predictedRail, predictedRail, MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP);
-        rail  = new PossessioRail(IERC20(USDC), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(ROUTER));
+        rail  = new PossessioRail(IERC20(USDC), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(ROUTER), WETH, REMOTE_AGENT, 24 hours);
         require(address(rail) == predictedRail, "prewire");
 
         deal(USDC, owner, 10_000e6);
@@ -56,7 +57,7 @@ contract PossessioRailForkTest is Test {
 
         // ENTER — draw 1,000 USDC, real swap USDC→WETH
         vm.prank(keeper);
-        rail.enter(1, WETH, 1_000e6, 1, FEE); // loose minOut; deep pool
+        rail.enter(1, WETH, 1_000e6, 1, false, FEE, 0); // loose minOut; deep pool
 
         (, uint256 usdcIn, uint256 wethAmt, PossessioRail.Status st) = rail.getPosition(1);
         assertEq(usdcIn, 1_000e6);
@@ -69,7 +70,7 @@ contract PossessioRailForkTest is Test {
         // RESOLVE (keeper authorized the exit) then EXIT — real swap WETH→USDC → home
         at.setStatus(1, 2);
         vm.prank(keeper);
-        rail.exit(1, 1, FEE);
+        rail.exit(1, 1);
 
         assertEq(vault.outstanding(), 0, "exposure cleared");
         assertEq(IERC20(WETH).balanceOf(address(rail)), 0, "token sold");
@@ -85,10 +86,10 @@ contract PossessioRailForkTest is Test {
     function test_fork_ownerExit_realDEX() public {
         at.setIntent(2, WETH, 8453, 1); // Open, never resolved
         vm.prank(keeper);
-        rail.enter(2, WETH, 1_000e6, 1, FEE);
+        rail.enter(2, WETH, 1_000e6, 1, false, FEE, 0);
         // keeper never resolves — owner force-closes through the real DEX
         vm.prank(owner);
-        rail.ownerExit(2, 1, FEE);
+        rail.ownerExit(2, 1);
         assertEq(vault.outstanding(), 0);
         assertEq(IERC20(WETH).balanceOf(address(rail)), 0);
         assertGt(IERC20(USDC).balanceOf(address(vault)), 9_000e6);

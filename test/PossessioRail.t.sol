@@ -57,10 +57,31 @@ contract MockSwapRouter {
         IERC20(p.tokenOut).transfer(p.recipient, out);
         return out;
     }
+    /// @dev Multi-hop mock: the Rail builds the path, so the mock only needs the
+    ///      ends — first 20 bytes tokenIn, last 20 bytes tokenOut. Records the
+    ///      exact path bytes so tests can assert the ROUTE the Rail assembled.
+    bytes public lastPath;
+    function exactInput(ISwapRouter.ExactInputParams calldata p) external returns (uint256) {
+        lastPath = p.path;
+        address tIn;  address tOut;
+        bytes memory path = p.path;
+        require(path.length >= 43, "bad path");
+        assembly {
+            tIn := shr(96, mload(add(path, 32)))
+            tOut := shr(96, mload(add(add(path, 32), sub(mload(path), 20))))
+        }
+        IERC20(tIn).transferFrom(msg.sender, address(this), p.amountIn);
+        uint256 out = nextOut;
+        require(out >= p.amountOutMinimum, "slippage");
+        IERC20(tOut).transfer(p.recipient, out);
+        return out;
+    }
 }
 
 contract PossessioRailTest is Test {
-    MockUSDC usdc; MockToken token; MockSwapRouter router; MockAutoTarget at;
+    MockUSDC usdc; MockToken token; MockToken weth; MockSwapRouter router; MockAutoTarget at;
+    address remoteAgent = makeAddr("remoteAgent");
+    uint256 constant REMOTE_TIMEOUT = 24 hours;
     PossessioFundingVault vault; PossessioRail rail;
 
     address owner  = makeAddr("owner");
@@ -73,12 +94,12 @@ contract PossessioRailTest is Test {
     uint24  constant FEE = 3000;
 
     function setUp() public {
-        usdc = new MockUSDC(); token = new MockToken(); router = new MockSwapRouter(); at = new MockAutoTarget();
+        usdc = new MockUSDC(); token = new MockToken(); weth = new MockToken(); router = new MockSwapRouter(); at = new MockAutoTarget();
         // predict the Rail's address (next-next CREATE) and pin the vault to it
         uint256 n = vm.getNonce(address(this));
         address predictedRail = vm.computeCreateAddress(address(this), n + 1);
         vault = new PossessioFundingVault(IERC20(address(usdc)), owner, predictedRail, predictedRail, MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP);
-        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)));
+        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT);
         assertEq(address(rail), predictedRail, "prewire prediction");
         // fund the vault; pre-fund the router with both sides so it can pay out
         usdc.mint(owner, 10_000e6);
@@ -95,7 +116,7 @@ contract PossessioRailTest is Test {
         _openIntent(1, 1); // Open
         router.setOut(500e18); // 3,000 USDC -> 500 MEME
         vm.prank(keeper);
-        rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
 
         (address t, uint256 usdcIn, uint256 tokenAmt, PossessioRail.Status st) = rail.getPosition(1);
         assertEq(t, address(token)); assertEq(usdcIn, 3_000e6); assertEq(tokenAmt, 500e18);
@@ -109,14 +130,14 @@ contract PossessioRailTest is Test {
         _openIntent(1, 1);
         vm.prank(rando);
         vm.expectRevert(PossessioRail.NotKeeper.selector);
-        rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
     }
 
     function test_enter_overPerTradeCap_reverts_noPosition() public {
         _openIntent(1, 1);
         vm.prank(keeper);
         vm.expectRevert(PossessioFundingVault.PerTradeCapExceeded.selector); // the vault's cap bites
-        rail.enter(1, address(token), MAX_PER_TRADE + 1, 1e18, FEE);
+        rail.enter(1, address(token), MAX_PER_TRADE + 1, 1e18, false, FEE, 0);
         (, , , PossessioRail.Status st) = rail.getPosition(1);
         assertEq(uint8(st), uint8(PossessioRail.Status.None));
         assertEq(vault.outstanding(), 0);
@@ -126,7 +147,7 @@ contract PossessioRailTest is Test {
         at.setIntent(1, address(token), 101, 1); // Solana-tagged
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.WrongChain.selector);
-        rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
     }
 
     function test_enter_tokenMismatch_reverts() public {
@@ -134,43 +155,43 @@ contract PossessioRailTest is Test {
         MockToken other = new MockToken();
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.TokenMismatch.selector);
-        rail.enter(1, address(other), 3_000e6, 1e18, FEE);
+        rail.enter(1, address(other), 3_000e6, 1e18, false, FEE, 0);
     }
 
     function test_enter_intentNotOpen_reverts() public {
         _openIntent(1, 2); // already Resolved, not Open
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.IntentNotOpen.selector);
-        rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
     }
 
     function test_enter_reuseId_reverts() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 1_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 1_000e6, 1e18, false, FEE, 0);
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.PositionExists.selector);
-        rail.enter(1, address(token), 1_000e6, 1e18, FEE);
+        rail.enter(1, address(token), 1_000e6, 1e18, false, FEE, 0);
     }
 
     // ─────────────────── exit — rule-gated + round-trip ────────────────────
 
     function test_exit_blockedUntilResolved() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         // intent still Open -> exit must be refused
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.ExitNotAuthorized.selector);
-        rail.exit(1, 1, FEE);
+        rail.exit(1, 1);
     }
 
     function test_exit_profit_returnsToVault_pnlPositive() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         at.setStatus(1, 2); // AutoTarget authorizes the exit (target/stop crossed)
         router.setOut(3_600e6); // 500 MEME -> 3,600 USDC (profit)
         vm.expectEmit(true, false, false, true, address(rail));
         emit PossessioRail.Exited(1, 3_600e6, int256(600e6));
-        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(keeper); rail.exit(1, 1);
 
         assertEq(vault.outstanding(), 0);                          // exposure cleared
         assertEq(usdc.balanceOf(address(vault)), 7_000e6 + 3_600e6); // war chest grew
@@ -181,55 +202,55 @@ contract PossessioRailTest is Test {
 
     function test_exit_loss_returnsToVault_pnlNegative() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         at.setStatus(1, 2);
         router.setOut(2_000e6); // sold at a loss
         vm.expectEmit(true, false, false, true, address(rail));
         emit PossessioRail.Exited(1, 2_000e6, -int256(1_000e6));
-        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(keeper); rail.exit(1, 1);
         assertEq(vault.outstanding(), 0);
         assertEq(usdc.balanceOf(address(vault)), 7_000e6 + 2_000e6);
     }
 
     function test_exit_onlyKeeper() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         at.setStatus(1, 2);
         vm.prank(rando);
         vm.expectRevert(PossessioRail.NotKeeper.selector);
-        rail.exit(1, 1, FEE);
+        rail.exit(1, 1);
     }
 
     function test_exit_terminal_cannotReExit() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         at.setStatus(1, 2); router.setOut(3_600e6);
-        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(keeper); rail.exit(1, 1);
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.PositionNotOpen.selector);
-        rail.exit(1, 1, FEE);
+        rail.exit(1, 1);
     }
 
     // ─────────────────────────── ownerExit ─────────────────────────────────
 
     function test_ownerExit_closesWithoutResolution() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         // intent STILL Open (no keeper resolution) — the owner can still bail
         router.setOut(2_500e6);
         vm.expectEmit(true, false, false, true, address(rail));
         emit PossessioRail.OwnerExited(1, 2_500e6, -int256(500e6));
-        vm.prank(owner); rail.ownerExit(1, 1, FEE);
+        vm.prank(owner); rail.ownerExit(1, 1);
         assertEq(vault.outstanding(), 0);
         assertEq(usdc.balanceOf(address(vault)), 7_000e6 + 2_500e6);
     }
 
     function test_ownerExit_onlyOwner() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         vm.prank(rando);
         vm.expectRevert(PossessioRail.NotOwner.selector);
-        rail.ownerExit(1, 1, FEE);
+        rail.ownerExit(1, 1);
     }
 
     // ─────────────────────────── sweep ─────────────────────────────────────
@@ -251,7 +272,7 @@ contract PossessioRailTest is Test {
 
     function test_sweep_blockedWhileTokenBacksOpenPosition() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         // the position token is live — sweeping it would strip the exit inventory
         assertEq(rail.openByToken(address(token)), 1);
         vm.prank(owner);
@@ -259,7 +280,7 @@ contract PossessioRailTest is Test {
         rail.sweep(address(token));
         // after a clean exit the guard releases
         at.setStatus(1, 2); router.setOut(3_600e6);
-        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(keeper); rail.exit(1, 1);
         assertEq(rail.openByToken(address(token)), 0);
         vm.prank(owner); rail.sweep(address(token)); // no revert
     }
@@ -273,7 +294,7 @@ contract PossessioRailTest is Test {
         hp.mint(address(router), 1_000_000e18); // router can pay out the buy
         at.setIntent(id, address(hp), 8453, 1);  // Open, Base-tagged
         router.setOut(500e18);
-        vm.prank(keeper); rail.enter(id, address(hp), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(id, address(hp), 3_000e6, 1e18, false, FEE, 0);
     }
 
     function test_ownerExit_revertsOnHoneypot_provingTheTrap() public {
@@ -282,7 +303,7 @@ contract PossessioRailTest is Test {
         // the honeypot blocks — so ownerExit CANNOT close it. This is why abandon exists.
         vm.prank(owner);
         vm.expectRevert(bytes("HONEYPOT: no sell"));
-        rail.ownerExit(1, 1, FEE);
+        rail.ownerExit(1, 1);
         assertEq(vault.outstanding(), 3_000e6); // still stuck without abandon
     }
 
@@ -325,9 +346,9 @@ contract PossessioRailTest is Test {
 
     function test_abandon_cannotAbandonAfterCleanExit() public {
         _openIntent(1, 1); router.setOut(500e18);
-        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, FEE);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, FEE, 0);
         at.setStatus(1, 2); router.setOut(3_600e6);
-        vm.prank(keeper); rail.exit(1, 1, FEE);
+        vm.prank(keeper); rail.exit(1, 1);
         vm.prank(owner);
         vm.expectRevert(PossessioRail.PositionNotOpen.selector);
         rail.abandon(1);
