@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#ffffff" />
-<title>POSSESSIO — Operator Console v0.5.4</title>
+<title>POSSESSIO — Operator Console v0.6.0</title>
 <meta name="base:app_id" content="6a4b1d5d02e2e34e3e7fbd30" />
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://possessio.io/og.png","button":{"title":"Open Possessio","action":{"type":"launch_miniapp","name":"Possessio","url":"https://possessio.io","splashImageUrl":"https://possessio.io/splash-200.png","splashBackgroundColor":"#556870"}}}' />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -387,7 +387,7 @@ mibLog('MIB bridge active.','#0ff');})();</script>
     <span class="wallet-pill" id="wallet-pill">No wallet</span>
     <span class="wallet-pill" id="chain-pill">Chain 8453</span>
     <div class="spacer"></div>
-    <span class="tag">v0.5.4 · 2026-07-29</span>
+    <span class="tag">v0.6.0 · 2026-07-30</span>
   </div>
 </header>
 
@@ -3690,6 +3690,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      execution leg (Base DEX at the rail, or the keeper's Solana route). */
   var pending=null;
   function pick(id,bps){ var c=S.live.filter(function(x){return x.id===id;})[0]; if(!c)return;
+    // A Solana pick is self-custody: it needs the user's own Solana wallet
+    // (Farcaster mini app), NOT the Base vault. Different gate entirely.
+    if(c.ch==="sol"){
+      var M=window.PossessioMiniApp;
+      if(!M||!M.ready){ sheetGate("sol-miniapp"); return; }
+      pending={c:c,bps:bps}; return solanaSheet(c,bps);
+    }
     if(!S.connected){ sheetGate("base"); return; }
     pending={c:c,bps:bps};
     var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
@@ -3717,7 +3724,37 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+act+'</div>';
     $("#dk-scrim").classList.add("on");
   }
+  /* The SOL trade sheet. It states the two signatures BEFORE either is asked
+     for, and names the exact authority being granted — a user should never
+     discover what they approved after approving it. */
+  function solanaSheet(c,bps){
+    var M=window.PossessioMiniApp;
+    var tgt=(bps/100), tgtPx=c.now*(1+bps/10000), stopPx=c.now*0.9;
+    $("#dk-sheet").innerHTML=
+      '<h3>Open '+esc(c.s)+' <span class="ctag sol" style="vertical-align:2px">SOL</span></h3>'+
+      '<p class="sub">'+esc(c.n)+' · your coin, your wallet, the desk holds the exit.</p>'+
+      '<div class="terms">'+
+        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
+        '<div class="trow"><span class="k">Target</span><span class="v up">+'+tgt+'% · sell at '+fmt(tgtPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Hard stop</span><span class="v stop">−10% · sell at '+fmt(stopPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Your wallet</span><span class="v dk-mono" style="font-size:11px">'+esc((M&&M.address||"").slice(0,10))+'…</span></div>'+
+      '</div>'+
+      '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC from your own wallet</label>'+
+        '<input id="dk-size" inputmode="decimal" placeholder="e.g. 25" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
+      '<div class="note-h"><b>Two signatures, and that is all.</b> First you buy the coin — it goes to <b>your</b> token account and never leaves your wallet. Then you grant the desk permission to sell <b>that one coin, up to that one amount</b>, so the −10% stop can fire while you sleep. Nothing else in your wallet is reachable, and you can <b>revoke it any time</b>. The desk never holds your funds. The stop is a trigger, not a guaranteed fill.</div>'+
+      '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+
+      '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Buy &amp; arm the stop</button></div>';
+    $("#dk-scrim").classList.add("on");
+  }
+
   function sheetGate(chain){
+    if(chain==="sol-miniapp"){
+      $("#dk-sheet").innerHTML='<h3>Solana picks live in Farcaster</h3>'+
+        '<p class="sub">The list is open to watch anywhere.</p>'+
+        '<div class="note-h">A Solana pick is <b>self-custody</b>: the coin is bought by <b>your own wallet</b> and stays there. That needs the Solana wallet built into the Farcaster app, so open Possessio as a mini app there to trade Solana picks. Base picks work here in the browser with your connected vault.</div>'+
+        '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button></div>';
+      $("#dk-scrim").classList.add("on"); return;
+    }
     $("#dk-sheet").innerHTML='<h3>Connect your Base trader</h3>'+
       '<p class="sub">The list is open to watch. Placing a trade needs a trader.</p>'+
       '<div class="note-h">Every pick — Base or Solana — trades through your deployed <b>Base</b> trading vault: connect it in the bar at the top, the same Connect Contract step as any contract on the console. Your caps and custody come from that vault; the desk never holds your funds. The pick&#39;s chain only decides where the keeper executes.</div>'+
@@ -3730,7 +3767,57 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // Strict preconditions; nothing is faked. (The DEX swap at the rail and the
   // keeper's automated exit are the next contracts — a live draw parks capital
   // at the rail, which is exactly what drawForTrade does.)
+  /* SOL PICK, MODEL B — self-custody. Inside a Farcaster mini app the user has
+     their own Solana wallet, so a Solana pick never touches the Base vault and
+     never hands capital to an agent: the user signs the buy from their own
+     account, then grants a BOUNDED, REVOCABLE delegate over exactly that
+     position so the desk can fire the -10% stop while they sleep. Certified
+     against live mainnet (miniapp/test/solana-live.js, 7/7 by simulation). */
+  async function confirmOpenSolana(){
+    var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return;
+    var M=window.PossessioMiniApp;
+    if(!M||!M.ready){ toast("Solana picks need the Farcaster app — open Possessio there."); return; }
+    var sizeUsd=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
+    if(!(sizeUsd>0)){ toast("Enter a position size."); return; }
+    var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
+    try{
+      var res=await M.buyAndDelegate({
+        mint:c.addr, usdcAmount:sizeUsd, keeper:M.keeper,
+        // The target the human tapped, carried through to the signed rule. The
+        // keeper reads that rule; without it the delegate is power with no
+        // instruction and nothing ever fires.
+        targetBps:bps,
+        onStep:function(s){ if(btn) btn.textContent =
+          s.step==="quote" ? "Finding a route…" :
+          s.step==="buy" ? "Confirm the buy…" :
+          s.step==="rule" ? "Sign your exit rule…" : "Authorize the stop…"; }
+      });
+      if(res.armed){
+        // entry is the FILLED price from the swap, not the screen price that
+        // was tapped: the stop is measured from what the user actually paid.
+        var entry=res.entryPrice||c.now;
+        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:entry,now:c.now,
+          target:entry*(1+bps/10000),stop:entry*0.9,state:"armed",exitPnl:0,
+          born:Date.now(),live:true,selfCustody:true,mint:c.addr,ruleId:res.rule&&res.rule.id});
+        renderPos(); renderList(); closeSheet();
+        toast("✓ "+c.s+" — yours, and the stop is armed");
+      } else {
+        // The buy landed and the delegate did not. Say so plainly: the user
+        // holds a coin with NO automated exit, and pretending otherwise would
+        // be the single most dangerous lie this UI could tell.
+        closeSheet();
+        toast("⚠ "+c.s+" bought — but the STOP IS NOT ARMED. "+(res.warning||"Grant the permission or sell it yourself."));
+      }
+    }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
+      if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing signed.");
+      else toast("Failed: "+m.slice(0,90));
+      if(btn){ btn.disabled=false; btn.textContent="🔑 Buy & arm the stop"; } }
+  }
+
   async function confirmOpen(){ var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return; var v=S.vault;
+    // A Solana pick routes to the self-custody path; it never draws from the
+    // Base vault, so none of the trader-key preconditions below apply.
+    if(c.ch==="sol") return confirmOpenSolana();
     if(!v||v.role!=="trader"||v.paused){ toast("Buys need the trader key on an unpaused vault."); return; }
     var sizeUsd=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
     if(!(sizeUsd>0)){ toast("Enter a position size."); return; }
@@ -3858,7 +3945,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect
+    pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect,
+    solanaSheet:solanaSheet
   };
 })();
 </script>
@@ -4042,6 +4130,46 @@ try {
   await sdk.actions.ready();
   console.log("[MINIAPP] sdk.actions.ready() sent");
 } catch (e) { /* not a mini-app context - nothing to do */ }
+</script>
+
+<!-- ============================================================
+     FARCASTER MINI APP — the Solana leg's host.
+     Loaded as a module and entirely optional: in a plain browser
+     initMiniApp() resolves to {miniApp:false} and the console behaves
+     exactly as it always has. Only inside a Farcaster host (with a Solana
+     wallet) do SOL picks become tradeable, and then they are SELF-CUSTODY:
+     the user's own wallet buys the coin and grants a bounded, revocable
+     permission for the desk to fire the stop.
+     ============================================================ -->
+<script>
+  /* The Solana keeper the delegate is granted to. PUBLIC by nature — it is the
+     address users authorise, so it belongs in the client. Treat it as
+     semi-permanent: existing grants point AT this pubkey, so rotating it means
+     every user must re-grant before their stop can fire again. */
+  window.POSSESSIO_SOLANA_KEEPER = "ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5";
+</script>
+<script type="module">
+  window.PossessioMiniApp = { ready:false, address:null, keeper:null, reason:"not initialised" };
+  try {
+    const M = await import("/miniapp-solana.js");
+    // The keeper the delegate is granted to. Read from the deployed config so
+    // it can never drift from the address that actually runs the exits.
+    const KEEPER = (window.POSSESSIO_SOLANA_KEEPER || "").trim();
+    const res = await M.initMiniApp(window.POSSESSIO_SOLANA_RPC || undefined);
+    window.PossessioMiniApp = Object.assign({
+      ready: Boolean(res.miniApp && res.solana && KEEPER),
+      address: res.address || null,
+      keeper: KEEPER || null,
+      reason: res.reason || (KEEPER ? "" : "no keeper configured"),
+    }, {
+      buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy,
+      readDelegate: M.readDelegate, signRevoke: M.signRevoke,
+    });
+    if (window.dbgLog) window.dbgLog("[MINIAPP] " + JSON.stringify(res));
+  } catch (e) {
+    window.PossessioMiniApp.reason = String(e && e.message || e);
+    if (window.dbgLog) window.dbgLog("[MINIAPP] unavailable: " + window.PossessioMiniApp.reason);
+  }
 </script>
 </body>
 </html>

@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "Sample rule ledger for POSITION_SOURCE=ledger. Copy to positions.json.",
+    "Each entry is an instruction the human authored on the desk: which coin,",
+    "what target, what stop. The keeper only ever executes these — it never",
+    "authors one, and it never acts on a delegate that has no entry here.",
+    "entryPrice is USDC per whole token at the moment the human bought.",
+    "targetBps/stopBps are relative to entryPrice: 5000 = +50%, 1000 = -10%."
+  ],
+  "positions": [
+    {
+      "id": "1",
+      "status": "open",
+      "user": "<the user's wallet pubkey — they keep custody>",
+      "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+      "decimals": 5,
+      "entryPrice": 0.0000028,
+      "targetBps": 5000,
+      "stopBps": 1000
+    }
+  ]
+}

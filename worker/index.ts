@@ -28,6 +28,74 @@ const json = (obj: unknown, status = 200) =>
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 
+/* ─────────── Solana primitives, for the desk rule ledger ─────────── */
+
+const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Base58 decode. Solana pubkeys and signatures are base58 and the Workers
+/// runtime has no decoder, so it is written out rather than pulling a package
+/// into the edge bundle for thirty lines of work.
+function b58decode(s: string): Uint8Array<ArrayBuffer> {
+  if (!s.length) throw new Error("empty");
+  // NOT seeded with [0]: a zero seed survives as a spurious extra byte whenever
+  // the decoded value is itself zero, so "1" would decode to two bytes instead
+  // of one and a leading-zero pubkey would fail its length check.
+  const bytes: number[] = [];
+  for (const ch of s) {
+    const v = B58_ALPHABET.indexOf(ch);
+    if (v < 0) throw new Error("bad base58 char");
+    let carry = v;
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i] * 58;
+      bytes[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  // Leading '1's are leading zero bytes.
+  for (let k = 0; k < s.length && s[k] === "1"; k++) bytes.push(0);
+  return new Uint8Array(bytes.reverse());
+}
+
+/// A Solana pubkey is exactly 32 bytes. Checked before it reaches the DB so a
+/// long or malformed string can never become a row.
+function isBase58Pubkey(s: string): boolean {
+  if (typeof s !== "string" || s.length < 32 || s.length > 44) return false;
+  try { return b58decode(s).length === 32; } catch { return false; }
+}
+
+/// The exact bytes the wallet signs. Field order is fixed and every value is
+/// stringified explicitly: the signature must cover the WHOLE instruction, so
+/// that nothing between the wallet and the table can alter a target and still
+/// present a valid signature. Any change here is a breaking protocol change —
+/// the console builds the identical string in miniapp-solana.js.
+function deskRulePreimage(r: {
+  owner: string; mint: string; decimals: number;
+  entryPrice: number; targetBps: number; stopBps: number; nonce: string;
+}): Uint8Array<ArrayBuffer> {
+  const msg =
+    "possessio.desk.rule.v1\n" +
+    `owner:${r.owner}\n` +
+    `mint:${r.mint}\n` +
+    `decimals:${r.decimals}\n` +
+    `entryPrice:${r.entryPrice}\n` +
+    `targetBps:${r.targetBps}\n` +
+    `stopBps:${r.stopBps}\n` +
+    `nonce:${r.nonce}`;
+  return new TextEncoder().encode(msg) as Uint8Array<ArrayBuffer>;
+}
+
+/// Verify an Ed25519 signature against a Solana pubkey using WebCrypto, which
+/// the Workers runtime supports natively — no dependency, and the verification
+/// runs in the runtime rather than in JS we would have to audit ourselves.
+async function verifyEd25519(pubkeyB58: string, sigB58: string, message: Uint8Array<ArrayBuffer>): Promise<boolean> {
+  const pub = b58decode(pubkeyB58);
+  const sig = b58decode(sigB58);
+  if (pub.length !== 32 || sig.length !== 64) return false;
+  const key = await crypto.subtle.importKey("raw", pub, { name: "Ed25519" }, false, ["verify"]);
+  return crypto.subtle.verify({ name: "Ed25519" }, key, sig, message);
+}
+
 // Off-chain statement attribution — MUST match the connector's STATEMENT_DOMAIN
 // (config.js). Deliberately has no verifyingContract so a statement signature can
 // never be replayed as an on-chain vote.
@@ -706,6 +774,108 @@ export default {
           throw e;
         }
       }
+      return json({ error: "METHOD" }, 405);
+    }
+
+    // ── THE DESK'S RULE LEDGER ───────────────────────────────────────────
+    // The human's actual instruction: this coin, this target, this stop. The
+    // desk already buys the coin and grants the keeper a bounded delegate; this
+    // is where the INSTRUCTION lives, so the keeper has something to watch.
+    //
+    // A rule is not authority. The keeper can only sell if the chain also says
+    // it holds a live delegate over that exact account, and it iterates rules
+    // rather than grants — so an unruled delegate is never even looked at.
+    //
+    // Every write is signed by the Solana wallet it applies to. Without that, a
+    // forged rule over a wallet that HAS granted a delegate is a real attack:
+    // set the target to zero and the keeper dumps someone's position on demand.
+    // `owner` is the recovered signer, never a claim in the body.
+    if (pathname === "/api/desk/rules") {
+      const db = env.COUNCIL_DB;
+      if (!db) return json({ error: "COUNCIL_DB_UNBOUND" }, 503);
+
+      // GET: what the keeper polls. Only open rules, and only the fields it
+      // needs to decide — never the signature material, which it cannot use.
+      if (request.method === "GET") {
+        const { results } = await db
+          .prepare(
+            "SELECT id, owner, mint, decimals, entry_price, target_bps, stop_bps, ts_ms " +
+              "FROM desk_rules WHERE status = 'open' ORDER BY ts_ms ASC LIMIT 500",
+          )
+          .all();
+        return json({
+          positions: (results || []).map((r: any) => ({
+            id: String(r.id),
+            user: r.owner,
+            mint: r.mint,
+            decimals: r.decimals,
+            entryPrice: r.entry_price,
+            targetBps: r.target_bps,
+            stopBps: r.stop_bps,
+            status: "open",
+            openedAt: r.ts_ms,
+          })),
+        });
+      }
+
+      if (request.method === "POST") {
+        let b: any;
+        try { b = await request.json(); } catch { return json({ error: "BAD_JSON" }, 400); }
+
+        const { owner, mint, decimals, entryPrice, targetBps, stopBps, nonce, signature } = b || {};
+
+        // Shape first — every field bounded, because this writes into the
+        // SHARED radar D1 whose size ceiling has halted writes before.
+        if (typeof owner !== "string" || !isBase58Pubkey(owner)) return json({ error: "BAD_OWNER" }, 400);
+        if (typeof mint !== "string" || !isBase58Pubkey(mint)) return json({ error: "BAD_MINT" }, 400);
+        if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return json({ error: "BAD_DECIMALS" }, 400);
+        if (typeof entryPrice !== "number" || !(entryPrice > 0) || !Number.isFinite(entryPrice))
+          return json({ error: "BAD_ENTRY_PRICE" }, 400);
+        // The three buttons the desk actually offers, and nothing else. This
+        // mirrors AutoTarget.openIntent's BadTarget check, so the ledger and the
+        // contract accept exactly the same vocabulary and a later switch to the
+        // on-chain source cannot silently change what a target means.
+        if (targetBps !== 1000 && targetBps !== 2500 && targetBps !== 5000)
+          return json({ error: "BAD_TARGET" }, 400);
+        // The stop is un-removable. A client asking for anything else is either
+        // broken or hostile; either way it does not get written.
+        if (stopBps !== 1000) return json({ error: "STOP_IS_FIXED" }, 400);
+        if (typeof nonce !== "string" || !nonce.length || nonce.length > 64) return json({ error: "BAD_NONCE" }, 400);
+        if (typeof signature !== "string" || signature.length > 200) return json({ error: "BAD_SIGNATURE" }, 400);
+
+        // The signature covers the WHOLE instruction. Changing any field —
+        // especially the target — invalidates it, so a rule cannot be edited in
+        // flight by anything between the wallet and this table.
+        const preimage = deskRulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce });
+        let verified = false;
+        try {
+          verified = await verifyEd25519(owner, signature, preimage);
+        } catch { return json({ error: "BAD_SIGNATURE" }, 400); }
+        if (!verified) return json({ error: "SIGNER_MISMATCH" }, 401);
+
+        const ts = Date.now();
+        try {
+          // A second buy of the same coin REPLACES the open rule rather than
+          // racing it: two open rules over one delegate would leave the keeper
+          // no principled way to pick which target is the human's real intent.
+          await db
+            .prepare("UPDATE desk_rules SET status = 'cancelled' WHERE owner = ?1 AND mint = ?2 AND status = 'open'")
+            .bind(owner, mint)
+            .run();
+          const r = await db
+            .prepare(
+              "INSERT INTO desk_rules (ts_ms, owner, mint, decimals, entry_price, target_bps, stop_bps, nonce, signature) " +
+                "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            )
+            .bind(ts, owner, mint, decimals, entryPrice, targetBps, stopBps, nonce, signature)
+            .run();
+          return json({ ok: true, id: r.meta.last_row_id, ts_ms: ts });
+        } catch (e: any) {
+          if (/UNIQUE|constraint/i.test(String(e?.message || e))) return json({ error: "NONCE_ALREADY_USED" }, 409);
+          throw e;
+        }
+      }
+
       return json({ error: "METHOD" }, 405);
     }
 

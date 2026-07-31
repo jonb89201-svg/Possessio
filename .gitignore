@@ -77,3 +77,12 @@ __pycache__/
 # Wrangler local secrets (NEYNAR_API_KEY etc) — NEVER commit
 .dev.vars
 .dev.vars.*
+
+# =========================
+# Keeper runtime state — NEVER commit
+# =========================
+# The live rule ledger holds real user wallet addresses; positions.example.json
+# is the committed template. Keypair files hold the keeper's secret.
+keeper/positions.json
+keeper/*.key
+keeper/*keypair*.json
