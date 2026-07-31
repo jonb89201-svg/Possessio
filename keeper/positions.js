@@ -5,7 +5,9 @@
 //
 //   onchain : AutoTarget intents on Base — the target and the un-removable
 //             stop are read from the chain, which is the shape the product
-//             claims. Requires the desk contracts deployed.
+//             claims. Requires the desk contracts deployed. The holder's Solana
+//             pubkey arrives as Intent.ownerRef; before that field existed this
+//             source could not resolve WHOSE account to read, and was unusable.
 //   ledger  : a local/worker record — ships with no deploy, but the rule is
 //             then a promise from a server rather than a fact on a chain.
 //
@@ -29,7 +31,8 @@ function onchainSource({ baseRpc, autoTarget }) {
     { type: "function", name: "intents", stateMutability: "view",
       inputs: [{ name: "id", type: "uint256" }],
       outputs: [
-        { name: "user", type: "address" }, { name: "tokenRef", type: "bytes32" },
+        { name: "user", type: "address" }, { name: "ownerRef", type: "bytes32" },
+        { name: "tokenRef", type: "bytes32" },
         { name: "chainTag", type: "uint32" }, { name: "entryPrice", type: "uint256" },
         { name: "targetBps", type: "uint16" }, { name: "stopBps", type: "uint16" },
         { name: "status", type: "uint8" }, { name: "exitKind", type: "uint8" },
@@ -51,16 +54,22 @@ function onchainSource({ baseRpc, autoTarget }) {
       // should never make the keeper slow to react to a new position.
       for (let i = n; i > 0n && out.length < 200; i--) {
         const r = await pub.readContract({ address: autoTarget, abi: AT_ABI, functionName: "intents", args: [i] });
-        const status = Number(r[6]), chainTag = Number(r[2]);
-        if (status !== 1) continue;            // 1 = Open; anything else is done
-        if (chainTag !== 101) continue;        // Solana intents only
+        // Destructured by name rather than index: the struct gained ownerRef,
+        // and every positional read after slot 0 shifted. Indices are exactly
+        // the kind of silent breakage a struct change causes.
+        const [, ownerRef, tokenRef, chainTagRaw, entryPriceRaw, targetBps, stopBps, status] = r;
+        if (Number(status) !== 1) continue;              // 1 = Open; anything else is done
+        if (Number(chainTagRaw) !== 101) continue;       // Solana intents only
+        // ownerRef IS the holder's Solana pubkey. The contract refuses to record
+        // a Solana intent without one, so this is never null on a live intent —
+        // which is the whole reason the field exists.
         out.push({
           id: i.toString(),
-          user: null,                          // resolved from the delegate scan
-          mint: enc(Buffer.from(r[1].slice(2), "hex")),
-          entryPrice: Number(r[3]) / 1e18,
-          targetBps: Number(r[4]),
-          stopBps: Number(r[5]),
+          user: enc(Buffer.from(ownerRef.slice(2), "hex")),
+          mint: enc(Buffer.from(tokenRef.slice(2), "hex")),
+          entryPrice: Number(entryPriceRaw) / 1e18,
+          targetBps: Number(targetBps),
+          stopBps: Number(stopBps),
         });
       }
       return out;

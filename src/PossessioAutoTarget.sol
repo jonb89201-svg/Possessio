@@ -102,6 +102,9 @@ contract PossessioAutoTarget is ReentrancyGuard {
     ///         The one address class a plain-push fee must never target.
     error TollSinkIsAccountedPool();
     error ZeroTokenRef();
+    /// @notice A CHAIN_SOLANA intent with no ownerRef: the keeper could never
+    ///         derive the holder's token account, so the intent is unservable.
+    error ZeroOwnerRef();
     error ZeroChainTag();
     error ZeroEntryPrice();
     error ZeroPrice();
@@ -195,6 +198,12 @@ contract PossessioAutoTarget is ReentrancyGuard {
 
     struct Intent {
         address user;
+        /// @dev The wallet that HOLDS the position, when that is not an EVM
+        ///      address. For CHAIN_SOLANA this is the owner's 32-byte Solana
+        ///      pubkey — without it the keeper cannot derive the associated
+        ///      token account and a Solana intent is structurally unservable.
+        ///      Zero for CHAIN_BASE, where `user` already is the holder.
+        bytes32 ownerRef;
         bytes32 tokenRef; // the picked token: a padded EVM address OR a Solana mint pubkey
         uint32 chainTag; // which chain the token lives on (keeper routes on this)
         uint256 entryPrice;
@@ -219,6 +228,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
         uint256 indexed id,
         address indexed user,
         bytes32 indexed tokenRef,
+        bytes32 ownerRef,
         uint32 chainTag,
         uint256 entryPrice,
         uint16 targetBps
@@ -246,10 +256,20 @@ contract PossessioAutoTarget is ReentrancyGuard {
         // as the sink, because a plain push to it is uncredited dead weight
         // (Pool DoD #14 — proven stranded). Everything else is a valid
         // TOLL_SINK; the destination is the deployer's choice, not the code's.
+        // LOW-LEVEL staticcall, deliberately NOT `try/catch`. Solidity's
+        // try/catch catches a revert but NOT a return-data decode failure —
+        // that bubbles uncaught. A smart-contract wallet (ERC-1967 proxy, Safe)
+        // whose fallback returns EMPTY rather than reverting therefore reverted
+        // this constructor, silently excluding every sink shaped like a modern
+        // operator wallet. Measured on Base mainnet: the ratified operator
+        // could not be deployed against, and the failure carried no revert data
+        // so it did not even name itself. Reverting call -> accept. Empty
+        // return -> accept. 32 bytes decoding true -> reject. Same intent as
+        // before, minus the accidental exclusion class.
         if (_feeSink.code.length > 0) {
-            try IInfraSinkProbe(_feeSink).isInfraSink() returns (bool isPool) {
-                if (isPool) revert TollSinkIsAccountedPool();
-            } catch { /* not a pool — any plain contract is a fine sink */ }
+            (bool ok, bytes memory ret) =
+                _feeSink.staticcall(abi.encodeWithSelector(IInfraSinkProbe.isInfraSink.selector));
+            if (ok && ret.length == 32 && abi.decode(ret, (bool))) revert TollSinkIsAccountedPool();
         }
         payToken = IERC3009(_payToken);
         payTokenERC20 = IERC20(_payToken);
@@ -278,6 +298,11 @@ contract PossessioAutoTarget is ReentrancyGuard {
     ///                    (`bytes32(uint256(uint160(addr)))`) OR a Solana mint's
     ///                    32-byte pubkey. This Base ledger records it; the keeper
     ///                    routes on (tokenRef, chainTag). SPEC_AutoTarget §3.
+    /// @param ownerRef    the wallet that will HOLD the position when it is not
+    ///                    an EVM address: for CHAIN_SOLANA, the owner's 32-byte
+    ///                    pubkey, which the keeper needs to derive their token
+    ///                    account. REQUIRED for CHAIN_SOLANA; pass zero for
+    ///                    CHAIN_BASE, where `user` is already the holder.
     /// @param chainTag    which chain the token lives on — CHAIN_BASE, CHAIN_SOLANA,
     ///                    or any EVM chainId. Opaque to this contract; keeper reads it.
     /// @param entryPrice  the reference entry price (caller-supplied units; the
@@ -288,6 +313,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
     /// @return id         the new intent id (>= 1).
     function openIntent(
         bytes32 tokenRef,
+        bytes32 ownerRef,
         uint32 chainTag,
         uint256 entryPrice,
         uint16 targetBps,
@@ -296,6 +322,11 @@ contract PossessioAutoTarget is ReentrancyGuard {
         // 1. Validate the pick + the button. A wrong target reverts cost-free.
         if (tokenRef == bytes32(0)) revert ZeroTokenRef();
         if (chainTag == 0) revert ZeroChainTag();
+        // A Solana intent without its holder is unservable by construction: the
+        // keeper reads ONE associated token account per ruled position, and the
+        // ATA derives from (owner, mint). Refuse it at the door rather than
+        // record an intent nothing can ever act on.
+        if (chainTag == CHAIN_SOLANA && ownerRef == bytes32(0)) revert ZeroOwnerRef();
         if (entryPrice == 0) revert ZeroEntryPrice();
         if (targetBps != TARGET_SCALP && targetBps != TARGET_MID && targetBps != TARGET_HIGH) {
             revert BadTarget(targetBps);
@@ -326,6 +357,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
         id = ++intentCount;
         intents[id] = Intent({
             user: msg.sender,
+            ownerRef: ownerRef,
             tokenRef: tokenRef,
             chainTag: chainTag,
             entryPrice: entryPrice,
@@ -336,7 +368,7 @@ contract PossessioAutoTarget is ReentrancyGuard {
             usdcReturned: 0
         });
 
-        emit IntentOpened(id, msg.sender, tokenRef, chainTag, entryPrice, targetBps);
+        emit IntentOpened(id, msg.sender, tokenRef, ownerRef, chainTag, entryPrice, targetBps);
         emit FeeRouted(id, PER_TX_FEE);
     }
 

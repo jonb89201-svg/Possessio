@@ -63,7 +63,7 @@ contract PossessioAutoTargetTest is Test {
     function _open(uint16 targetBps, uint256 entryPrice, bytes32 nonce) internal returns (uint256 id) {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, nonce);
         vm.prank(user);
-        id = desk.openIntent(tokenRef, CHAIN, entryPrice, targetBps, a);
+        id = desk.openIntent(tokenRef, bytes32(0), CHAIN, entryPrice, targetBps, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -85,12 +85,17 @@ contract PossessioAutoTargetTest is Test {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("bad"));
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PossessioAutoTarget.BadTarget.selector, uint16(3000)));
-        desk.openIntent(tokenRef, CHAIN, 1e18, 3000, a);
+        desk.openIntent(tokenRef, bytes32(0), CHAIN, 1e18, 3000, a);
     }
 
     /*//////////////////////////////////////////////////////////////
         MULTI-CHAIN: one Base ledger records tokens from any chain
     //////////////////////////////////////////////////////////////*/
+
+    /// A holder's Solana pubkey. Without it a Solana intent is unservable: the
+    /// keeper derives the associated token account from (owner, mint), so an
+    /// intent naming a mint but no owner names an account that cannot be found.
+    bytes32 constant SOL_OWNER = keccak256("ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5");
 
     function test_records_tokenref_and_chaintag() public {
         // a Solana mint (32-byte pubkey) tagged as Solana — recorded verbatim.
@@ -98,25 +103,26 @@ contract PossessioAutoTargetTest is Test {
         uint32 solChain = desk.CHAIN_SOLANA(); // cache BEFORE prank (arg-eval consumes it)
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("sol"));
         vm.prank(user);
-        uint256 id = desk.openIntent(solMint, solChain, 1e18, 2500, a);
+        uint256 id = desk.openIntent(solMint, SOL_OWNER, solChain, 1e18, 2500, a);
 
         PossessioAutoTarget.Intent memory it = desk.getIntent(id);
         assertEq(it.tokenRef, solMint, "solana mint recorded verbatim");
         assertEq(uint256(it.chainTag), uint256(solChain), "chain tag = Solana");
+        assertEq(it.ownerRef, SOL_OWNER, "solana HOLDER recorded verbatim");
     }
 
     function test_open_rejects_zero_tokenref() public {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("z1"));
         vm.prank(user);
         vm.expectRevert(PossessioAutoTarget.ZeroTokenRef.selector);
-        desk.openIntent(bytes32(0), CHAIN, 1e18, 2500, a);
+        desk.openIntent(bytes32(0), bytes32(0), CHAIN, 1e18, 2500, a);
     }
 
     function test_open_rejects_zero_chaintag() public {
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("z2"));
         vm.prank(user);
         vm.expectRevert(PossessioAutoTarget.ZeroChainTag.selector);
-        desk.openIntent(tokenRef, 0, 1e18, 2500, a);
+        desk.openIntent(tokenRef, bytes32(0), 0, 1e18, 2500, a);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -149,6 +155,69 @@ contract PossessioAutoTargetTest is Test {
         new PossessioAutoTarget(address(usdc), makeAddr("eoaSink"), keeper, FEE);
         // …and so does a plain contract without the pool marker (the mock token).
         new PossessioAutoTarget(address(usdc), address(usdc), keeper, FEE);
+    }
+
+    /// REGRESSION, measured on Base mainnet at block 49366683: the ratified
+    /// operator `0x6cFE30CE…A69203` — an ERC-1967 proxy, i.e. a smart-contract
+    /// wallet — COULD NOT BE DEPLOYED AGAINST. Its `isInfraSink()` probe does
+    /// not revert; it SUCCEEDS and returns empty. Solidity's try/catch catches a
+    /// revert but NOT a return-data decode failure, so the empty return bubbled
+    /// uncaught and reverted the constructor with no revert data — the failure
+    /// did not even name itself. The guard was written to exclude accounted
+    /// pools and silently excluded every sink shaped like a modern operator
+    /// wallet. The low-level staticcall keeps the intent and drops the class.
+    function test_constructor_accepts_smartWalletSink() public {
+        MockSmartWallet wallet = new MockSmartWallet();
+
+        // First prove the mock reproduces the mainnet shape. Without this the
+        // test could pass against a fixture that reverts, which is the case
+        // that already worked — a green proving nothing.
+        (bool ok, bytes memory ret) =
+            address(wallet).staticcall(abi.encodeWithSignature("isInfraSink()"));
+        assertTrue(ok, "probe must SUCCEED, not revert - that is the entire case");
+        assertEq(ret.length, 0, "and must return EMPTY data");
+
+        PossessioAutoTarget d =
+            new PossessioAutoTarget(address(usdc), address(wallet), keeper, FEE);
+        assertEq(d.feeSink(), address(wallet), "smart-wallet sink accepted");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+          ownerRef - the holder a Solana intent cannot be served without
+    //////////////////////////////////////////////////////////////*/
+
+    /// The keeper derives ONE associated token account per ruled position, from
+    /// (owner, mint). A Solana intent naming a mint but no owner names an
+    /// account that cannot be found, so it is refused at the door rather than
+    /// recorded as a rule nothing can ever act on.
+    function test_open_rejects_solana_intent_without_ownerRef() public {
+        uint32 solChain = desk.CHAIN_SOLANA();
+        PossessioAutoTarget.FeeAuth memory a =
+            _sign(userPk, address(desk), FEE, keccak256("noOwner"));
+        vm.prank(user);
+        vm.expectRevert(PossessioAutoTarget.ZeroOwnerRef.selector);
+        desk.openIntent(keccak256("someMint"), bytes32(0), solChain, 1e18, 2500, a);
+    }
+
+    /// On Base the EVM `user` already IS the holder, so ownerRef is meaningless
+    /// there and must stay optional - the guard is scoped to CHAIN_SOLANA only.
+    function test_open_allows_base_intent_without_ownerRef() public {
+        uint256 id = _open(2500, 1e18, keccak256("baseNoOwner"));
+        assertEq(desk.getIntent(id).ownerRef, bytes32(0), "base intents carry no ownerRef");
+    }
+
+    /// The fee is charged BEFORE the intent is recorded, so a refused intent
+    /// must not leave the caller poorer. Proves the ZeroOwnerRef revert unwinds
+    /// the EIP-3009 settle with it.
+    function test_rejected_solana_intent_refunds_nothing_and_charges_nothing() public {
+        uint256 before = usdc.balanceOf(user);
+        uint32 solChain = desk.CHAIN_SOLANA();
+        PossessioAutoTarget.FeeAuth memory a =
+            _sign(userPk, address(desk), FEE, keccak256("noOwner2"));
+        vm.prank(user);
+        vm.expectRevert(PossessioAutoTarget.ZeroOwnerRef.selector);
+        desk.openIntent(keccak256("someMint"), bytes32(0), solChain, 1e18, 2500, a);
+        assertEq(usdc.balanceOf(user), before, "a refused open costs the caller nothing");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -269,4 +338,15 @@ contract MockHeart {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
     }
+}
+
+
+/// @notice A smart-contract wallet, ERC-1967-proxy shaped. An unknown selector
+///         reaches the fallback, which returns SUCCESS with EMPTY data instead
+///         of reverting. This is the Base Account's measured behaviour on Base
+///         mainnet, and it is precisely what the V1 try/catch probe could not
+///         survive.
+contract MockSmartWallet {
+    fallback() external payable {}
+    receive() external payable {}
 }

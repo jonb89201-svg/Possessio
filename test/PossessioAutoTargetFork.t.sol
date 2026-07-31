@@ -94,7 +94,7 @@ contract PossessioAutoTargetForkTest is Test {
 
         PossessioAutoTarget.FeeAuth memory a = _signReal(userPk, address(desk), FEE, keccak256("fork-n1"));
         vm.prank(user);
-        uint256 id = desk.openIntent(tokenRef, CHAIN, 1e18, 2500, a);
+        uint256 id = desk.openIntent(tokenRef, bytes32(0), CHAIN, 1e18, 2500, a);
 
         // Fee landed at the TOLL_SINK by plain push (Option B / R1 pattern).
         assertEq(IUSDCLike(USDC).balanceOf(tollSink) - sinkBefore, FEE, "real USDC reached the toll sink");
@@ -113,7 +113,7 @@ contract PossessioAutoTargetForkTest is Test {
 
         PossessioAutoTarget.FeeAuth memory a = _signReal(userPk, address(desk), FEE, keccak256("fork-n2"));
         vm.prank(user);
-        uint256 id = desk.openIntent(tokenRef, CHAIN, 1e18, 5000, a); // +50% target, -10% stop
+        uint256 id = desk.openIntent(tokenRef, bytes32(0), CHAIN, 1e18, 5000, a); // +50% target, -10% stop
 
         vm.prank(keeper);
         desk.resolveIntent(id, 0.80e18); // crater -> stop
