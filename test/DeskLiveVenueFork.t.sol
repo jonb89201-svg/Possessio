@@ -114,25 +114,71 @@ contract DeskLiveVenueForkTest is Test {
         uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), 8453, 1e18, 2500, a);
         assertEq(IUSDCLike(USDC).balanceOf(tollSink), FEE, "toll landed at the sink");
 
-        // 2. BUY: draw from the vault and swap USDC -> SOL on the live pool.
+        // 2. Probe the live fill, then REPLAY the buy against a floor derived
+        //    from it. Amendment VIII: minTokenOut = 1 would let this pass
+        //    without ever reaching the slippage logic (a False Green). The
+        //    probe/replay keeps the floor MEANINGFUL and price-independent —
+        //    it never hardcodes a SOL price that would go stale.
         uint256 vaultBefore = IUSDCLike(USDC).balanceOf(address(vault));
+        uint256 snap = vm.snapshotState();
         vm.prank(keeper);
-        rail.enter(id, SOL, SIZE, 1, 3000); // 0.3% tier
+        rail.enter(id, SOL, SIZE, 1, 3000);
+        uint256 probe = IERC20(SOL).balanceOf(address(rail));
+        vm.revertToState(snap);
+
+        uint256 floorOut = (probe * 99) / 100; // 1% below the observed fill
+        vm.prank(keeper);
+        rail.enter(id, SOL, SIZE, floorOut, 3000); // 0.3% tier, real floor
         uint256 solHeld = IERC20(SOL).balanceOf(address(rail));
         emit log_named_uint("SOL bought (9dp)", solHeld);
+        emit log_named_uint("minTokenOut enforced", floorOut);
         emit log_named_uint("USDC spent", vaultBefore - IUSDCLike(USDC).balanceOf(address(vault)));
-        assertGt(solHeld, 0, "LIVE VENUE: the rail actually bought SOL");
+        assertGe(solHeld, floorOut, "fill honoured the enforced slippage floor");
 
         // 3. Authorise the exit through the rule engine (target crossed).
         vm.prank(keeper);
         desk.resolveIntent(id, 1.30e18); // entry 1.0, target +25% -> 1.25
 
-        // 4. SELL: swap SOL -> USDC and return proceeds home.
+        // 4. SELL against a real floor too: a USDC->SOL->USDC round trip that
+        //    returns under 90% of the draw is a broken venue, not a trade.
         vm.prank(keeper);
-        rail.exit(id, 1, 3000);
+        rail.exit(id, (SIZE * 90) / 100, 3000);
         uint256 back = IUSDCLike(USDC).balanceOf(address(vault));
+        uint256 recovered = back + SIZE - vaultBefore; // proceeds credited home
         emit log_named_uint("USDC home in vault", back);
+        emit log_named_uint("round-trip recovered", recovered);
+
         assertEq(IERC20(SOL).balanceOf(address(rail)), 0, "rail holds no SOL after exit");
-        assertGt(back, vaultBefore - SIZE, "proceeds returned to the vault");
+        // Quantitative, not "greater than zero": two 0.3% pool fees plus real
+        // slippage should cost well under 3% on this size.
+        assertGe(recovered, (SIZE * 97) / 100, "round trip cost stayed under 3%");
+        assertLe(recovered, (SIZE * 103) / 100, "no impossible gain: sanity bound");
+        // The accounting closed, not just the token movement.
+        assertEq(vault.outstanding(), 0, "vault outstanding cleared by returnProceeds");
+    }
+
+    /// The floor must REJECT, not merely be carried. Without this, the buy
+    /// assertion above only proves a number was passed through.
+    function test_fork_slippage_floor_rejects_an_unreachable_minimum() public {
+        _requireFork();
+
+        PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("venue-n2"));
+        vm.prank(user);
+        uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), 8453, 1e18, 2500, a);
+
+        // Observe the honest fill, roll back, then demand twice it.
+        uint256 snap = vm.snapshotState();
+        vm.prank(keeper);
+        rail.enter(id, SOL, SIZE, 1, 3000);
+        uint256 probe = IERC20(SOL).balanceOf(address(rail));
+        vm.revertToState(snap);
+
+        vm.prank(keeper);
+        vm.expectRevert(); // router refuses: amountOut < amountOutMinimum
+        rail.enter(id, SOL, SIZE, probe * 2, 3000);
+
+        // And the failed attempt left nothing behind.
+        assertEq(IERC20(SOL).balanceOf(address(rail)), 0, "no token held after a rejected buy");
+        assertEq(vault.outstanding(), 0, "no draw outstanding after a rejected buy");
     }
 }
