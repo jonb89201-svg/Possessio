@@ -88,12 +88,22 @@ async function simulate(txBase64OrTx, label) {
   console.log(`  mint under test : ${MINT}`);
   console.log(`  trade size      : ${(TRADE_USDC / 1e6).toFixed(2)} USDC`);
   console.log(`  slippage band   : ${SLIP} bps (certification band)`);
-  console.log(`  slot            : ${await conn.getSlot()}\n`);
+  console.log(`  slot            : ${await conn.getSlot()}`);
+  console.log(`  keeper          : ${KEEPER}`);
+  // PROVENANCE, stated before any result so it cannot be read as a footnote:
+  // every transaction below is SIMULATED against live mainnet state and NONE is
+  // committed. sigVerify is disabled because this harness holds no keys. No
+  // reader, signer, or provider is injected -- every account read is a live RPC
+  // read against committed chain state.
+  console.log(`  execution       : SIMULATED (simulateTransaction) - NOTHING COMMITTED`);
+  console.log(`  sigVerify       : false (harness holds no keys)`);
+  console.log(`  injected        : none (no injected reader/signer/provider)\n`);
 
   let user;
   try {
     user = await findHolder(L.USDC_MINT, 1000);
-    ok("found a real USDC holder to stand in as the user", `${user.owner.slice(0, 8)}… holds ${Math.round(user.ui).toLocaleString()} USDC in their ATA`);
+    ok("found a real USDC holder to stand in as the user",
+       `owner=${user.owner} ata=${user.ata} holds ${Math.round(user.ui).toLocaleString()} USDC`);
   } catch (e) { no("find a real USDC holder", e.message); return done(); }
 
   // ── 1. a real route exists ───────────────────────────────────────────
@@ -110,7 +120,8 @@ async function simulate(txBase64OrTx, label) {
   // ── 2. THE BUY THE USER SIGNS, against live state ────────────────────
   try {
     const sim = await simulate(buy.unsignedTxBase64, "buy");
-    ok("the BUY simulates against live mainnet state", `${sim.unitsConsumed} CU consumed`);
+    ok("the BUY simulates against live mainnet state",
+       `buyer=${user.owner} mint=${MINT} CU=${sim.unitsConsumed}`);
   } catch (e) { no("the BUY simulates", e.message); }
 
   // ── 3. THE DELEGATE GRANT — self-custody, bounded ────────────────────
@@ -143,14 +154,14 @@ async function simulate(txBase64OrTx, label) {
     });
     const sim = await simulate(approval.tx, "approve");
     ok("the DELEGATE grant simulates (user keeps custody)",
-       `delegate=${KEEPER.slice(0, 8)}… amount=${approval.delegatedAmount} CU=${sim.unitsConsumed}`);
+       `owner=${holder.owner} mint=${MINT} delegate=${KEEPER} amount=${approval.delegatedAmount} CU=${sim.unitsConsumed}`);
   } catch (e) { no("the DELEGATE grant simulates", e.message); }
 
   // ── 4. READ IT BACK FROM THE CHAIN ───────────────────────────────────
   try {
     const d = await L.readDelegate({ connection: conn, userPublicKey: holder.owner, mint: MINT });
     ok("the delegate state is READABLE on-chain (the console can always show it)",
-       `ata=${d.ata.slice(0, 8)}… existing delegate=${d.delegate || "none"}`);
+       `ata=${d.ata} existing delegate=${d.delegate || "none"}`);
   } catch (e) { no("read the delegate state", e.message); }
 
   // ── 5. THE KEEPER'S DELEGATED EXIT ───────────────────────────────────
@@ -164,14 +175,15 @@ async function simulate(txBase64OrTx, label) {
     });
     const sim = await simulate(exit.unsignedTxBase64, "exit");
     ok("the keeper's DELEGATED EXIT simulates — proceeds to the USER's account",
-       `-> ${(Number(exit.expectedUsdcOut) / 1e6).toFixed(2)} USDC  CU=${sim.unitsConsumed}`);
+       `seller=${seller} mint=${MINT} sold=${sellAmount} -> ${(Number(exit.expectedUsdcOut) / 1e6).toFixed(2)} USDC  CU=${sim.unitsConsumed}`);
   } catch (e) { no("the delegated EXIT simulates", e.message); }
 
   // ── 6. THE KILL SWITCH ───────────────────────────────────────────────
   try {
     const rev = await L.buildRevoke({ connection: conn, userPublicKey: holder.owner, mint: MINT });
-    await simulate(rev.tx, "revoke");
-    ok("REVOKE simulates — the user can withdraw the keeper's authority unilaterally");
+    const sim = await simulate(rev.tx, "revoke");
+    ok("REVOKE simulates — the user can withdraw the keeper's authority unilaterally",
+       `owner=${holder.owner} mint=${MINT} CU=${sim.unitsConsumed}`);
   } catch (e) { no("REVOKE simulates", e.message); }
 
   done();
