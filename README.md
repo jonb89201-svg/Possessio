@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Base mainnet](https://img.shields.io/badge/Base-mainnet%208453-0052FF)](https://basescan.org)
 
-A deterministic, non-custodial DeFi protocol on Base mainnet with an L1 settlement extension on Ethereum mainnet. MIT licensed. Mobile-origin build. V3 generation: nine contracts live on Base mainnet -- the four-organ constellation (Heart, x402Core, Factory, SaltPool), the AI trading desk (FundingVault, Rail, AutoTarget), PossessioPayments, and LSTExchangeRate; treasury-engine hook fork-proven and pending mainnet deploy. The operator console adds an on-chain AI trading desk (FundingVault → Rail → AutoTarget) and a signed council communication ledger reachable over MCP.
+A deterministic, non-custodial DeFi protocol on Base mainnet with an L1 settlement extension on Ethereum mainnet. MIT licensed. Mobile-origin build. V3 generation: six contracts live on Base mainnet -- the four-organ constellation (Heart, x402Core, Factory, SaltPool), PossessioPayments, and LSTExchangeRate. The AI trading desk (FundingVault, Rail, AutoTarget) is deployed but **RETIRED, not operational**: the V1 desk bricked on its fee leg and is being relaunched as V2 (see [Trading desk status](#trading-desk-retired-relaunch-pending)); treasury-engine hook fork-proven and pending mainnet deploy. The operator console adds an on-chain AI trading desk (FundingVault → Rail → AutoTarget) and a signed council communication ledger reachable over MCP.
 
 **Live site:** [possessio.io](https://possessio.io) -- the operator console, LIVE, served by the Cloudflare Worker `possessio` (git-connected to `main`; custom domain attached as config-as-code via `wrangler.jsonc` routes).
 **Canonical spec:** `POSSESSIO_Spec.md` -- source-cited reference for institutional reviewers, grant evaluators, and dev-language-fluent counterparties -- is maintained privately and not yet committed to this repo. For the current verified state of the system, see [`STATE_OF_PLAY.md`](STATE_OF_PLAY.md).
@@ -90,7 +90,7 @@ The arc is the work. Multiple products, one production system, no team scaling, 
 
 Interdependent contracts create a chicken-and-egg at deploy: the trader's **PossessioFundingVault** must be born knowing its execution **PossessioRail** -- the Rail is the vault's immutable `trader` *and* `tradeDestination` -- while the Rail must be born knowing the vault. Neither address exists before the other is deployed. POSSESSIO breaks the cycle with the same primitive that earns repeatable launches: **CREATE3 address prediction.** Because a CreateX CREATE3 address depends only on deployer + salt (not bytecode), the Rail's address is *known before it exists* -- so the vault is deployed with `trader == tradeDestination ==` the predicted Rail address, then the Rail is deployed pointing back at the vault. Two contracts, each wired to the other through immutables (no admin setter, no post-deploy patching), launched as one **pre-wired constellation.** The deploy scripts pin the predicted address and revert on any `PredictionMismatch` / `DeployedMismatch`, so a constellation either lands exactly as computed or not at all. The same primitive that gives PLATE its version-continuity address gives the trading desk its atomically-wired topology -- and generalizes to any future set of contracts that must reference each other at birth.
 
-**Executed on mainnet twice.** The four-organ constellation landed 2026-07-28 with the Heart's `authorizedSources` sealed at two addresses that did not yet exist; the trading desk landed 2026-07-29 with the Rail arriving byte-identical to the address the Vault had already been born pointing at. Neither run needed a correction, because neither run had one available -- the wiring is immutable and there is no setter to patch it with. Addresses and post-deploy chain reads in [Live Contracts](#live-contracts-base-mainnet).
+**Executed on mainnet twice.** The four-organ constellation landed 2026-07-28 with the Heart's `authorizedSources` sealed at two addresses that did not yet exist; the trading desk landed 2026-07-29 with the Rail arriving byte-identical to the address the Vault had already been born pointing at. The CREATE3 wiring was correct on both runs and remains verifiable on chain; **the trading desk nonetheless bricked on a defect elsewhere -- its fee leg, not its topology** (see [Trading desk status](#trading-desk-retired-relaunch-pending)). Neither run could have been patched in place regardless: the wiring is immutable and there is no setter. Addresses and post-deploy chain reads in [Live Contracts](#live-contracts-base-mainnet).
 
 ---
 
@@ -268,9 +268,9 @@ That is the shape that makes a fully digital economy workable from one address: 
 | [`src/PossessioSaltPool.sol`](src/PossessioSaltPool.sol) | Pre-mined CREATE3 salt pool the factory draws from -- factory-only pull, compute-only keeper refill, honest `PoolEmpty()` revert | **LIVE Base mainnet** `0x7181a6Da...61B6` -- loaded, `depth() == 8` |
 | [`src/PossessioPool.sol`](src/PossessioPool.sol) | "The Heart" -- standalone economic pool: every organ's fee inflow lands in one USDC balance; velocity floor keeps infrastructure funded; only surplus draws one-way to the immutable operator | **LIVE Base mainnet** `0xE0612f38...19Ce` |
 | [`src/PossessioX402Core.sol`](src/PossessioX402Core.sol) | Reusable pay-per-call payment engine (EIP-3009) -- the foundation the data-product APIs are built on | **LIVE Base mainnet** `0x60d867Af...6c05` |
-| [`src/PossessioFundingVault.sol`](src/PossessioFundingVault.sol) | AI trading desk: the trader's **hard-capped closed-loop vault** -- owner funds/withdraws/caps, trader draws for a trade and returns proceeds; `available()` reconciled to on-vault balance; both never-regress invariants mutation-verified | **LIVE Base mainnet** `0xF586a9D2...17Dd` (spec [`SPEC_FundingVault.md`](SPEC_FundingVault.md)) |
-| [`src/PossessioRail.sol`](src/PossessioRail.sol) | AI trading desk: the **swap+custody engine** -- keeper-driven `enter`/`exit` bind each trade to an AutoTarget intent (chain-tag + token match, status-gated), draw from the vault, swap USDC<->token via SwapRouter02, return proceeds; owner F2 hatch, no rule bypass | **LIVE Base mainnet** `0xbcCd4234...d5B5` (spec [`SPEC_RailAndKeeper.md`](SPEC_RailAndKeeper.md)) |
-| [`src/PossessioAutoTarget.sol`](src/PossessioAutoTarget.sol) | AI trading desk: the **intent/target/stop engine** -- open/resolve/execute/cancel intents keyed by token + chain (Base 8453 / Solana 101), target/stop bps, fee routed to the Heart brick-guarded | **LIVE Base mainnet** `0x06820033...3009` (spec [`SPEC_AutoTarget.md`](SPEC_AutoTarget.md)) |
+| [`src/PossessioFundingVault.sol`](src/PossessioFundingVault.sol) | AI trading desk: the trader's **hard-capped closed-loop vault** -- owner funds/withdraws/caps, trader draws for a trade and returns proceeds; `available()` reconciled to on-vault balance; both never-regress invariants mutation-verified | **RETIRED Base mainnet** `0xF586a9D2...17Dd` -- deployed, never traded, relaunching as V2 (spec [`SPEC_FundingVault.md`](SPEC_FundingVault.md)) |
+| [`src/PossessioRail.sol`](src/PossessioRail.sol) | AI trading desk: the **swap+custody engine** -- keeper-driven `enter`/`exit` bind each trade to an AutoTarget intent (chain-tag + token match, status-gated), draw from the vault, swap USDC<->token via SwapRouter02, return proceeds; owner F2 hatch, no rule bypass | **RETIRED Base mainnet** `0xbcCd4234...d5B5` -- deployed, never traded, relaunching as V2 (spec [`SPEC_RailAndKeeper.md`](SPEC_RailAndKeeper.md)) |
+| [`src/PossessioAutoTarget.sol`](src/PossessioAutoTarget.sol) | AI trading desk: the **intent/target/stop engine** -- open/resolve/execute/cancel intents keyed by token + chain (Base 8453 / Solana 101), target/stop bps, fee routed to the Heart brick-guarded | **RETIRED Base mainnet** `0x06820033...3009` -- deployed, never traded, relaunching as V2 (spec [`SPEC_AutoTarget.md`](SPEC_AutoTarget.md)) |
 | [`src/SymmetryGuardCore.sol`](src/SymmetryGuardCore.sol) | V4-independent core of the Symmetry Guard + Handshake primitive: typed additive MEV-toll triggers (base fee + per-behavior penalties, total-clamped, self-curing decay) over a Merkle-proof registration handshake | Abstract core -- gauntlet-tested |
 | [`src/PossessioTestnetLaunchPool.sol`](src/PossessioTestnetLaunchPool.sol) | Base Sepolia ONLY fuel pool -- aggregates faucet drips; operator-gated stipends fund console testnet launches (gas + factory fee); constructor refuses to exist off chain 84532 | Built + tested -- testnet deploy pending |
 | [`src/PossessioWhiskyMarket.sol`](src/PossessioWhiskyMarket.sol) | "The Bond" -- primary English auction for tokenized allocated whisky (B20 lot tokens, escrowed USDC bids, anti-snipe extension, fee to PossessioPool) | **PROPOSED / v0.1 -- NON-PROVEN**, cold-seat re-audit before ratification |
@@ -289,6 +289,37 @@ That is the shape that makes a fully digital economy workable from one address: 
 | Aerodrome WETH/PLATE Pool | `0x031c08ca0aed0c813aca333aa4ca0025ecee6afa` |
 
 **V3 generation -- LIVE on Base mainnet:**
+
+### Trading desk: RETIRED, relaunch pending
+
+The AI trading desk (FundingVault, Rail, AutoTarget) was deployed to Base mainnet
+on 2026-07-29 and is **retired, not operational.** Stated plainly because the rest
+of this README describes what the desk is designed to do, and none of it is
+currently running.
+
+**What happened.** AutoTarget V1 routed its per-transaction fee through the Heart's
+accounted pull door. The live Heart's `authorizedSources` is sealed at its own
+construction and does not include the desk, so every `openIntent` reverted. The
+desk was bricked from birth on its fee leg. The CREATE3 topology was correct --
+`Rail.vault`, `Vault.trader`, `Vault.tradeDestination` and `Rail.autoTarget` are
+all mutually wired exactly as designed, and still read correctly on chain.
+
+**What was at risk: nothing.** Verified on Base at block 49363091 -- all three
+contracts hold `0` ETH and `0` USDC, `Vault.available()` and `Vault.outstanding()`
+are both zero, and `AutoTarget.intentCount()` is **0**. No intent was ever opened,
+no trade was ever executed, and no user was ever exposed. The brick was found
+before first use.
+
+**The relaunch.** Rail V2 and AutoTarget V2 are written and fork-proven. V2 moves
+the fee to a plain transfer to an immutable sink and adds an inverted guard that
+*rejects* an accounted-pull pool as that sink -- so the contract now refuses to be
+rebuilt the way that broke it. The relaunch also carries `Intent.ownerRef`, without
+which a Solana intent cannot be served, and a low-level sink probe, without which
+a smart-contract-wallet sink cannot be deployed against. New CREATE3 salts are
+required: the originals are consumed by the retired deployment.
+
+Until the relaunch lands, treat every trading-desk claim in this document as
+describing **design, not deployment.**
 
 | Contract | Address | Runtime |
 |---|---|---|
@@ -325,9 +356,9 @@ reverts -- loading the pool did not open the gate.
 
 | Contract | Address | Runtime |
 |---|---|---|
-| PossessioAutoTarget | `0x0682003333103814AA721c3B624383a4652b3009` | 4,171 B |
-| PossessioFundingVault | `0xF586a9D2d860858B2E3528F2A0EA7Ca9824317Dd` | 4,261 B |
-| PossessioRail | `0xbcCd42344fB8Dd0cE54e0Cf4676ec264C927d5B5` | 5,857 B |
+| PossessioAutoTarget **(RETIRED)** | `0x0682003333103814AA721c3B624383a4652b3009` | 4,171 B |
+| PossessioFundingVault **(RETIRED)** | `0xF586a9D2d860858B2E3528F2A0EA7Ca9824317Dd` | 4,261 B |
+| PossessioRail **(RETIRED)** | `0xbcCd42344fB8Dd0cE54e0Cf4676ec264C927d5B5` | 5,857 B |
 
 The desk is a **pre-wired constellation** (see above): the Vault was born holding
 the Rail as its immutable `trader` *and* `tradeDestination`, at an address
