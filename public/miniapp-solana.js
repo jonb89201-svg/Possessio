@@ -270,7 +270,23 @@ function b58encode(bytes) {
 /// signature against it, so any drift here is a silent 401 rather than a bug
 /// that shows up in testing. Field order is fixed; every value is stringified
 /// explicitly.
-function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce }) {
+function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }) {
+  // THE STOP IS STATED POSITIVELY, NEVER INFERRED FROM A MISSING FIELD.
+  //
+  // Architect ratification 2026-08-01: "no stop" is an absence, not a value.
+  // Zero was rejected because zero is the uninitialised value of every integer
+  // on this path, so zero-meaning-anything is fail-open. The same reasoning
+  // applies one level up: MISSING is the uninitialised state of an object
+  // field. If the preimage simply omitted the line, a forgotten stopBps would
+  // produce a valid signature over a rule with no stop — the identical trap,
+  // moved from the value to the key.
+  //
+  // So hasStop is always present and always explicit. A rule that fails to say
+  // cannot be signed at all, because `undefined` is not a boolean and the
+  // worker rejects it before verification.
+  const stopLines = hasStop === true
+    ? `hasStop:true\nstopBps:${stopBps}\n`
+    : `hasStop:false\n`;
   return new TextEncoder().encode(
     "possessio.desk.rule.v1\n" +
     `owner:${owner}\n` +
@@ -278,7 +294,7 @@ function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, n
     `decimals:${decimals}\n` +
     `entryPrice:${entryPrice}\n` +
     `targetBps:${targetBps}\n` +
-    `stopBps:${stopBps}\n` +
+    stopLines +
     `nonce:${nonce}`
   );
 }
@@ -292,11 +308,16 @@ function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, n
 /// signature anyone could write a rule against a wallet that has granted a
 /// delegate, set the target to zero, and have the keeper dump the position on
 /// command.
-export async function signRule({ mint, decimals, entryPrice, targetBps, stopBps = 1000 }) {
+export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop = false, stopBps = null }) {
+  // DEFAULTS TO NO STOP, and that is the product, not a shortcut: the Architect
+  // abolished the automatic stop on 2026-08-01 because the mechanism never
+  // supported the claim. Downside is a manual Force Sell. This used to default
+  // to 1000, which would now sign a stop the console tells the user does not
+  // exist.
   if (!provider) throw new Error("no Solana provider");
   const owner = pubkey.toBase58();
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const msg = rulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce });
+  const msg = rulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
 
   const res = await provider.signMessage(msg, "utf8");
   const raw = res?.signature || res;
@@ -305,7 +326,11 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, stopBps 
   const r = await fetch("/api/desk/rules", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce, signature }),
+    // hasStop is sent explicitly and stopBps only when there IS one — a
+    // contradiction between the two is refused by the worker rather than
+    // resolved in its favour.
+    body: JSON.stringify({ owner, mint, decimals, entryPrice, targetBps, hasStop,
+                           ...(hasStop ? { stopBps } : {}), nonce, signature }),
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));

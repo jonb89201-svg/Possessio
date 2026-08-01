@@ -71,8 +71,16 @@ function isBase58Pubkey(s: string): boolean {
 /// the console builds the identical string in miniapp-solana.js.
 function deskRulePreimage(r: {
   owner: string; mint: string; decimals: number;
-  entryPrice: number; targetBps: number; stopBps: number; nonce: string;
+  entryPrice: number; targetBps: number;
+  hasStop: boolean; stopBps?: number | null; nonce: string;
 }): Uint8Array<ArrayBuffer> {
+  // MUST stay byte-identical to rulePreimage in public/miniapp-solana.js.
+  // See the comment there for why the stop is stated positively rather than
+  // inferred from a missing field; keeper/test/rule-signature.test.js lifts
+  // BOTH of these functions from their real source and compares the bytes.
+  const stopLines = r.hasStop === true
+    ? `hasStop:true\nstopBps:${r.stopBps}\n`
+    : `hasStop:false\n`;
   const msg =
     "possessio.desk.rule.v1\n" +
     `owner:${r.owner}\n` +
@@ -80,7 +88,7 @@ function deskRulePreimage(r: {
     `decimals:${r.decimals}\n` +
     `entryPrice:${r.entryPrice}\n` +
     `targetBps:${r.targetBps}\n` +
-    `stopBps:${r.stopBps}\n` +
+    stopLines +
     `nonce:${r.nonce}`;
   return new TextEncoder().encode(msg) as Uint8Array<ArrayBuffer>;
 }
@@ -811,6 +819,10 @@ export default {
             decimals: r.decimals,
             entryPrice: r.entry_price,
             targetBps: r.target_bps,
+            // NULL stop_bps is NO STOP. Reported as an explicit flag so the
+            // keeper branches rather than inferring absence from a null it
+            // might coerce to 0 somewhere downstream.
+            hasStop: r.stop_bps != null,
             stopBps: r.stop_bps,
             status: "open",
             openedAt: r.ts_ms,
@@ -822,7 +834,7 @@ export default {
         let b: any;
         try { b = await request.json(); } catch { return json({ error: "BAD_JSON" }, 400); }
 
-        const { owner, mint, decimals, entryPrice, targetBps, stopBps, nonce, signature } = b || {};
+        const { owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce, signature } = b || {};
 
         // Shape first — every field bounded, because this writes into the
         // SHARED radar D1 whose size ceiling has halted writes before.
@@ -850,16 +862,35 @@ export default {
         // the contract) and would silently truncate.
         if (!Number.isInteger(targetBps) || targetBps < 100 || targetBps > 50000)
           return json({ error: "BAD_TARGET" }, 400);
-        // The stop is un-removable. A client asking for anything else is either
-        // broken or hostile; either way it does not get written.
-        if (stopBps !== 1000) return json({ error: "STOP_IS_FIXED" }, 400);
+        // THE STOP — Architect ratification 2026-08-01, Option B.
+        //
+        // A valid stop is an integer 1..9999. ZERO IS REJECTED: zero is the
+        // uninitialised value of every integer on this path, and a stop of 0
+        // computes a threshold exactly ON the entry price, selling on the first
+        // tick at or below the buy. 10000 is NOT adopted as a "no stop"
+        // sentinel either — a 100% drawdown is a semantically real value, and
+        // overloading it repeats the error that disqualified zero.
+        //
+        // "No stop" is carried by hasStop:false, stated positively. It is
+        // REQUIRED to be a boolean: a rule that fails to say cannot be written,
+        // so a forgotten field is rejected rather than silently meaning the most
+        // permissive thing available.
+        if (typeof hasStop !== "boolean") return json({ error: "STOP_UNSTATED" }, 400);
+        if (hasStop) {
+          if (!Number.isInteger(stopBps) || stopBps < 1 || stopBps > 9999)
+            return json({ error: "BAD_STOP" }, 400);
+        } else if (stopBps !== undefined && stopBps !== null) {
+          // Carrying a threshold alongside hasStop:false is a contradiction, and
+          // the signature covers both — so refuse rather than pick a winner.
+          return json({ error: "STOP_CONTRADICTION" }, 400);
+        }
         if (typeof nonce !== "string" || !nonce.length || nonce.length > 64) return json({ error: "BAD_NONCE" }, 400);
         if (typeof signature !== "string" || signature.length > 200) return json({ error: "BAD_SIGNATURE" }, 400);
 
         // The signature covers the WHOLE instruction. Changing any field —
         // especially the target — invalidates it, so a rule cannot be edited in
         // flight by anything between the wallet and this table.
-        const preimage = deskRulePreimage({ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce });
+        const preimage = deskRulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
         let verified = false;
         try {
           verified = await verifyEd25519(owner, signature, preimage);
@@ -880,7 +911,7 @@ export default {
               "INSERT INTO desk_rules (ts_ms, owner, mint, decimals, entry_price, target_bps, stop_bps, nonce, signature) " +
                 "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             )
-            .bind(ts, owner, mint, decimals, entryPrice, targetBps, stopBps, nonce, signature)
+            .bind(ts, owner, mint, decimals, entryPrice, targetBps, hasStop ? stopBps : null, nonce, signature)
             .run();
           return json({ ok: true, id: r.meta.last_row_id, ts_ms: ts });
         } catch (e: any) {

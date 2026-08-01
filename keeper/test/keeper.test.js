@@ -28,10 +28,68 @@ t("the stop is READ from the rule, never assigned in the keeper", () => {
 });
 
 t("target and stop are computed from the authored bps, in both directions", () => {
-  const pos = { entryPrice: 0.0000042, targetBps: 5000, stopBps: 1000 };
+  const pos = { entryPrice: 0.0000042, targetBps: 5000, hasStop: true, stopBps: 1000 };
   assert.strictEqual(K.triggerFor(pos, pos.entryPrice * 1.6).kind, "target");
   assert.strictEqual(K.triggerFor(pos, pos.entryPrice * 0.85).kind, "stop");
   assert.strictEqual(K.triggerFor(pos, pos.entryPrice * 1.1).kind, null, "in-band must not fire");
+});
+
+t("NO STOP is an absence: the stop path is unreachable, and provably alive", () => {
+  // Architect ratification 2026-08-01, Option B, with the clause-4 requirement
+  // stated in the order: BOTH cases must be demonstrated. A test that only
+  // proves no-stop positions never sell has not distinguished a working branch
+  // from a dead code path — it would pass identically if the stop had been
+  // deleted outright.
+  const noStop   = { entryPrice: 100, targetBps: 1000, hasStop: false };
+  const withStop = { entryPrice: 100, targetBps: 1000, hasStop: true, stopBps: 1000 };
+
+  // (1) THE PATH IS ALIVE. If this fails, everything in (2) is vacuous.
+  assert.strictEqual(K.triggerFor(withStop, 90).kind, "stop", "the stop path must fire when a stop exists");
+  assert.strictEqual(K.triggerFor(withStop, 89).kind, "stop");
+  assert.strictEqual(K.triggerFor(withStop, 95).kind, null, "between stop and target: hold");
+
+  // (2) AND IT IS UNREACHABLE WITHOUT A STOP — over the exact inputs that
+  //     reached the old threshold, since 0 satisfies `price <= stop` for any
+  //     stop and was the value that made the sentinel design unsafe.
+  for (const price of [90, 50, 1, 0.0001, 0, -1, NaN, Infinity, -Infinity]) {
+    assert.notStrictEqual(K.triggerFor(noStop, price).kind, "stop",
+      `a position with NO stop was sold by the stop path at price ${String(price)}`);
+  }
+
+  // (3) A no-stop position still TAKES PROFIT. Absence of a stop must not
+  //     disable the whole rule — that would be a dead position, not an
+  //     unstopped one.
+  assert.strictEqual(K.triggerFor(noStop, 111).kind, "target");
+  assert.strictEqual(K.triggerFor(noStop, 105).kind, null);
+
+  // (4) No threshold is even reported. The ratification is that the code never
+  //     asks the question, not that it asks and ignores the answer.
+  assert.strictEqual(K.triggerFor(noStop, 105).stop, null, "a no-stop position must expose no threshold");
+
+  // (5) The old sentinel must NOT be honoured as one. 10000 was rejected
+  //     because a 100% drawdown is a semantically real value; if it is ever
+  //     written it means that, and hasStop still governs.
+  const sentinel = { entryPrice: 100, targetBps: 1000, hasStop: false, stopBps: 10000 };
+  assert.notStrictEqual(K.triggerFor(sentinel, 0.000001).kind, "stop",
+    "hasStop:false must govern even when a stopBps value is present");
+
+  // (6) A rule that does not SAY does nothing. Absence must be stated, never
+  //     inferred from a missing field — otherwise a source that forgets it
+  //     silently produces an unstopped position, which is the uninitialised
+  //     -value trap that disqualified zero, one level down.
+  for (const unstated of [
+    { entryPrice: 100, targetBps: 1000 },
+    { entryPrice: 100, targetBps: 1000, stopBps: 1000 },
+    { entryPrice: 100, targetBps: 1000, hasStop: "true" },
+    { entryPrice: 100, targetBps: 1000, hasStop: 1 },
+    { entryPrice: 100, targetBps: 1000, hasStop: null },
+  ]) {
+    const r = K.triggerFor(unstated, 111);
+    assert.strictEqual(r.kind, null,
+      `an unstated rule must do nothing, got ${r.kind} (${JSON.stringify(unstated)})`);
+    assert.strictEqual(K.triggerFor(unstated, 1).kind, null,
+      "an unstated rule must not be sellable by the stop path either");
+  }
 });
 
 t("an unreadable price stands the keeper down — it never reads as zero", () => {
@@ -42,7 +100,7 @@ t("an unreadable price stands the keeper down — it never reads as zero", () =>
   // The upstream guard was `if (!j.outAmount) throw "no route"`, which reads as
   // if it catches zero and does not: "0" is a truthy string. Both layers are
   // guarded now; this asserts the keeper-side one.
-  const pos = { entryPrice: 100, targetBps: 1000, stopBps: 1000 };
+  const pos = { entryPrice: 100, targetBps: 1000, hasStop: true, stopBps: 1000 };
   for (const bad of [0, -1, NaN, Infinity, undefined, null]) {
     assert.strictEqual(K.triggerFor(pos, bad).kind, null,
       `a price of ${String(bad)} must stand the keeper down, not trigger`);
@@ -69,7 +127,7 @@ t("the target boundary fires at the authored number, within float tolerance", ()
   // regression on a live-funds path for an error of ~1e-16 relative. On a coin
   // priced at 2.5e-6 that is a trigger off by 2.5e-22 dollars, which no market
   // can express. The defect was the CLAIM, not the code.
-  const pos = { entryPrice: 100, targetBps: 2500, stopBps: 1000 };
+  const pos = { entryPrice: 100, targetBps: 2500, hasStop: true, stopBps: 1000 };
   assert.strictEqual(K.triggerFor(pos, 124.99).kind, null, "just below target: hold");
   assert.strictEqual(K.triggerFor(pos, 125).kind, "target", "at target: fire");
   assert.strictEqual(K.triggerFor(pos, 90).kind, "stop", "at stop: fire");
@@ -80,7 +138,7 @@ t("the target boundary fires at the authored number, within float tolerance", ()
   // old version did.
   const EPS = 1e-12;
   for (const [entryPrice, targetBps] of [[100, 1000], [0.0025, 1000], [10, 13700], [3.7, 5000]]) {
-    const p = { entryPrice, targetBps, stopBps: 1000 };
+    const p = { entryPrice, targetBps, hasStop: true, stopBps: 1000 };
     const authored = entryPrice * (1 + targetBps / 10000);
     assert.strictEqual(K.triggerFor(p, authored * (1 + EPS)).kind, "target",
       `a fill a hair ABOVE the authored target must fire (entry ${entryPrice}, bps ${targetBps})`);

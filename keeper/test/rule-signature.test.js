@@ -106,7 +106,7 @@ const MINIAPP = R("public/miniapp-solana.js");
 const ALPHA = 'const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";';
 
 const workerPreimage = lift(WORKER, "deskRulePreimage", "r");
-const miniPreimage = lift(MINIAPP, "rulePreimage", "{ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce }");
+const miniPreimage = lift(MINIAPP, "rulePreimage", "{ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }");
 const b58encode = lift(MINIAPP, "b58encode", "bytes", ALPHA);
 const b58decode = lift(WORKER, "b58decode", "s", ALPHA);
 
@@ -116,6 +116,7 @@ const RULE = {
   decimals: 5,
   entryPrice: 0.0000028914,
   targetBps: 2500,
+  hasStop: true,
   stopBps: 1000,
   nonce: "1785430000000-abc123",
 };
@@ -139,7 +140,7 @@ t("every field of the instruction is covered by the signature", () => {
   for (const [k, v] of Object.entries({
     owner: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     mint: "So11111111111111111111111111111111111111112",
-    decimals: 9, entryPrice: 0.0000029, targetBps: 5000, stopBps: 500, nonce: "other",
+    decimals: 9, entryPrice: 0.0000029, targetBps: 5000, hasStop: false, stopBps: 500, nonce: "other",
   })) {
     const changed = Buffer.from(workerPreimage({ ...RULE, [k]: v })).toString("hex");
     assert.notStrictEqual(changed, base, `changing ${k} did not change the signed bytes`);
@@ -236,34 +237,42 @@ t("the desk cannot offer a target the worker will reject", () => {
     `the desk offers targets the ledger will reject: ${outside}`);
 });
 
-t("stopBps 0 means NO STOP, never a stop at the entry price", () => {
-  // The keeper computes stop = entryPrice * (1 - stopBps/10000). Read
-  // arithmetically, 0 puts the stop exactly ON entry and sells the position on
-  // the first tick at or below where the user bought. Harmless while 1000 was
-  // the only permitted value; a live-funds hazard the moment anything writes 0
-  // — and the Architect abolished the automatic stop on 2026-08-01, so 0 is
-  // the obvious value for whatever writes this field next.
-  const k = R("keeper/index.js");
-  assert.ok(/pos\.stopBps\s*>\s*0\s*\?/.test(k),
-    "triggerFor must special-case stopBps 0 rather than computing a stop from it");
-  const { triggerFor } = require("../index.js");
-  if (typeof triggerFor === "function") {
-    const pos = { entryPrice: 100, targetBps: 1000, stopBps: 0 };
-    assert.strictEqual(triggerFor(pos, 100).kind, null, "a 0-stop position fired AT entry");
-    assert.strictEqual(triggerFor(pos, 1).kind, null, "a 0-stop position fired on a -99% move");
-    // 120, not 110: 100*(1+1000/10000) is 110.00000000000001, so the exact
-    // boundary is a float question and this test is about the STOP.
-    assert.strictEqual(triggerFor(pos, 120).kind, "target", "the target must still fire");
-  }
+t("the worker rejects a stop the ratification made invalid", () => {
+  // Architect ratification 2026-08-01, Option B. This replaces two tests:
+  // "the worker refuses to store any stop but the un-removable one" (the
+  // un-removable stop no longer exists) and "stopBps 0 means NO STOP" (0 is now
+  // rejected outright rather than reinterpreted).
+  const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules"'));
+
+  assert.ok(/typeof hasStop !== "boolean"/.test(w) && /STOP_UNSTATED/.test(w),
+    "a rule that fails to state whether it has a stop must be rejected, not defaulted");
+  const bounds = /stopBps\s*<\s*1\s*\|\|\s*stopBps\s*>\s*9999/.test(w);
+  assert.ok(bounds, "a stop must be bounded 1..9999 — zero rejected, 10000 not adopted as a sentinel");
+  assert.ok(/Number\.isInteger\(stopBps\)/.test(w), "a fractional stop must be rejected");
+  assert.ok(/STOP_CONTRADICTION/.test(w),
+    "hasStop:false carrying a stopBps is a contradiction the signature covers; it must be refused, not resolved");
+  assert.ok(!/stopBps !== 1000/.test(w), "the un-removable-stop check must be gone");
 });
 
-t("the worker refuses to store any stop but the un-removable one", () => {
-  const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules"'));
-  assert.ok(/stopBps !== 1000/.test(w) && /STOP_IS_FIXED/.test(w),
-    "a client must not be able to widen or remove its own stop");
-  const sol = R("src/PossessioAutoTarget.sol");
-  assert.ok(/uint16 public constant STOP_BPS = 1000;/.test(sol),
-    "the contract's stop and the ledger's stop must be the same number");
+t("the signed bytes state the stop positively — absence is never inferred", () => {
+  // If the preimage omitted the line instead, a forgotten stopBps would produce
+  // a VALID signature over a rule with no stop: the uninitialised-value trap
+  // that disqualified zero, moved from the value to the key.
+  const withStop = Buffer.from(workerPreimage(RULE)).toString();
+  const noStop = Buffer.from(workerPreimage({ ...RULE, hasStop: false, stopBps: undefined })).toString();
+
+  assert.ok(withStop.includes("hasStop:true\nstopBps:1000\n"), "a stopped rule must sign both lines");
+  assert.ok(noStop.includes("hasStop:false\n"), "an unstopped rule must sign the absence explicitly");
+  assert.ok(!noStop.includes("stopBps:"), "an unstopped rule must not sign a threshold at all");
+  assert.notStrictEqual(withStop, noStop, "the two must not produce identical bytes");
+
+  // And the console agrees, byte for byte, on BOTH shapes.
+  for (const r of [RULE, { ...RULE, hasStop: false, stopBps: undefined }]) {
+    assert.strictEqual(
+      Buffer.from(miniPreimage(r)).toString("hex"),
+      Buffer.from(workerPreimage(r)).toString("hex"),
+      `console and worker disagree for hasStop:${r.hasStop}`);
+  }
 });
 
 t("owner is the VERIFIED signer, never a field copied from the request", () => {

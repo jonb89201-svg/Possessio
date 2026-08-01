@@ -75,22 +75,40 @@ function triggerFor(pos, price) {
   // that counted an unset RPC as PASS.
   if (!Number.isFinite(price) || price <= 0) return { kind: null, target: null, stop: null };
   const target = pos.entryPrice * (1 + pos.targetBps / 10000);
-  // stopBps === 0 means NO STOP, not "stop at the entry price".
+
+  // NO STOP IS AN ABSENCE, NOT A VALUE — Architect ratification 2026-08-01,
+  // Option B. The branch is the point.
   //
-  // The arithmetic below reads 0 as a 0% drawdown, so `stop` lands exactly on
-  // entryPrice and `price <= stop` fires on the first tick at or below where
-  // the user bought — selling every position instantly. Nobody would ever
-  // author that rule, which is why it went unnoticed while the only permitted
-  // value was 1000.
+  // The rejected alternative was a sentinel: stopBps 10000 yields a stop price
+  // of exactly 0, which no positive price reaches. That works today, and only
+  // today. Its safety rests entirely on the price guard above holding forever —
+  // a price READING of 0 reaches a threshold of 0 exactly, so any future change
+  // to the price path would silently re-arm every no-stop position with nothing
+  // in the arithmetic looking wrong.
   //
-  // It stops being theoretical now: the Architect abolished the automatic stop
-  // on 2026-08-01, so "no stop" needs a representation, and 0 is the obvious
-  // one for anything writing this field next. Disabled is the only safe
-  // reading. NOTE: which value the signed rule should carry for "no stop" is a
-  // council decision, not this function's — the mini-app still sends 1000.
-  const stop = pos.stopBps > 0 ? pos.entryPrice * (1 - pos.stopBps / 10000) : null;
+  // Under absence, no arithmetic can answer the question because the code never
+  // asks it. That is the difference between an unreachable threshold and no
+  // threshold, and it is why the comparison lives inside the branch rather than
+  // being guarded by a null check outside it.
+  // A rule that does not SAY is malformed, and does nothing at all.
+  //
+  // Treating undefined as "no stop" would be the same uninitialised-value trap
+  // one level further down: a source that forgets the field would silently
+  // produce an unstopped position, which is exactly what rejecting zero was
+  // meant to prevent. Absence must be STATED (hasStop === false), never
+  // inferred. An unstated rule is unknown, and unknown stands the keeper down —
+  // it does not take profit either, because a rule this loop cannot fully read
+  // is not a rule it should act on at all.
+  if (typeof pos.hasStop !== "boolean") return { kind: null, target: null, stop: null };
+
+  if (pos.hasStop === false) {
+    if (price >= target) return { kind: "target", target, stop: null };
+    return { kind: null, target, stop: null };
+  }
+
+  const stop = pos.entryPrice * (1 - pos.stopBps / 10000);
   if (price >= target) return { kind: "target", target, stop };
-  if (stop !== null && price <= stop) return { kind: "stop", target, stop };
+  if (price <= stop) return { kind: "stop", target, stop };
   return { kind: null, target, stop };
 }
 

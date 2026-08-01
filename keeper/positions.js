@@ -21,7 +21,9 @@ const { PublicKey } = require("@solana/web3.js");
 
 /// A position the keeper may act on. Every field the loop needs to decide,
 /// and nothing it does not.
-///   { id, user, mint, amount, entryPrice, targetBps, stopBps, decimals }
+///   { id, user, mint, amount, entryPrice, targetBps, hasStop, stopBps, decimals }
+/// `hasStop` false means the position has NO stop — the keeper never computes
+/// or compares a threshold for it (Architect ratification 2026-08-01).
 
 /* ───────────────────────── on-chain (AutoTarget) ───────────────────────── */
 
@@ -69,6 +71,10 @@ function onchainSource({ baseRpc, autoTarget }) {
           mint: enc(Buffer.from(tokenRef.slice(2), "hex")),
           entryPrice: Number(entryPriceRaw) / 1e18,
           targetBps: Number(targetBps),
+          // The on-chain AutoTarget intent always carries a stop, so an
+          // on-chain position always has one. The desk ledger is where absence
+          // can occur.
+          hasStop: true,
           stopBps: Number(stopBps),
         });
       }
