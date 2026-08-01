@@ -63,6 +63,17 @@ async function executablePrice({ mint, amount, decimals }) {
 }
 
 function triggerFor(pos, price) {
+  // A PRICE THAT IS NOT A POSITIVE NUMBER IS NOT A PRICE.
+  //
+  // Defence in depth against the quote guard above: a reading of 0 satisfies
+  // `price <= stop` for ANY stop, so a dead route fires a sale into a market
+  // with no liquidity — and it fires even on a position with NO stop, because
+  // the no-stop sentinel's stop price is itself 0. NaN happens to fail safe
+  // (every comparison is false), but relying on that is luck, not a guard.
+  //
+  // Unknown must stand the keeper down, never act. Same rule as the rug gate
+  // that counted an unset RPC as PASS.
+  if (!Number.isFinite(price) || price <= 0) return { kind: null, target: null, stop: null };
   const target = pos.entryPrice * (1 + pos.targetBps / 10000);
   // stopBps === 0 means NO STOP, not "stop at the entry price".
   //

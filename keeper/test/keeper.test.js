@@ -34,6 +34,24 @@ t("target and stop are computed from the authored bps, in both directions", () =
   assert.strictEqual(K.triggerFor(pos, pos.entryPrice * 1.1).kind, null, "in-band must not fire");
 });
 
+t("an unreadable price stands the keeper down — it never reads as zero", () => {
+  // A price of 0 satisfies `price <= stop` for ANY stop, so a dead route would
+  // fire a sale into a market with no liquidity. It fires even on a position
+  // with NO stop, because the no-stop sentinel's stop price is itself 0.
+  //
+  // The upstream guard was `if (!j.outAmount) throw "no route"`, which reads as
+  // if it catches zero and does not: "0" is a truthy string. Both layers are
+  // guarded now; this asserts the keeper-side one.
+  const pos = { entryPrice: 100, targetBps: 1000, stopBps: 1000 };
+  for (const bad of [0, -1, NaN, Infinity, undefined, null]) {
+    assert.strictEqual(K.triggerFor(pos, bad).kind, null,
+      `a price of ${String(bad)} must stand the keeper down, not trigger`);
+  }
+  // and a real price still works, so the guard is not simply refusing everything
+  assert.strictEqual(K.triggerFor(pos, 111).kind, "target");
+  assert.strictEqual(K.triggerFor(pos, 89).kind, "stop");
+});
+
 t("the target boundary fires at the authored number, within float tolerance", () => {
   // NAMED HONESTLY 2026-08-01. This used to claim the boundary fires "exactly
   // at the authored number, not near it" and tested ONLY entryPrice 100 /
