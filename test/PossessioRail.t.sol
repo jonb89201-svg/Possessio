@@ -34,14 +34,14 @@ contract HoneypotToken is ERC20 {
 /// @dev AutoTarget stand-in: exposes the flattened `intents` getter the Rail
 ///      reads. Test controls token/chainTag/status. Status: 1=Open,2=Resolved.
 contract MockAutoTarget {
-    struct I { address user; bytes32 tokenRef; uint32 chainTag; uint256 entryPrice; uint16 targetBps; uint16 stopBps; uint8 status; uint8 exitKind; uint256 usdcReturned; }
+    struct I { address user; bytes32 ownerRef; bytes32 tokenRef; uint32 chainTag; uint256 entryPrice; uint16 targetBps; uint16 stopBps; uint8 status; uint8 exitKind; uint256 usdcReturned; }
     mapping(uint256 => I) internal _i;
     function setIntent(uint256 id, address token, uint32 chainTag, uint8 status) external {
-        _i[id] = I(address(0), bytes32(uint256(uint160(token))), chainTag, 1e18, 2500, 1000, status, 0, 0);
+        _i[id] = I(address(0), bytes32(0), bytes32(uint256(uint160(token))), chainTag, 1e18, 2500, 1000, status, 0, 0);
     }
     function setStatus(uint256 id, uint8 status) external { _i[id].status = status; }
-    function intents(uint256 id) external view returns (address,bytes32,uint32,uint256,uint16,uint16,uint8,uint8,uint256) {
-        I memory x = _i[id]; return (x.user,x.tokenRef,x.chainTag,x.entryPrice,x.targetBps,x.stopBps,x.status,x.exitKind,x.usdcReturned);
+    function intents(uint256 id) external view returns (address,bytes32,bytes32,uint32,uint256,uint16,uint16,uint8,uint8,uint256) {
+        I memory x = _i[id]; return (x.user,x.ownerRef,x.tokenRef,x.chainTag,x.entryPrice,x.targetBps,x.stopBps,x.status,x.exitKind,x.usdcReturned);
     }
 }
 
