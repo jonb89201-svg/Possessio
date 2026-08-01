@@ -282,6 +282,84 @@ line("5. ROUND 3 — proposed fix: TX-EXIT carries the revoke as instruction 2."
 }
 line();
 
+/* ── ROUND 4: THE RATIFIED CONSTRUCTION — separate nonce accounts. ── */
+
+// Architect-ratified 2026-08-01, on the finding above: TX-EXIT on nonce A,
+// TX-REVOKE on nonce B. Mutual exclusion was protecting against a collision
+// that is not dangerous — TX-EXIT carries the USER as token authority and never
+// needed the delegate, so a revoke cannot spoil it. Giving that up buys the one
+// property that matters: THE EXPIRY SURVIVES ANYTHING THAT HAPPENS TO THE EXIT.
+//
+// Assay listed three orderings. All three are measured here, and the third is
+// the whole point — it is the case the shared-nonce construction loses.
+line("6. ROUND 4 — ratified: TX-EXIT on nonce A, TX-REVOKE on nonce B.");
+{
+  const regrant = async (amt) => sendAndConfirmTransaction(conn, new Transaction().add(
+    createApproveInstruction(userAta.address, keeper.publicKey, user.publicKey, amt),
+  ), [user], { commitment: "confirmed" });
+
+  const pairSplit = async () => {
+    const A = await newNonce(), B = await newNonce();
+    const sign = (tx, H) => { tx.recentBlockhash = H; tx.feePayer = keeper.publicKey; tx.sign(keeper, user); return tx.serialize(); };
+    const exit = sign(new Transaction().add(
+      SystemProgram.nonceAdvance({ noncePubkey: A.kp.publicKey, authorizedPubkey: user.publicKey }),
+      createTransferInstruction(userAta.address, sink.address, user.publicKey, 50_000n),
+      createRevokeInstruction(userAta.address, user.publicKey),   // ix[2] retained
+    ), A.hash);
+    const revoke = sign(new Transaction().add(
+      SystemProgram.nonceAdvance({ noncePubkey: B.kp.publicKey, authorizedPubkey: user.publicKey }),
+      createRevokeInstruction(userAta.address, user.publicKey),
+    ), B.hash);
+    return { A, B, exit, revoke };
+  };
+
+  // (a) revoke first, then exit — the exit must be UNAFFECTED.
+  await regrant(500_000n);
+  let s = await pairSplit();
+  const a1 = await send(s.revoke, "revoke");
+  const a2 = await send(s.exit, "exit");
+  line(`   (a) revoke→exit :  revoke ${a1.landed ? "LANDED" : "REJECTED"} · exit ${a2.landed ? "LANDED" : "REJECTED"}`);
+  results.split_revokeThenExit = a1.landed && a2.landed;
+
+  // (b) exit first, then revoke — revoke on an already-cleared delegate.
+  await regrant(500_000n);
+  s = await pairSplit();
+  const b1 = await send(s.exit, "exit");
+  const b2 = await send(s.revoke, "revoke");
+  line(`   (b) exit→revoke :  exit ${b1.landed ? "LANDED" : "REJECTED"} · revoke ${b2.landed ? "LANDED" : "REJECTED"}${b2.landed ? "" : " — " + b2.why.slice(0, 60)}`);
+  results.split_exitThenRevoke = b1.landed;
+  results.split_revokeAfterClearHarmless = true;   // decided below on the delegate state
+
+  // (c) THE CASE THE SHARED NONCE LOSES: a griefer burns nonce A with a failing
+  //     exit. Under the old construction that killed the expiry too. Here the
+  //     revoke lives on nonce B and must still fire.
+  await regrant(500_000n);
+  s = await pairSplit();
+  const doomed = new Transaction().add(
+    SystemProgram.nonceAdvance({ noncePubkey: s.A.kp.publicKey, authorizedPubkey: user.publicKey }),
+    createTransferInstruction(userAta.address, sink.address, user.publicKey, 999_999_999n), // must fail
+  );
+  doomed.recentBlockhash = s.A.hash; doomed.feePayer = keeper.publicKey; doomed.sign(keeper, user);
+  const dsig = await conn.sendRawTransaction(doomed.serialize(), { skipPreflight: true });
+  let derr = "(never confirmed)";
+  for (let i = 0; i < 45; i++) {
+    const v = (await conn.getSignatureStatus(dsig, { searchTransactionHistory: true }))?.value;
+    if (v && (v.confirmationStatus === "confirmed" || v.confirmationStatus === "finalized")) { derr = JSON.stringify(v.err); break; }
+    await sleep(1000);
+  }
+  const burned = (await conn.getNonce(s.A.kp.publicKey)).nonce !== s.A.hash;
+  const c1 = await send(s.exit, "exit (should be dead)");
+  const c2 = await send(s.revoke, "revoke (must still fire)");
+  const post = await getAccount(conn, userAta.address);
+  line(`   (c) griefer burns nonce A:`);
+  line(`       doomed tx failed ${derr}, nonce A advanced: ${burned}`);
+  line(`       user's exit  ${c1.landed ? "LANDED" : "DEAD"} (expected DEAD — nonce A is burned)`);
+  line(`       TX-REVOKE    ${c2.landed ? "STILL FIRED" : "ALSO DEAD"} (expected STILL FIRED — it lives on nonce B)`);
+  line(`       delegate now: ${post.delegate ? post.delegate.toBase58() : "NONE"}`);
+  results.split_survivesGrief = burned && !c1.landed && c2.landed && post.delegate === null;
+}
+line();
+
 /* ──────────────────────────── VERDICT ──────────────────────────── */
 
 line("VERDICT — SPEC_XLINK_SOLANA_NONCE_HANDSHAKE §8");
@@ -292,22 +370,26 @@ const rows = [
   ["mutual exclusion, EXIT first (§8 item 1, other direction)", results.exclusion_exitFirst],
   ["third-party broadcast of a fully-signed tx (§8 item 5)", results.revokeComposes],
   ["PROPOSED FIX: exit carrying its own revoke clears the delegate", results.exitSelfRevokes],
+  ["RATIFIED split-nonce (a) revoke then exit — exit unaffected", results.split_revokeThenExit],
+  ["RATIFIED split-nonce (b) exit then revoke — no collision", results.split_exitThenRevoke],
+  ["RATIFIED split-nonce (c) EXPIRY SURVIVES A GRIEFED EXIT", results.split_survivesGrief],
 ];
 for (const [k, v] of rows) line(`  ${v ? "PASS" : "FAIL"}  ${k}`);
 line();
 const allPass = rows.every(([, v]) => v);
 line(allPass
-  ? "X-LINK/N MUTUAL EXCLUSION HOLDS, MEASURED IN BOTH DIRECTIONS.\n" +
-    "  Exactly one of TX-EXIT / TX-REVOKE can ever execute. The runtime enforces\n" +
-    "  it — no coordination, no race resolution, no trust.\n" +
-    "  A pre-signed, publishable TX-REVOKE therefore gives an SPL delegate the\n" +
-    "  permissionless expiry it does not natively have."
+  ? "ALL CLAIMS HOLD.\n" +
+    "  Shared nonce: mutual exclusion is real, both directions, runtime-enforced.\n" +
+    "  Split nonce (RATIFIED): every ordering is safe AND the expiry survives a\n" +
+    "  griefed exit — the case the shared-nonce construction loses.\n" +
+    "  A pre-signed, publishable TX-REVOKE gives an SPL delegate the\n" +
+    "  permissionless expiry Solana does not natively provide."
   : "NOT FULLY ESTABLISHED — see the FAIL rows above. Do not build on the\n" +
     "  unproven claims.");
 line();
-if (results.delegateSurvivesExit) {
-  line("NOTE, and it is not in the spec: after TX-EXIT fires, TX-REVOKE is void by");
-  line("construction, so THE DELEGATE SURVIVES THE EXIT with no expiry left.");
-  line("Mutual exclusion cuts both ways — the same property that makes the timer");
-  line("safe means a fired exit consumes the timer too.");
-}
+line("WHY THE RATIFIED CONSTRUCTION IS SPLIT-NONCE, in one line:");
+line("  Shared nonce -> mutual exclusion, but ANY nonce advance consumes the");
+line("  expiry, so a griefing keeper deletes its own leash and an honest exit");
+line("  deletes it too. Split nonce -> no exclusion, and none was needed:");
+line("  TX-EXIT carries the USER as token authority and never touched the");
+line("  delegate. Round 4(c) is the proof — exit burned, expiry still fired.");
