@@ -25,8 +25,16 @@ interface IFundingVault {
 ///         writes to it, which keeps deploy order acyclic and needs no keeper
 ///         role on AutoTarget for the Rail. Status: None=0, Open=1, Resolved=2.
 interface IAutoTarget {
+    /// @dev POSITIONAL TUPLE — it must track PossessioAutoTarget.Intent field for
+    ///      field. Adding `ownerRef` to that struct shifted every slot after the
+    ///      first and silently broke `enter()`: the decode still succeeded, it
+    ///      just read the wrong fields. Nothing in the Rail's own unit suite can
+    ///      catch that, because those tests drive a MockAutoTarget that declares
+    ///      its own struct. If you change Intent, change this, the four
+    ///      destructures below, and the mock — or the only thing that fails is a
+    ///      fork test somebody may not run.
     function intents(uint256 id) external view returns (
-        address user, bytes32 tokenRef, uint32 chainTag, uint256 entryPrice,
+        address user, bytes32 ownerRef, bytes32 tokenRef, uint32 chainTag, uint256 entryPrice,
         uint16 targetBps, uint16 stopBps, uint8 status, uint8 exitKind, uint256 usdcReturned
     );
 }
@@ -277,7 +285,7 @@ contract PossessioRail is ReentrancyGuard {
         if (p.status != Status.None) revert PositionExists();
 
         // ── Bind to the authored intent ─────────────────────────────────────
-        (, bytes32 tokenRef, uint32 chainTag, , , , uint8 st, , ) = autoTarget.intents(intentId);
+        (, , bytes32 tokenRef, uint32 chainTag, , , , uint8 st, , ) = autoTarget.intents(intentId);
         if (st != AT_OPEN)                                        revert IntentNotOpen();
         if (chainTag != CHAIN_BASE)                               revert WrongChain();
         if (address(uint160(uint256(tokenRef))) != token)        revert TokenMismatch();
@@ -312,7 +320,7 @@ contract PossessioRail is ReentrancyGuard {
         Position storage p = positions[intentId];
         if (p.status != Status.Open) revert PositionNotOpen();
         if (minUsdcOut == 0)         revert ZeroMinOut();
-        (, , , , , , uint8 st, , ) = autoTarget.intents(intentId);
+        (, , , , , , , uint8 st, , ) = autoTarget.intents(intentId);
         if (st != AT_RESOLVED) revert ExitNotAuthorized();
         _closeSwapReturn(intentId, p, minUsdcOut, p.viaWeth, p.feeA, p.feeB, false);
     }
@@ -416,7 +424,7 @@ contract PossessioRail is ReentrancyGuard {
         Position storage p = positions[intentId];
         if (p.status != Status.None) revert PositionExists();
 
-        (, , uint32 chainTag, , , , uint8 st, , ) = autoTarget.intents(intentId);
+        (, , , uint32 chainTag, , , , uint8 st, , ) = autoTarget.intents(intentId);
         if (st != AT_OPEN)            revert IntentNotOpen();
         if (chainTag != CHAIN_SOLANA) revert WrongChain();
 
@@ -455,7 +463,7 @@ contract PossessioRail is ReentrancyGuard {
         uint256 got = bal > snap ? bal - snap : 0;
         if (got == 0) revert NothingReturned();
 
-        (, , , , , , uint8 st, , ) = autoTarget.intents(intentId);
+        (, , , , , , , uint8 st, , ) = autoTarget.intents(intentId);
 
         // ── Effects ─────────────────────────────────────────────────────────
         p.status = Status.Closed;

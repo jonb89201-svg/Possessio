@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {PossessioAutoTarget} from "../src/PossessioAutoTarget.sol";
+import {IAutoTarget} from "../src/PossessioRail.sol";
 import {MockEIP3009USDC} from "./X402TestnetMocks.sol";
 
 /// @notice DoD suite for PossessioAutoTarget (SPEC_AutoTarget.md §8).
@@ -180,6 +181,53 @@ contract PossessioAutoTargetTest is Test {
         PossessioAutoTarget d =
             new PossessioAutoTarget(address(usdc), address(wallet), keeper, FEE);
         assertEq(d.feeSink(), address(wallet), "smart-wallet sink accepted");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        THE RAIL'S VIEW OF THIS CONTRACT — positional tuple alignment
+    //////////////////////////////////////////////////////////////*/
+
+    /// REGRESSION. `IAutoTarget.intents()` is a POSITIONAL tuple and the Rail
+    /// destructures it by slot. Adding `ownerRef` to Intent shifted every field
+    /// after the first, and the ABI decoder does NOT revert when the callee
+    /// returns MORE words than the caller declares — it silently reads the
+    /// wrong ones. `Rail.enter()` then failed downstream on TokenMismatch, far
+    /// from the cause.
+    ///
+    /// Nothing in the Rail's own suite could catch it: those tests drive a
+    /// MockAutoTarget that declares its own struct, so mock and interface drift
+    /// together and stay consistent with each other while both diverge from the
+    /// real contract. Only a test binding the REAL interface to the REAL
+    /// contract sees it. This is that test, at unit speed — the alternative was
+    /// a fork test somebody may not run.
+    function test_railInterface_tupleAlignsWithIntentStruct() public {
+        uint256 id = _open(2500, 1e18, keccak256("railView"));
+
+        // The Rail's interface, imported from PossessioRail.sol — not restated.
+        (
+            address user_, bytes32 ownerRef_, bytes32 tokenRef_, uint32 chainTag_,
+            uint256 entryPrice_, uint16 targetBps_, uint16 stopBps_,
+            uint8 status_, uint8 exitKind_, uint256 usdcReturned_
+        ) = IAutoTarget(address(desk)).intents(id);
+
+        PossessioAutoTarget.Intent memory it = desk.getIntent(id);
+
+        assertEq(user_, it.user, "slot 0 user");
+        assertEq(ownerRef_, it.ownerRef, "slot 1 ownerRef");
+        assertEq(tokenRef_, it.tokenRef, "slot 2 tokenRef");
+        assertEq(uint256(chainTag_), uint256(it.chainTag), "slot 3 chainTag");
+        assertEq(entryPrice_, it.entryPrice, "slot 4 entryPrice");
+        assertEq(uint256(targetBps_), uint256(it.targetBps), "slot 5 targetBps");
+        assertEq(uint256(stopBps_), uint256(it.stopBps), "slot 6 stopBps");
+        assertEq(uint256(status_), uint256(it.status), "slot 7 status");
+        assertEq(uint256(exitKind_), uint256(it.exitKind), "slot 8 exitKind");
+        assertEq(usdcReturned_, it.usdcReturned, "slot 9 usdcReturned");
+
+        // The two the Rail actually gates on. If these drift, enter() binds to
+        // the wrong token or refuses the right chain.
+        assertEq(tokenRef_, bytes32(uint256(uint160(address(uint160(uint256(tokenRef)))))), "tokenRef readable as a token");
+        assertEq(uint256(chainTag_), uint256(CHAIN), "chainTag is the authored chain");
+        assertEq(uint256(status_), 1, "status reads as Open, not a shifted field");
     }
 
     /*//////////////////////////////////////////////////////////////

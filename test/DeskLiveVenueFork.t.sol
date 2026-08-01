@@ -118,9 +118,12 @@ contract DeskLiveVenueForkTest is Test {
         _requireFork();
 
         // 1. Open an intent for SOL. This is the call V1 could never make.
+        //    ownerRef is bytes32(0): chainTag is 8453, so this is an ERC-20 on
+        //    Base and `user` IS the holder. ownerRef carries the Solana pubkey
+        //    only for CHAIN_SOLANA intents, where the keeper must derive an ATA.
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("venue-n1"));
         vm.prank(user);
-        uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), 8453, 1e18, 2500, a);
+        uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), bytes32(0), 8453, 1e18, 2500, a);
         assertEq(IUSDCLike(USDC).balanceOf(tollSink), FEE, "toll landed at the sink");
 
         // 2. Probe the live fill, then REPLAY the buy against a floor derived
@@ -173,7 +176,7 @@ contract DeskLiveVenueForkTest is Test {
 
         PossessioAutoTarget.FeeAuth memory a = _sign(userPk, address(desk), FEE, keccak256("venue-n2"));
         vm.prank(user);
-        uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), 8453, 1e18, 2500, a);
+        uint256 id = desk.openIntent(bytes32(uint256(uint160(SOL))), bytes32(0), 8453, 1e18, 2500, a);
 
         // Observe the honest fill, roll back, then demand twice it.
         uint256 snap = vm.snapshotState();
