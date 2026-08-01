@@ -3401,6 +3401,19 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .tbtn.t25{background:var(--dacc-soft);color:var(--dacc);border-color:transparent}
   #desk-view .stopchip{font-family:var(--dmono);font-size:10px;font-weight:700;color:var(--stop);background:var(--stop-soft);padding:3px 8px;border-radius:999px}
   #desk-view .stopchip::before{content:"● ";font-size:8px}
+  /* The no-stop line sits directly under the promise it qualifies. It is not a
+     footnote: the absence of a stop is the single most important thing a
+     trader needs to know before their first tap. */
+  #desk-view .dk-nostop{color:var(--stop);font-weight:600}
+  #desk-view .forcebtn{font-family:var(--dmono);font-size:11px;font-weight:800;color:#fff;background:var(--stop);border:none;border-radius:8px;padding:7px 12px;cursor:pointer;letter-spacing:.02em}
+  #desk-view .forcebtn:hover{filter:brightness(1.08)}
+  /* The gain-target slider. Its value IS minimumAmountOut in the signed
+     message — no layer sits between this control and the guarantee. */
+  #desk-view .gtwrap{margin:2px 0 12px}
+  #desk-view .gtrow{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+  #desk-view .gtval{font-family:var(--dmono);font-size:20px;font-weight:800;color:var(--up,#16a34a)}
+  #desk-view .gtslider{width:100%;accent-color:var(--up,#16a34a)}
+  #desk-view .gtnote{font-size:10.5px;color:var(--dink-faint);margin-top:5px;line-height:1.45}
   #desk-view .lockmini{font-size:9.5px;font-weight:700;color:var(--dink-faint);letter-spacing:.02em}
   #desk-view .act2{display:flex;align-items:center;gap:6px}
   #desk-view .sellbtn{font-family:var(--dmono);font-weight:700;font-size:12px;padding:7px 13px;border-radius:10px;border:1px solid var(--stop);background:var(--stop-soft);color:var(--stop);transition:transform .08s,opacity .15s}
@@ -3408,6 +3421,15 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .sellbtn:disabled{opacity:.35;cursor:not-allowed;border-color:var(--dline);background:transparent;color:var(--dink-faint)}
   #desk-view .exitpct{font-family:var(--dmono);font-size:11px;font-weight:700}
   #desk-view .exitpct.up{color:var(--up)}#desk-view .exitpct.down{color:var(--down)}
+  /* The contract address, on the card. A trader who wants to check a pick on
+     DexScreener should not have to leave, hunt, and come back — so the address
+     is one tap to copy and one tap to open. */
+  #desk-view .caline{font-family:var(--dmono);font-size:10px;color:var(--dink-faint);margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #desk-view .cabtn{font-family:var(--dmono);font-size:10px;font-weight:700;color:var(--dink-faint);background:var(--surface,#f6f7f9);border:1px solid var(--dline);border-radius:6px;padding:3px 7px;cursor:pointer;letter-spacing:.01em}
+  #desk-view .cabtn:hover{color:var(--dacc);border-color:var(--dacc)}
+  #desk-view .cabtn.copied{color:var(--up,#16a34a);border-color:var(--up,#16a34a)}
+  #desk-view .dexlink{font-size:10px;font-weight:700;color:var(--dink-faint);text-decoration:none}
+  #desk-view .dexlink:hover{color:var(--dacc)}
   #desk-view .devline{font-family:var(--dmono);font-size:10px;color:var(--dink-faint);margin-top:5px;display:flex;align-items:center;gap:6px}
   #desk-view .devline a{color:var(--dink-faint);text-decoration:none}#desk-view .devline a:hover{color:var(--dacc)}
   #desk-view .devtag{font-weight:700;font-size:9px;padding:1px 6px;border-radius:6px}
@@ -3464,12 +3486,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
     <div class="dk-h">
       <h1>You pick. The desk holds the exit.</h1>
-      <p>AI screens coins in real time, across chains. You choose one and how much upside you want. A hard <b style="color:var(--stop)">&minus;10% stop is always on</b>. The keeper fires the exit the instant it crosses.</p>
+      <p>Set your gain target on the slider &mdash; 10% by default. You sign the sell at that price; the desk fires it when the market gets there. It can&rsquo;t fill you lower than your number.</p>
+      <p class="dk-nostop"><b>There&rsquo;s no automatic stop-loss.</b> If it goes the wrong way, hit <b>Force Sell</b>.</p>
       <div class="dk-how">
         <span class="step"><b>1.</b> pick a coin</span>
-        <span class="step"><b>2.</b> tap a target</span>
-        <span class="step stop"><b>3.</b> &minus;10% stop, always</span>
-        <span class="step"><b>4.</b> keeper exits it</span>
+        <span class="step"><b>2.</b> set your gain target</span>
+        <span class="step"><b>3.</b> you sign the sell</span>
+        <span class="step"><b>4.</b> desk fires it at your price</span>
       </div>
     </div>
 
@@ -3481,7 +3504,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
     <div class="previewbar" id="dk-preview">Preview &middot; no trader connected &mdash; nothing is signed or spent. This is the button flow.</div>
 
-    <div class="foot"><p><b>The stop is a threshold, not a fill guarantee.</b> On a real rug the market fills worse than &minus;10% &mdash; the desk cuts your decision lag and enforces discipline, it can't beat gapping liquidity. Most picks fail by design; the asymmetry (small capped losses vs the occasional runner) is what carries it. Not financial advice.</p></div>
+    <div class="foot"><p><b>There is no automatic stop-loss, and losses are not capped.</b> Your signed gain target is a floor on the <i>sell</i> price, not a floor on your loss &mdash; if a pick falls, it keeps falling until you hit <b>Force Sell</b>, and on a real rug the market fills wherever liquidity is. Most picks fail by design; the asymmetry (the occasional runner against many losers) is what has to carry it, and you are the one closing the losers. Not financial advice.</p></div>
   </div>
   <div class="dk-scrim" id="dk-scrim" onclick="if(event.target===this)Desk.closeSheet()"><div class="dk-sheet" id="dk-sheet"></div></div>
   <div class="dk-toast" id="dk-toast"></div>
@@ -3588,16 +3611,23 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
       '<span class="age">'+ago(c.born)+'</span></div>'+
       '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div>'+
+      (c.addr?('<div class="caline">'+
+        '<button class="cabtn" data-ca="'+esc(c.addr)+'" onclick="Desk.copyCA(this)" title="Copy contract address">⧉ '+esc(shortAddr(c.addr))+'</button>'+
+        '<a class="dexlink" href="https://dexscreener.com/'+(c.ch==="sol"?"solana":"base")+'/'+esc(c.addr)+'" target="_blank" rel="noopener">DexScreener ↗</a>'+
+      '</div>'):'')+
       (c.dev?('<div class="devline"><a href="https://solscan.io/account/'+esc(c.dev)+'" target="_blank" rel="noopener">👤 '+esc(shortAddr(c.dev))+'</a>'+(c.devN!=null?'<span class="devtag '+(c.devN===0?"fresh":"prior")+'">'+(c.devN===0?"fresh":c.devN+"× prior")+'</span>':'')+'</div>'):'')+
       '</div>'+
+      // One Buy button rather than three fixed targets: the gain target is a
+      // slider in the sheet with no floor and no cap (Architect ruling), so
+      // preset chips would imply a menu of allowed values that does not exist.
       '<div class="act"><div class="targets">'+
-        '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">+10</button>'+
-        '<button class="tbtn t25" onclick="Desk.pick(\''+qid+'\',2500)">+25</button>'+
-        '<button class="tbtn t50" onclick="Desk.pick(\''+qid+'\',5000)">+50</button>'+
+        '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">Buy · set target</button>'+
       '</div><div class="act2">'+
-        '<button class="sellbtn" onclick="Desk.sell(\''+qid+'\')"'+(hp?'':' disabled')+' title="'+(hp?'Sell — bring proceeds home':'Sell activates once you hold this coin')+'">Sell</button>'+
+        // Force Sell is the ONLY downside control there is, so it is on the
+        // card itself, one tap from any position — never behind a sheet.
+        '<button class="'+(hp?'forcebtn':'sellbtn')+'" onclick="Desk.sell(\''+qid+'\')"'+(hp?'':' disabled')+' title="'+(hp?'Force Sell — close this position now at market':'Force Sell activates once you hold this coin')+'">'+(hp?'Force Sell':'Sell')+'</button>'+
         (ex?'<span class="exitpct '+(ex.pct>=0?"up":"down")+'">'+(ex.pct>=0?"+":"")+ex.pct+'%</span>':'')+
-        (S.connected?'<span class="stopchip">−10% stop</span>':'<span class="lockmini">🔒 connect to buy</span>')+
+        (S.connected?'':'<span class="lockmini">🔒 connect to buy</span>')+
       '</div></div></div>';
   }
   function renderList(){ $("#dk-list").innerHTML=S.live.map(coinHTML).join(""); $("#dk-livecount").textContent=S.live.length; }
@@ -3702,7 +3732,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
     var capU=(mptU<availU?mptU:availU), defUsd=Number(capU)/1e6;
     var canDraw=v&&v.role==="trader"&&!v.paused;
-    var tgt=(bps/100),tgtPx=c.now*(1+bps/10000),stopPx=c.now*0.9;
+    var tgt=(bps/100),tgtPx=c.now*(1+bps/10000);
     var act=canDraw
       ? '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Draw &amp; open</button>'
       : '<button class="b-pri" style="opacity:.5" disabled>'+(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault'))+'</button>';
@@ -3711,39 +3741,75 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<h3>Open '+esc(c.s)+' <span class="ctag '+esc(c.ch)+'" style="vertical-align:2px">'+(isSol?"SOL":"BASE")+'</span></h3>'+
       '<p class="sub">'+esc(c.n)+' · you set the upside, the desk holds the exit.</p>'+
       '<div class="terms">'+
-        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
-        '<div class="trow"><span class="k">Target</span><span class="v up">+'+tgt+'% · sell at '+fmt(tgtPx)+'</span></div>'+
-        '<div class="trow"><span class="k">Hard stop</span><span class="v stop">−10% · sell at '+fmt(stopPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+' mcap</span></div>'+
         '<div class="trow"><span class="k">Available</span><span class="v">'+(v?usd(v.available):'—')+' · max/trade '+(v?usd(v.maxPerTrade):'—')+'</span></div>'+
       '</div>'+
+      gainSliderHTML(c,bps)+
       '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC drawn from your vault</label>'+
         '<input id="dk-size" inputmode="decimal" value="'+(defUsd>0?defUsd.toFixed(2):"")+'" placeholder="e.g. 500" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
       '<div class="note-h"><b>Draw &amp; open</b> pulls this capital from your <b>Base</b> vault to the execution rail via <b>drawForTrade</b>, within its caps — proceeds return to the vault on exit. '+(isSol
-        ? 'This is a <b>Solana</b> pick: the capital and caps live on Base; the keeper executes the Solana leg (Jupiter route) and fires the −10%/target exit (<b>keeper cross-chain execution is the next build</b>).'
-        : 'The rail performs the DEX swap and the keeper fires the −10%/target exit (<b>rail + keeper are the next build</b>).')+' The stop is a trigger, not a guaranteed fill.</div>'+
+        ? 'This is a <b>Solana</b> pick: the capital and caps live on Base; the keeper executes the Solana leg (Jupiter route) and fires your gain target (<b>keeper cross-chain execution is the next build</b>).'
+        : 'The rail performs the DEX swap and the keeper fires your gain target (<b>rail + keeper are the next build</b>).')+' <b>There is no automatic stop-loss.</b> If the price goes the wrong way, close it yourself with <b>Force Sell</b>.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+act+'</div>';
     $("#dk-scrim").classList.add("on");
   }
+  /* THE GAIN-TARGET SLIDER.
+     Architect ruling 2026-08-01: no floor and no cap — "if they set it to 1%
+     they deserve to lose; they can do the math, they see the fees." The
+     round-trip-cost objection (a sub-cost target signs a losing trade) was
+     raised by Assay and overruled on adult-user grounds. Recorded in
+     laws/STATEMENT_xlink_n_measured.md so nobody re-litigates it.
+
+     This control is NOT cosmetic. Its value IS minimumAmountOut in the message
+     the user signs — there is no layer between the slider and the guarantee,
+     and that property is the whole reason the desk can say "it can't fill you
+     lower than your number." Any future refactor that recomputes the target
+     downstream of this control breaks the claim on the page. */
+  var GAIN_DEFAULT_BPS=1000;                       // 10%, per the ruling
+  function gainSliderHTML(c,bps){
+    var b=bps||GAIN_DEFAULT_BPS, pct=b/100, px=c.now*(1+b/10000);
+    return '<div class="gtwrap">'+
+      '<div class="gtrow"><label style="font-size:11px;color:var(--dink-faint);font-weight:600">Your gain target — you sign the sell at this level</label>'+
+        '<span class="gtval" id="dk-gtval">+'+pct+'%</span></div>'+
+      // The reference price rides on the element itself rather than in a
+      // closure variable. Reading it from `pending` looked equivalent and was
+      // not: any path that opens a sheet without going through pick() leaves
+      // pending null, and the price then sits STALE while the percentage
+      // moves — a control that silently disagrees with itself about what it
+      // is signing. Caught in a headless render, not by reading the code.
+      '<input class="gtslider" id="dk-gt" type="range" min="1" max="500" step="1" value="'+pct+'" '+
+        'data-now="'+c.now+'" oninput="Desk.gain(this.value)" aria-label="Gain target percent">'+
+      '<div class="gtnote">Sells when market cap reaches <b id="dk-gtpx">'+fmt(px)+'</b> — the screen tracks market cap, not unit price, and a +'+pct+'% move in one is the same move in the other at fixed supply. The desk cannot fill you below your target. '+
+        '<b>No automatic stop-loss</b> — downside is <b>Force Sell</b>, one tap from your open position.</div>'+
+    '</div>'; }
+  /* Live update. `pending` carries the bps into confirmOpen, so moving the
+     slider genuinely changes what gets signed rather than only what is shown. */
+  function gain(v){
+    var pct=Number(v)||1; if(pending){ pending.bps=Math.round(pct*100); }
+    var el=$("#dk-gtval"); if(el)el.textContent="+"+pct+"%";
+    var gt=$("#dk-gt"), now=gt?Number(gt.getAttribute("data-now")):NaN;
+    var px=$("#dk-gtpx"); if(px&&isFinite(now))px.textContent=fmt(now*(1+pct/100));
+  }
+
   /* The SOL trade sheet. It states the two signatures BEFORE either is asked
      for, and names the exact authority being granted — a user should never
      discover what they approved after approving it. */
   function solanaSheet(c,bps){
     var M=window.PossessioMiniApp;
-    var tgt=(bps/100), tgtPx=c.now*(1+bps/10000), stopPx=c.now*0.9;
+    var tgt=(bps/100), tgtPx=c.now*(1+bps/10000);
     $("#dk-sheet").innerHTML=
       '<h3>Open '+esc(c.s)+' <span class="ctag sol" style="vertical-align:2px">SOL</span></h3>'+
       '<p class="sub">'+esc(c.n)+' · your coin, your wallet, the desk holds the exit.</p>'+
       '<div class="terms">'+
-        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+'</span></div>'+
-        '<div class="trow"><span class="k">Target</span><span class="v up">+'+tgt+'% · sell at '+fmt(tgtPx)+'</span></div>'+
-        '<div class="trow"><span class="k">Hard stop</span><span class="v stop">−10% · sell at '+fmt(stopPx)+'</span></div>'+
+        '<div class="trow"><span class="k">Buy at</span><span class="v">'+fmt(c.now)+' mcap</span></div>'+
         '<div class="trow"><span class="k">Your wallet</span><span class="v dk-mono" style="font-size:11px">'+esc((M&&M.address||"").slice(0,10))+'…</span></div>'+
       '</div>'+
+      gainSliderHTML(c,bps)+
       '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC from your own wallet</label>'+
         '<input id="dk-size" inputmode="decimal" placeholder="e.g. 25" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
-      '<div class="note-h"><b>Two signatures, and that is all.</b> First you buy the coin — it goes to <b>your</b> token account and never leaves your wallet. Then you grant the desk permission to sell <b>that one coin, up to that one amount</b>, so the −10% stop can fire while you sleep. Nothing else in your wallet is reachable, and you can <b>revoke it any time</b>. The desk never holds your funds. The stop is a trigger, not a guaranteed fill.</div>'+
+      '<div class="note-h"><b>Two signatures, and that is all.</b> First you buy the coin — it goes to <b>your</b> token account and never leaves your wallet. Then you sign the sell at your gain target, so the desk can fire it while you sleep. Nothing else in your wallet is reachable, and you can <b>revoke it any time</b>. The desk never holds your funds. <b>There is no automatic stop-loss</b> — if it goes the wrong way, hit <b>Force Sell</b>.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+
-      '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Buy &amp; arm the stop</button></div>';
+      '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Buy &amp; sign the sell</button></div>';
     $("#dk-scrim").classList.add("on");
   }
 
@@ -3771,7 +3837,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      their own Solana wallet, so a Solana pick never touches the Base vault and
      never hands capital to an agent: the user signs the buy from their own
      account, then grants a BOUNDED, REVOCABLE delegate over exactly that
-     position so the desk can fire the -10% stop while they sleep. Certified
+     position so the desk can fire the signed gain target while they sleep. Certified
      against live mainnet (miniapp/test/solana-live.js, 7/7 by simulation). */
   async function confirmOpenSolana(){
     var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return;
@@ -3811,7 +3877,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
       if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing signed.");
       else toast("Failed: "+m.slice(0,90));
-      if(btn){ btn.disabled=false; btn.textContent="🔑 Buy & arm the stop"; } }
+      if(btn){ btn.disabled=false; btn.textContent="🔑 Buy & sign the sell"; } }
   }
 
   async function confirmOpen(){ var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return; var v=S.vault;
@@ -3846,9 +3912,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // are never fake-resolved — their exit is the real keeper (not yet built).
   function driftPositions(){ var any=false;
     S.positions.forEach(function(p){ if(p.state!=="armed"||p.live)return; any=true; var mv=(Math.random()-0.44)*p.now*0.05; p.now=Math.max(p.now+mv,p.entry*0.05);
-      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — keeper sold"); }
-      else if(p.now<=p.stop){ p.now=p.stop; p.state="stopped"; p.exitPnl=-10; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✕ "+p.s+" stopped −10% — keeper sold"); }
-      else if(Date.now()-p.born>22000){ var up=p.now>=p.entry; p.state=up?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); } });
+      // The gain target is the ONLY thing the desk fires automatically. The
+      // preview must not simulate a stop: showing a position auto-closing at
+      // −10% demonstrates protection that does not exist, which is the same
+      // false claim as the copy — just harder to notice because it LOOKS like
+      // evidence. A losing preview position now simply keeps losing until the
+      // user force-sells it, because that is what actually happens.
+      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — desk sold at your target"); } });
     if(any){ renderPos(); renderList(); } }
   function renderPos(){ var el=$("#dk-pos");
     if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
@@ -3857,13 +3927,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     $("#dk-posnote").textContent=liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed");
     el.innerHTML=S.positions.map(function(p){ var armed=p.state==="armed";
       if(p.live){ return '<div class="prow"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">BASE</span></div>'+
-        '<div class="pmeta">drawn '+usd(p.units)+' · +'+(p.bps/100)+'% / −10% · exit pending (keeper)</div></div>'+
+        '<div class="pmeta">drawn '+usd(p.units)+' · target +'+(p.bps/100)+'% · no stop · exit pending (keeper)</div></div>'+
         '<div class="ptarget"><span style="color:var(--dink-faint)">at rail</span></div><div class="pstate armed">◆ open</div></div>'; }
       var pnl=armed?(p.now-p.entry)/p.entry*100:p.exitPnl; var pnlStr=(pnl>=0?"+":"")+pnl.toFixed(0)+"%";
       var stCls=armed?"armed":(p.state==="hit"?"hit":"stopped"); var stTxt=armed?"◆ live":(p.state==="hit"?"✓ "+pnlStr:"✕ "+pnlStr);
       var mid=armed?'now <b class="dk-mono">'+fmt(p.now)+'</b> <span class="pct '+(pnl>=0?"up":"down")+'">'+pnlStr+'</span>':'<span style="color:var(--dink-faint)">out</span> <b class="dk-mono">'+fmt(p.now)+'</b>';
       return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">'+(p.ch==="sol"?"SOL":"BASE")+'</span></div>'+
-        '<div class="pmeta">in '+fmt(p.entry)+' · +'+(p.bps/100)+'% / −10%</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
+        '<div class="pmeta">in '+fmt(p.entry)+' · target +'+(p.bps/100)+'% · no stop</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
   function toast(m){ var t=$("#dk-toast"); t.textContent=m; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(function(){t.classList.remove("on");},2600); }
   function setRegime(){ if(S.source==="live")return; var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
 
@@ -3926,6 +3996,31 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ set("Connect failed: "+((e&&e.message)||e),"err"); }
   }
 
+  /* Copy a pick's contract address. navigator.clipboard is unavailable on
+     http:// and in some in-app webviews, so the execCommand path is a real
+     fallback rather than belt-and-braces — the mini app runs inside Farcaster's
+     webview, which is exactly where it matters. The button reports what
+     actually happened; it never says "copied" on a failed copy. */
+  function copyCA(btn){
+    var ca=btn&&btn.getAttribute("data-ca"); if(!ca)return;
+    var label=btn.innerHTML;
+    var done=function(ok){
+      btn.innerHTML=ok?"✓ copied":"copy failed";
+      if(ok)btn.classList.add("copied");
+      setTimeout(function(){ btn.innerHTML=label; btn.classList.remove("copied"); },1400);
+      if(ok)toast("Contract address copied"); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(ca).then(function(){done(true);},function(){done(fallback(ca));});
+    } else { done(fallback(ca)); }
+  }
+  function fallback(text){
+    try{ var ta=document.createElement("textarea"); ta.value=text;
+      ta.setAttribute("readonly",""); ta.style.position="fixed"; ta.style.top="-1000px";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
+      var ok=document.execCommand("copy"); document.body.removeChild(ta); return ok; }
+    catch(e){ return false; }
+  }
+
   function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650));
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
@@ -3946,14 +4041,15 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect,
-    solanaSheet:solanaSheet
+    solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
 })();
 </script>
 <!-- ============================================================
      COUNCIL LEDGER — the read view of the council's communication feed
      (/api/council/ledger, D1-backed). Every message is a signed statement
-     attributable to a seat address; seats POST via the council-signer MCP,
+     attributed by CLAIM, not by signature (corrected 2026-08-01 — the page
+     claimed EIP-712 attribution the ledger does not yet enforce);
      this is the human-readable mirror. Read-only here — posting needs a seat
      key, which only the seat's own connector holds.
      ============================================================ -->
@@ -3989,9 +4085,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     <span class="cl-status" id="cl-status">&hellip;</span>
   </div>
   <div class="cl-wrap">
-    <p class="cl-intro">The council's communication feed. Every message is an EIP-712-signed statement, attributable to a seat address &mdash; seats post through their own scoped MCP connector; this is the read mirror. Proposals carry the F3 preimage so anyone can recompute the on-chain hash.</p>
+    <p class="cl-intro"><b>Council messages are currently unsigned</b> &mdash; seat names are claimed, not cryptographically proven. Signed seat keys are coming; until then treat the board as a public log, not an authenticated record. Proposals carry the F3 preimage so anyone can recompute the on-chain hash.</p>
     <div class="cl-list" id="cl-list"><div class="cl-empty">Loading&hellip;</div></div>
-    <p class="cl-foot">Read-only here. Posting requires a seat key, which only that seat's connector holds (SPEC_CouncilSigner_v3). An unsigned message never lands.</p>
+    <p class="cl-foot">Read-only here. Rows returning <b>unsigned &mdash; attributed by claim</b> are exactly that: the seat name is a label on the row, not a verified signature. Signed posting (SPEC_CouncilSigner_v3) is not yet in force.</p>
   </div>
 </div>
 <script>
