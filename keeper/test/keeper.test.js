@@ -34,12 +34,41 @@ t("target and stop are computed from the authored bps, in both directions", () =
   assert.strictEqual(K.triggerFor(pos, pos.entryPrice * 1.1).kind, null, "in-band must not fire");
 });
 
-t("the target boundary fires exactly at the authored number, not near it", () => {
+t("the target boundary fires at the authored number, within float tolerance", () => {
+  // NAMED HONESTLY 2026-08-01. This used to claim the boundary fires "exactly
+  // at the authored number, not near it" and tested ONLY entryPrice 100 /
+  // targetBps 2500, where 100 * 1.25 is exactly 125 in binary floating point.
+  // It passed by luck of the constant. The claim is false in general:
+  //
+  //   100 * (1 + 1000/10000) === 110.00000000000001
+  //
+  // so a fill at exactly 110 does NOT fire. Measured across 54 entry/target
+  // combinations, 7 behave this way.
+  //
+  // The arithmetic was left alone deliberately. Rewriting the comparison in
+  // scaled form (price*10000 >= entry*(10000+bps)) cuts the target-side cases
+  // from 7 to 2 but introduces 2 on the STOP side, which had none — a net
+  // regression on a live-funds path for an error of ~1e-16 relative. On a coin
+  // priced at 2.5e-6 that is a trigger off by 2.5e-22 dollars, which no market
+  // can express. The defect was the CLAIM, not the code.
   const pos = { entryPrice: 100, targetBps: 2500, stopBps: 1000 };
   assert.strictEqual(K.triggerFor(pos, 124.99).kind, null, "just below target: hold");
-  assert.strictEqual(K.triggerFor(pos, 125).kind, "target", "exactly at target: fire");
-  assert.strictEqual(K.triggerFor(pos, 90).kind, "stop", "exactly at stop: fire");
+  assert.strictEqual(K.triggerFor(pos, 125).kind, "target", "at target: fire");
+  assert.strictEqual(K.triggerFor(pos, 90).kind, "stop", "at stop: fire");
   assert.strictEqual(K.triggerFor(pos, 90.01).kind, null, "just above stop: hold");
+
+  // The property that actually holds, stated over values that do NOT divide
+  // cleanly in binary — so this cannot pass by luck of a constant the way the
+  // old version did.
+  const EPS = 1e-12;
+  for (const [entryPrice, targetBps] of [[100, 1000], [0.0025, 1000], [10, 13700], [3.7, 5000]]) {
+    const p = { entryPrice, targetBps, stopBps: 1000 };
+    const authored = entryPrice * (1 + targetBps / 10000);
+    assert.strictEqual(K.triggerFor(p, authored * (1 + EPS)).kind, "target",
+      `a fill a hair ABOVE the authored target must fire (entry ${entryPrice}, bps ${targetBps})`);
+    assert.strictEqual(K.triggerFor(p, authored * (1 - 1e-6)).kind, null,
+      `a fill measurably below the authored target must hold (entry ${entryPrice}, bps ${targetBps})`);
+  }
 });
 
 // ── RULE 1: revocation is instant ──────────────────────────────────────────

@@ -64,9 +64,22 @@ async function executablePrice({ mint, amount, decimals }) {
 
 function triggerFor(pos, price) {
   const target = pos.entryPrice * (1 + pos.targetBps / 10000);
-  const stop = pos.entryPrice * (1 - pos.stopBps / 10000);
+  // stopBps === 0 means NO STOP, not "stop at the entry price".
+  //
+  // The arithmetic below reads 0 as a 0% drawdown, so `stop` lands exactly on
+  // entryPrice and `price <= stop` fires on the first tick at or below where
+  // the user bought — selling every position instantly. Nobody would ever
+  // author that rule, which is why it went unnoticed while the only permitted
+  // value was 1000.
+  //
+  // It stops being theoretical now: the Architect abolished the automatic stop
+  // on 2026-08-01, so "no stop" needs a representation, and 0 is the obvious
+  // one for anything writing this field next. Disabled is the only safe
+  // reading. NOTE: which value the signed rule should carry for "no stop" is a
+  // council decision, not this function's — the mini-app still sends 1000.
+  const stop = pos.stopBps > 0 ? pos.entryPrice * (1 - pos.stopBps / 10000) : null;
   if (price >= target) return { kind: "target", target, stop };
-  if (price <= stop) return { kind: "stop", target, stop };
+  if (stop !== null && price <= stop) return { kind: "stop", target, stop };
   return { kind: null, target, stop };
 }
 

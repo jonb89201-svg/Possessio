@@ -59,13 +59,46 @@ function lift(src, name, params, extra = "") {
   }
   assert.ok(end > -1, `could not bound ${name}`);
 
-  // Strip the type annotations that appear INSIDE the body (e.g. `const
-  // bytes: number[] = []`). The signature is replaced wholesale above.
+  // Strip the type syntax that appears INSIDE the body. The signature is
+  // replaced wholesale above, so only body-level constructs matter.
+  //
+  // This stripper handled `const x: T =` but not `expr as T`, so the whole
+  // suite went red the day a lifted function gained an `as` assertion — and it
+  // went red with a bare "SyntaxError: Unexpected identifier 'as'" pointing at
+  // an <anonymous_script>, which names neither the file nor the function. A
+  // permanently red suite is a broken instrument, and a broken instrument
+  // invalidates every verdict taken with it.
   const body = src.slice(bodyStart, end)
-    .replace(/\bconst\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "const $1 =");
+    // `const bytes: number[] = []`
+    .replace(/\bconst\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "const $1 =")
+    // `let carry: number = 0`
+    .replace(/\blet\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "let $1 =")
+    // `expr as Uint8Array<ArrayBuffer>`, `expr as string`, `expr as number[]`
+    .replace(/\s+as\s+[A-Za-z_$][\w$.]*(?:<[^<>]*>)?(?:\[\])*/g, "")
+    // `value!` non-null assertions
+    .replace(/([\w$\])])!(?=\s*[.;,)\]}])/g, "$1");
 
+  const source = `(() => { ${extra}\nfunction ${name}(${params}) ${body}\nreturn ${name}; })()`;
+
+  // Parse BEFORE eval so an unhandled TS construct fails with something a
+  // human can act on. Without this the failure is an anonymous SyntaxError
+  // with no file, no function, and no offending line — which is how this one
+  // sat red on main instead of being fixed the day it landed.
+  try { new Function(`return ${source}`); }
+  catch (e) {
+    const off = /Unexpected identifier '(\w+)'/.exec(e.message);
+    assert.fail(
+      `lift(${name}) produced unparsable JS — the TypeScript stripper above does ` +
+      `not handle something in this function body.\n` +
+      `  source: the ${name} body\n` +
+      `  error : ${e.message}\n` +
+      (off ? `  hint  : add a rule for the '${off[1]}' construct to the stripper.\n` : "") +
+      `  If TS syntax keeps outgrowing this stripper, compile the file instead ` +
+      `of lifting from it.`
+    );
+  }
   // eslint-disable-next-line no-eval
-  return eval(`(() => { ${extra}\nfunction ${name}(${params}) ${body}\nreturn ${name}; })()`);
+  return eval(source);
 }
 
 const WORKER = R("worker/index.ts");
@@ -163,22 +196,65 @@ t("the hand-rolled base58 round-trips and matches bs58 exactly", () => {
 });
 
 // ── the worker's field gates match the desk and the contract ───────────────
-t("the worker accepts exactly the three targets the desk offers", () => {
+t("the desk cannot offer a target the worker will reject", () => {
+  // THE PROPERTY, unchanged since this test was written: a user must never be
+  // able to set a target, pay for the coin, sign the rule, and THEN get a
+  // silent 400 from the ledger. Only its shape changed — the desk used to
+  // offer three fixed buttons and the worker an allowlist of three values;
+  // it now offers a continuous slider (Architect ruling 2026-08-01, no floor
+  // and no cap) and the worker must accept exactly that continuum.
+  //
+  // This assertion is why the ruling did not ship broken: the slider went in
+  // while the worker still allowlisted 1000/2500/5000, so 137% was signable
+  // and unstorable. It was invisible until the suite itself was repaired.
   const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules"'));
-  assert.ok(/targetBps !== 1000 && targetBps !== 2500 && targetBps !== 5000/.test(w),
-    "the ledger must accept the same vocabulary as AutoTarget.openIntent");
-  // The desk builds these buttons inside a JS string, so the quotes are
-  // backslash-escaped in the file: Desk.pick(\''+qid+'\',1000).
+  const bounds = /targetBps\s*<\s*(\d+)\s*\|\|\s*targetBps\s*>\s*(\d+)/.exec(w);
+  assert.ok(bounds, "the worker no longer bounds targetBps by a range");
+  const [wMinBps, wMaxBps] = [Number(bounds[1]), Number(bounds[2])];
+
+  assert.ok(/Number\.isInteger\(targetBps\)/.test(w),
+    "a fractional bps truncates silently downstream (uint16); the worker must reject it");
+
+  // The slider is the ONLY thing that authors a target now, so its range is
+  // the desk's whole vocabulary. Read it from the markup rather than restating
+  // it here — a test that hardcodes the number it is checking proves nothing.
   const desk = R("public/index.html");
-  for (const bps of [1000, 2500, 5000]) {
-    assert.ok(new RegExp(`Desk\\.pick\\([^)]*,\\s*${bps}\\)`).test(desk),
-      `the desk offers no +${bps}bps button`);
-  }
-  // And nothing else — a fourth button would be a target the ledger rejects,
-  // i.e. a user tapping it and getting a silent 400 after paying for the coin.
+  const sl = /id="dk-gt"[^>]*?min="(\d+)"[^>]*?max="(\d+)"/.exec(desk);
+  assert.ok(sl, "the gain-target slider was not found in the desk markup");
+  const [sMinBps, sMaxBps] = [Number(sl[1]) * 100, Number(sl[2]) * 100];
+
+  assert.ok(sMinBps >= wMinBps,
+    `the slider can author +${sMinBps}bps but the worker floors at ${wMinBps}`);
+  assert.ok(sMaxBps <= wMaxBps,
+    `the slider can author +${sMaxBps}bps but the worker caps at ${wMaxBps}`);
+
+  // The fixed buttons are gone; any survivor is a target authored outside the
+  // slider and outside this check.
   const offered = [...desk.matchAll(/Desk\.pick\([^)]*,\s*(\d+)\)/g)].map((m) => Number(m[1]));
-  const extra = [...new Set(offered)].filter((b) => ![1000, 2500, 5000].includes(b));
-  assert.strictEqual(extra.length, 0, `the desk offers targets the ledger will reject: ${extra}`);
+  const outside = [...new Set(offered)].filter((b) => b < wMinBps || b > wMaxBps);
+  assert.strictEqual(outside.length, 0,
+    `the desk offers targets the ledger will reject: ${outside}`);
+});
+
+t("stopBps 0 means NO STOP, never a stop at the entry price", () => {
+  // The keeper computes stop = entryPrice * (1 - stopBps/10000). Read
+  // arithmetically, 0 puts the stop exactly ON entry and sells the position on
+  // the first tick at or below where the user bought. Harmless while 1000 was
+  // the only permitted value; a live-funds hazard the moment anything writes 0
+  // — and the Architect abolished the automatic stop on 2026-08-01, so 0 is
+  // the obvious value for whatever writes this field next.
+  const k = R("keeper/index.js");
+  assert.ok(/pos\.stopBps\s*>\s*0\s*\?/.test(k),
+    "triggerFor must special-case stopBps 0 rather than computing a stop from it");
+  const { triggerFor } = require("../index.js");
+  if (typeof triggerFor === "function") {
+    const pos = { entryPrice: 100, targetBps: 1000, stopBps: 0 };
+    assert.strictEqual(triggerFor(pos, 100).kind, null, "a 0-stop position fired AT entry");
+    assert.strictEqual(triggerFor(pos, 1).kind, null, "a 0-stop position fired on a -99% move");
+    // 120, not 110: 100*(1+1000/10000) is 110.00000000000001, so the exact
+    // boundary is a float question and this test is about the STOP.
+    assert.strictEqual(triggerFor(pos, 120).kind, "target", "the target must still fire");
+  }
 });
 
 t("the worker refuses to store any stop but the un-removable one", () => {

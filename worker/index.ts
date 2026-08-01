@@ -835,7 +835,20 @@ export default {
         // mirrors AutoTarget.openIntent's BadTarget check, so the ledger and the
         // contract accept exactly the same vocabulary and a later switch to the
         // on-chain source cannot silently change what a target means.
-        if (targetBps !== 1000 && targetBps !== 2500 && targetBps !== 5000)
+        // TARGET RANGE, not an allowlist (Architect ruling 2026-08-01: the desk
+        // ships a gain-target slider with no floor and no cap — "if they set it
+        // to 1% they deserve to lose; they can do the math, they see the fees").
+        //
+        // This was `!== 1000 && !== 2500 && !== 5000`, matching three fixed
+        // buttons that no longer exist. Against the slider it means a user can
+        // set 137%, sign the rule, and have the worker reject it with a 400 —
+        // the console letting someone sign something it cannot store. Caught by
+        // the desk<->worker contract test the moment that suite was repaired.
+        //
+        // Bounds are the slider's own, not a policy: 1%..500%. Integer-only,
+        // because a fractional bps is not representable downstream (uint16 in
+        // the contract) and would silently truncate.
+        if (!Number.isInteger(targetBps) || targetBps < 100 || targetBps > 50000)
           return json({ error: "BAD_TARGET" }, 400);
         // The stop is un-removable. A client asking for anything else is either
         // broken or hostile; either way it does not get written.
