@@ -88,10 +88,17 @@ contract DeployTradingDeskCreate3 is Script {
         // TOLL_SINK; an accounted pool (isInfraSink()==true) is rejected — a
         // plain push there strands the fee uncredited.
         if (tollSink == address(0)) revert TollSinkZero();
+        // LOW-LEVEL staticcall, mirroring the desk ctor exactly. The `try/catch`
+        // form this replaced had the SAME defect the ctor did: Solidity catches a
+        // revert but NOT a return-data decode failure, so a smart-contract wallet
+        // whose fallback returns EMPTY made this pre-flight revert with no data —
+        // and the ratified TOLL_SINK is exactly such a wallet. The guard meant to
+        // fail EARLY and LEGIBLY would instead have failed early and namelessly,
+        // on every run, with nothing to point at.
         if (tollSink.code.length > 0) {
-            try IInfraSink(tollSink).isInfraSink() returns (bool isPool) {
-                if (isPool) revert TollSinkIsAccountedPool(tollSink);
-            } catch { /* plain contract — fine */ }
+            (bool ok, bytes memory ret) =
+                tollSink.staticcall(abi.encodeWithSelector(IInfraSink.isInfraSink.selector));
+            if (ok && ret.length == 32 && abi.decode(ret, (bool))) revert TollSinkIsAccountedPool(tollSink);
         }
 
         vm.startBroadcast(pk);
