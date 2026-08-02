@@ -63,7 +63,49 @@ async function executablePrice({ mint, amount, decimals }) {
 }
 
 function triggerFor(pos, price) {
+  // A PRICE THAT IS NOT A POSITIVE NUMBER IS NOT A PRICE.
+  //
+  // Defence in depth against the quote guard above: a reading of 0 satisfies
+  // `price <= stop` for ANY stop, so a dead route fires a sale into a market
+  // with no liquidity — and it fires even on a position with NO stop, because
+  // the no-stop sentinel's stop price is itself 0. NaN happens to fail safe
+  // (every comparison is false), but relying on that is luck, not a guard.
+  //
+  // Unknown must stand the keeper down, never act. Same rule as the rug gate
+  // that counted an unset RPC as PASS.
+  if (!Number.isFinite(price) || price <= 0) return { kind: null, target: null, stop: null };
   const target = pos.entryPrice * (1 + pos.targetBps / 10000);
+
+  // NO STOP IS AN ABSENCE, NOT A VALUE — Architect ratification 2026-08-01,
+  // Option B. The branch is the point.
+  //
+  // The rejected alternative was a sentinel: stopBps 10000 yields a stop price
+  // of exactly 0, which no positive price reaches. That works today, and only
+  // today. Its safety rests entirely on the price guard above holding forever —
+  // a price READING of 0 reaches a threshold of 0 exactly, so any future change
+  // to the price path would silently re-arm every no-stop position with nothing
+  // in the arithmetic looking wrong.
+  //
+  // Under absence, no arithmetic can answer the question because the code never
+  // asks it. That is the difference between an unreachable threshold and no
+  // threshold, and it is why the comparison lives inside the branch rather than
+  // being guarded by a null check outside it.
+  // A rule that does not SAY is malformed, and does nothing at all.
+  //
+  // Treating undefined as "no stop" would be the same uninitialised-value trap
+  // one level further down: a source that forgets the field would silently
+  // produce an unstopped position, which is exactly what rejecting zero was
+  // meant to prevent. Absence must be STATED (hasStop === false), never
+  // inferred. An unstated rule is unknown, and unknown stands the keeper down —
+  // it does not take profit either, because a rule this loop cannot fully read
+  // is not a rule it should act on at all.
+  if (typeof pos.hasStop !== "boolean") return { kind: null, target: null, stop: null };
+
+  if (pos.hasStop === false) {
+    if (price >= target) return { kind: "target", target, stop: null };
+    return { kind: null, target, stop: null };
+  }
+
   const stop = pos.entryPrice * (1 - pos.stopBps / 10000);
   if (price >= target) return { kind: "target", target, stop };
   if (price <= stop) return { kind: "stop", target, stop };

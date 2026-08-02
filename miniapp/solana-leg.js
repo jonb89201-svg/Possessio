@@ -46,7 +46,17 @@ async function quote({ inputMint, outputMint, amount, slippageBps = 300 }) {
   const r = await fetch(u, { headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(`jupiter quote ${r.status}`);
   const j = await r.json();
-  if (!j.outAmount) throw new Error("no route");
+  // `!j.outAmount` was written to mean "no route", and it does not catch the
+  // case it most needs to: "0" is a TRUTHY string, so a zero-output quote
+  // sails through as a valid route. Downstream that becomes price 0, and a
+  // price of 0 satisfies `price <= stop` for ANY stop — including the
+  // no-stop sentinel, whose stop price is 0. A dead route would fire a
+  // "stop" sale into a market with no liquidity.
+  //
+  // NULL MEANS UNKNOWN, NEVER PASS. An unquotable route is unknown, so it
+  // refuses rather than reporting a price of zero.
+  const out = Number(j.outAmount);
+  if (!Number.isFinite(out) || out <= 0) throw new Error("no route (zero or unreadable output)");
   return j;
 }
 

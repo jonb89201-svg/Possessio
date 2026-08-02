@@ -59,13 +59,46 @@ function lift(src, name, params, extra = "") {
   }
   assert.ok(end > -1, `could not bound ${name}`);
 
-  // Strip the type annotations that appear INSIDE the body (e.g. `const
-  // bytes: number[] = []`). The signature is replaced wholesale above.
+  // Strip the type syntax that appears INSIDE the body. The signature is
+  // replaced wholesale above, so only body-level constructs matter.
+  //
+  // This stripper handled `const x: T =` but not `expr as T`, so the whole
+  // suite went red the day a lifted function gained an `as` assertion — and it
+  // went red with a bare "SyntaxError: Unexpected identifier 'as'" pointing at
+  // an <anonymous_script>, which names neither the file nor the function. A
+  // permanently red suite is a broken instrument, and a broken instrument
+  // invalidates every verdict taken with it.
   const body = src.slice(bodyStart, end)
-    .replace(/\bconst\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "const $1 =");
+    // `const bytes: number[] = []`
+    .replace(/\bconst\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "const $1 =")
+    // `let carry: number = 0`
+    .replace(/\blet\s+(\w+)\s*:\s*[\w[\]<>|\s]+?=/g, "let $1 =")
+    // `expr as Uint8Array<ArrayBuffer>`, `expr as string`, `expr as number[]`
+    .replace(/\s+as\s+[A-Za-z_$][\w$.]*(?:<[^<>]*>)?(?:\[\])*/g, "")
+    // `value!` non-null assertions
+    .replace(/([\w$\])])!(?=\s*[.;,)\]}])/g, "$1");
 
+  const source = `(() => { ${extra}\nfunction ${name}(${params}) ${body}\nreturn ${name}; })()`;
+
+  // Parse BEFORE eval so an unhandled TS construct fails with something a
+  // human can act on. Without this the failure is an anonymous SyntaxError
+  // with no file, no function, and no offending line — which is how this one
+  // sat red on main instead of being fixed the day it landed.
+  try { new Function(`return ${source}`); }
+  catch (e) {
+    const off = /Unexpected identifier '(\w+)'/.exec(e.message);
+    assert.fail(
+      `lift(${name}) produced unparsable JS — the TypeScript stripper above does ` +
+      `not handle something in this function body.\n` +
+      `  source: the ${name} body\n` +
+      `  error : ${e.message}\n` +
+      (off ? `  hint  : add a rule for the '${off[1]}' construct to the stripper.\n` : "") +
+      `  If TS syntax keeps outgrowing this stripper, compile the file instead ` +
+      `of lifting from it.`
+    );
+  }
   // eslint-disable-next-line no-eval
-  return eval(`(() => { ${extra}\nfunction ${name}(${params}) ${body}\nreturn ${name}; })()`);
+  return eval(source);
 }
 
 const WORKER = R("worker/index.ts");
@@ -73,7 +106,7 @@ const MINIAPP = R("public/miniapp-solana.js");
 const ALPHA = 'const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";';
 
 const workerPreimage = lift(WORKER, "deskRulePreimage", "r");
-const miniPreimage = lift(MINIAPP, "rulePreimage", "{ owner, mint, decimals, entryPrice, targetBps, stopBps, nonce }");
+const miniPreimage = lift(MINIAPP, "rulePreimage", "{ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }");
 const b58encode = lift(MINIAPP, "b58encode", "bytes", ALPHA);
 const b58decode = lift(WORKER, "b58decode", "s", ALPHA);
 
@@ -83,6 +116,7 @@ const RULE = {
   decimals: 5,
   entryPrice: 0.0000028914,
   targetBps: 2500,
+  hasStop: true,
   stopBps: 1000,
   nonce: "1785430000000-abc123",
 };
@@ -106,7 +140,7 @@ t("every field of the instruction is covered by the signature", () => {
   for (const [k, v] of Object.entries({
     owner: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     mint: "So11111111111111111111111111111111111111112",
-    decimals: 9, entryPrice: 0.0000029, targetBps: 5000, stopBps: 500, nonce: "other",
+    decimals: 9, entryPrice: 0.0000029, targetBps: 5000, hasStop: false, stopBps: 500, nonce: "other",
   })) {
     const changed = Buffer.from(workerPreimage({ ...RULE, [k]: v })).toString("hex");
     assert.notStrictEqual(changed, base, `changing ${k} did not change the signed bytes`);
@@ -163,31 +197,82 @@ t("the hand-rolled base58 round-trips and matches bs58 exactly", () => {
 });
 
 // ── the worker's field gates match the desk and the contract ───────────────
-t("the worker accepts exactly the three targets the desk offers", () => {
+t("the desk cannot offer a target the worker will reject", () => {
+  // THE PROPERTY, unchanged since this test was written: a user must never be
+  // able to set a target, pay for the coin, sign the rule, and THEN get a
+  // silent 400 from the ledger. Only its shape changed — the desk used to
+  // offer three fixed buttons and the worker an allowlist of three values;
+  // it now offers a continuous slider (Architect ruling 2026-08-01, no floor
+  // and no cap) and the worker must accept exactly that continuum.
+  //
+  // This assertion is why the ruling did not ship broken: the slider went in
+  // while the worker still allowlisted 1000/2500/5000, so 137% was signable
+  // and unstorable. It was invisible until the suite itself was repaired.
   const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules"'));
-  assert.ok(/targetBps !== 1000 && targetBps !== 2500 && targetBps !== 5000/.test(w),
-    "the ledger must accept the same vocabulary as AutoTarget.openIntent");
-  // The desk builds these buttons inside a JS string, so the quotes are
-  // backslash-escaped in the file: Desk.pick(\''+qid+'\',1000).
+  const bounds = /targetBps\s*<\s*(\d+)\s*\|\|\s*targetBps\s*>\s*(\d+)/.exec(w);
+  assert.ok(bounds, "the worker no longer bounds targetBps by a range");
+  const [wMinBps, wMaxBps] = [Number(bounds[1]), Number(bounds[2])];
+
+  assert.ok(/Number\.isInteger\(targetBps\)/.test(w),
+    "a fractional bps truncates silently downstream (uint16); the worker must reject it");
+
+  // The slider is the ONLY thing that authors a target now, so its range is
+  // the desk's whole vocabulary. Read it from the markup rather than restating
+  // it here — a test that hardcodes the number it is checking proves nothing.
   const desk = R("public/index.html");
-  for (const bps of [1000, 2500, 5000]) {
-    assert.ok(new RegExp(`Desk\\.pick\\([^)]*,\\s*${bps}\\)`).test(desk),
-      `the desk offers no +${bps}bps button`);
-  }
-  // And nothing else — a fourth button would be a target the ledger rejects,
-  // i.e. a user tapping it and getting a silent 400 after paying for the coin.
+  const sl = /id="dk-gt"[^>]*?min="(\d+)"[^>]*?max="(\d+)"/.exec(desk);
+  assert.ok(sl, "the gain-target slider was not found in the desk markup");
+  const [sMinBps, sMaxBps] = [Number(sl[1]) * 100, Number(sl[2]) * 100];
+
+  assert.ok(sMinBps >= wMinBps,
+    `the slider can author +${sMinBps}bps but the worker floors at ${wMinBps}`);
+  assert.ok(sMaxBps <= wMaxBps,
+    `the slider can author +${sMaxBps}bps but the worker caps at ${wMaxBps}`);
+
+  // The fixed buttons are gone; any survivor is a target authored outside the
+  // slider and outside this check.
   const offered = [...desk.matchAll(/Desk\.pick\([^)]*,\s*(\d+)\)/g)].map((m) => Number(m[1]));
-  const extra = [...new Set(offered)].filter((b) => ![1000, 2500, 5000].includes(b));
-  assert.strictEqual(extra.length, 0, `the desk offers targets the ledger will reject: ${extra}`);
+  const outside = [...new Set(offered)].filter((b) => b < wMinBps || b > wMaxBps);
+  assert.strictEqual(outside.length, 0,
+    `the desk offers targets the ledger will reject: ${outside}`);
 });
 
-t("the worker refuses to store any stop but the un-removable one", () => {
+t("the worker rejects a stop the ratification made invalid", () => {
+  // Architect ratification 2026-08-01, Option B. This replaces two tests:
+  // "the worker refuses to store any stop but the un-removable one" (the
+  // un-removable stop no longer exists) and "stopBps 0 means NO STOP" (0 is now
+  // rejected outright rather than reinterpreted).
   const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules"'));
-  assert.ok(/stopBps !== 1000/.test(w) && /STOP_IS_FIXED/.test(w),
-    "a client must not be able to widen or remove its own stop");
-  const sol = R("src/PossessioAutoTarget.sol");
-  assert.ok(/uint16 public constant STOP_BPS = 1000;/.test(sol),
-    "the contract's stop and the ledger's stop must be the same number");
+
+  assert.ok(/typeof hasStop !== "boolean"/.test(w) && /STOP_UNSTATED/.test(w),
+    "a rule that fails to state whether it has a stop must be rejected, not defaulted");
+  const bounds = /stopBps\s*<\s*1\s*\|\|\s*stopBps\s*>\s*9999/.test(w);
+  assert.ok(bounds, "a stop must be bounded 1..9999 — zero rejected, 10000 not adopted as a sentinel");
+  assert.ok(/Number\.isInteger\(stopBps\)/.test(w), "a fractional stop must be rejected");
+  assert.ok(/STOP_CONTRADICTION/.test(w),
+    "hasStop:false carrying a stopBps is a contradiction the signature covers; it must be refused, not resolved");
+  assert.ok(!/stopBps !== 1000/.test(w), "the un-removable-stop check must be gone");
+});
+
+t("the signed bytes state the stop positively — absence is never inferred", () => {
+  // If the preimage omitted the line instead, a forgotten stopBps would produce
+  // a VALID signature over a rule with no stop: the uninitialised-value trap
+  // that disqualified zero, moved from the value to the key.
+  const withStop = Buffer.from(workerPreimage(RULE)).toString();
+  const noStop = Buffer.from(workerPreimage({ ...RULE, hasStop: false, stopBps: undefined })).toString();
+
+  assert.ok(withStop.includes("hasStop:true\nstopBps:1000\n"), "a stopped rule must sign both lines");
+  assert.ok(noStop.includes("hasStop:false\n"), "an unstopped rule must sign the absence explicitly");
+  assert.ok(!noStop.includes("stopBps:"), "an unstopped rule must not sign a threshold at all");
+  assert.notStrictEqual(withStop, noStop, "the two must not produce identical bytes");
+
+  // And the console agrees, byte for byte, on BOTH shapes.
+  for (const r of [RULE, { ...RULE, hasStop: false, stopBps: undefined }]) {
+    assert.strictEqual(
+      Buffer.from(miniPreimage(r)).toString("hex"),
+      Buffer.from(workerPreimage(r)).toString("hex"),
+      `console and worker disagree for hasStop:${r.hasStop}`);
+  }
 });
 
 t("owner is the VERIFIED signer, never a field copied from the request", () => {

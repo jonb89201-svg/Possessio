@@ -21,7 +21,9 @@ const { PublicKey } = require("@solana/web3.js");
 
 /// A position the keeper may act on. Every field the loop needs to decide,
 /// and nothing it does not.
-///   { id, user, mint, amount, entryPrice, targetBps, stopBps, decimals }
+///   { id, user, mint, amount, entryPrice, targetBps, hasStop, stopBps, decimals }
+/// `hasStop` false means the position has NO stop — the keeper never computes
+/// or compares a threshold for it (Architect ratification 2026-08-01).
 
 /* ───────────────────────── on-chain (AutoTarget) ───────────────────────── */
 
@@ -69,6 +71,10 @@ function onchainSource({ baseRpc, autoTarget }) {
           mint: enc(Buffer.from(tokenRef.slice(2), "hex")),
           entryPrice: Number(entryPriceRaw) / 1e18,
           targetBps: Number(targetBps),
+          // The on-chain AutoTarget intent always carries a stop, so an
+          // on-chain position always has one. The desk ledger is where absence
+          // can occur.
+          hasStop: true,
           stopBps: Number(stopBps),
         });
       }
@@ -188,12 +194,36 @@ const REFUSED = (owner, mint) =>
 /// The live, on-chain delegate state for ONE position. Re-read every cycle, so
 /// a user's revoke takes effect immediately rather than at the next restart.
 async function readLiveDelegate({ connection, owner, mint, keeper }) {
-  const { getAssociatedTokenAddress, getAccount } = require("@solana/spl-token");
+  const {
+    getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+  } = require("@solana/spl-token");
   try {
+    const mintPk = new PublicKey(mint);
+    // WHICH TOKEN PROGRAM OWNS THIS MINT — measured, never assumed.
+    //
+    // This defaulted to the classic SPL Token program, and that was silently
+    // fatal: the ATA is derived FROM the token program id, so a Token-2022
+    // mint resolves to a completely different address. getAccount then throws
+    // TokenAccountNotFoundError, the catch below turns it into REFUSED, and
+    // the keeper stands down reporting "not authorised" for a position that is
+    // perfectly well authorised. No error surfaces anywhere.
+    //
+    // Measured 2026-08-01 against the live radar feed: 25 of 25 picks are
+    // Token-2022 (TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb), zero classic.
+    // pump.fun mints Token-2022 now, so the default was wrong for EVERY
+    // position the desk can currently open.
+    const info = await connection.getAccountInfo(mintPk);
+    if (!info) return REFUSED(owner, mint);
+    const programId = info.owner;
+    // Anything that is not a token program cannot hold a delegate; refusing is
+    // the safe branch and keeps a malformed rule from reaching getAccount.
+    if (!programId.equals(TOKEN_PROGRAM_ID) && !programId.equals(TOKEN_2022_PROGRAM_ID)) {
+      return REFUSED(owner, mint);
+    }
     const ata = await getAssociatedTokenAddress(
-      new PublicKey(mint), new PublicKey(owner), false
+      mintPk, new PublicKey(owner), false, programId
     );
-    const acc = await getAccount(connection, ata);
+    const acc = await getAccount(connection, ata, undefined, programId);
     return decide({ ata, owner, mint, acc, keeper });
   } catch {
     return REFUSED(owner, mint);
