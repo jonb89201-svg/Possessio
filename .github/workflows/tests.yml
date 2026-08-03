@@ -1,0 +1,108 @@
+# THE SUITE, RUN WHERE IT CAN ACTUALLY RUN.
+#
+# WHY THIS EXISTS. The repo's primary language is Solidity and its primary suite
+# is 54 .t.sol files, and until now NOTHING ran them automatically. Verification
+# depended on the Architect remembering to run `forge test` in his own terminal.
+#
+# It cannot be done from a Claude Code web session at all: measured 2026-08-01,
+# this environment's egress policy returns 403 for both api.github.com and
+# github.com, so foundryup cannot resolve a release tag or download a binary.
+# A seat working here reasons from the diff and calls it verified — which
+# happened, and is recorded in laws/PHYSICS_of_execution.md.
+#
+# A GitHub Actions runner is not behind that policy. So the suite runs here,
+# on every pull request, before the merge that deploys.
+#
+# COST: zero. The repository is public, so Actions minutes are unmetered. That
+# matters — the protocol runs on a fixed monthly infrastructure budget, and an
+# execution seat cannot perceive cost (PHYSICS_of_execution, constant 7).
+#
+# THE GATE THIS CREATES: on this repo, merging to main IS a production deploy
+# (console-deploy.yml fires on public/** and worker/**). A required check here
+# turns "someone remembered to test" into something that refuses.
+
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same PR makes the first run obsolete; do not pay for it
+# or wait on it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── The Solidity suite. Deterministic and BLOCKING. ──────────────────
+  forge:
+    name: forge (solidity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # REQUIRED. lib/ is six git submodules (openzeppelin, v4-core,
+          # v4-periphery, chainlink, base-std, hookmate). Without this the
+          # build fails at import resolution before a single test runs.
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: forge version
+        run: forge --version
+
+      - name: build
+        run: forge build
+
+      # No BASE_RPC_URL is set here ON PURPOSE. The fork suites gate on
+      # vm.envOr("BASE_RPC_URL", "") and skip cleanly when it is unset, so this
+      # job is deterministic. Pointing it at a public RPC would make the
+      # BLOCKING gate flaky, and a flaky gate teaches people to ignore it —
+      # the same failure mode as a permanently red suite.
+      - name: test
+        run: forge test -vv
+
+  # ── The keeper suite. Also blocking, and much faster. ────────────────
+  keeper:
+    name: keeper (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+
+  # ── Fork coverage. NON-BLOCKING by design. ───────────────────────────
+  # These hit live Base mainnet, so they can fail for reasons that have nothing
+  # to do with the diff — an RPC hiccup is not a defect in the code. Kept off
+  # the blocking path so it can never wedge a merge, but reported so the
+  # coverage is visible rather than silently absent.
+  #
+  # Runs only when the secret exists. Without it the fork suites skip, and this
+  # job says so instead of pretending it ran them.
+  fork:
+    name: fork (live base, advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: test (fork)
+        env:
+          BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+        run: |
+          if [ -z "${BASE_RPC_URL:-}" ]; then
+            echo "BASE_RPC_URL is not set — the fork suites SKIP."
+            echo "This job did not verify any fork path. Set the secret to enable it."
+            exit 0
+          fi
+          forge test -vv --match-path 'test/*Fork*.t.sol'
