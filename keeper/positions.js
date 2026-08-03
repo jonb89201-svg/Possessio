@@ -185,6 +185,35 @@ function decide({ ata, owner, mint, acc, keeper }) {
   };
 }
 
+/// WHICH TOKEN PROGRAM OWNS THIS MINT — read once, then remembered.
+///
+/// A mint's owning program is immutable, so re-reading it is re-learning a
+/// constant. Without this cache readLiveDelegate issues one extra getAccountInfo
+/// PER POSITION, PER CYCLE, forever — an RPC bill that grows with both the
+/// position count and the poll rate and buys nothing after the first read.
+///
+/// That matters more than it looks: this protocol runs on a fixed monthly
+/// infrastructure budget, and an execution seat has NO PERCEPTION OF COST. A
+/// cached read and a billed one are formally identical at the call site, so
+/// nothing in the environment would have flagged this. The mini-app already
+/// caches the same value for the same reason (`_progCache`); the keeper did not,
+/// because the fix that introduced the read was written to be correct rather
+/// than cheap. Correct first was the right order — but cheap is not optional on
+/// the hot path.
+///
+/// Negative results are NOT cached: a mint that is missing now may simply be an
+/// RPC hiccup, and caching "does not exist" would stand the keeper down on a
+/// live position until restart.
+const _mintProgram = new Map();
+async function tokenProgramInfo(connection, mintPk) {
+  const k = mintPk.toBase58();
+  const hit = _mintProgram.get(k);
+  if (hit) return hit;
+  const info = await connection.getAccountInfo(mintPk);
+  if (info) _mintProgram.set(k, info);
+  return info;
+}
+
 /// Refused: no account, no authority. Every failure to READ must land here
 /// rather than throwing, because an RPC hiccup must stand the keeper down, not
 /// crash the loop and leave other positions unwatched.
@@ -212,7 +241,7 @@ async function readLiveDelegate({ connection, owner, mint, keeper }) {
     // Token-2022 (TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb), zero classic.
     // pump.fun mints Token-2022 now, so the default was wrong for EVERY
     // position the desk can currently open.
-    const info = await connection.getAccountInfo(mintPk);
+    const info = await tokenProgramInfo(connection, mintPk);
     if (!info) return REFUSED(owner, mint);
     const programId = info.owner;
     // Anything that is not a token program cannot hold a delegate; refusing is
