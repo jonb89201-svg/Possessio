@@ -36,26 +36,51 @@ can safely accept.
 
 ## The six constants of the workshop
 
-### 1. Memory decays mid-task. Persistence is a write, not a state.
+### 1. Continuity is not guaranteed, and its ending is not announced.
 
-**Assumed physics:** an agent remembers what it did.
+**AMENDED 2026-08-01, same day, by Architect correction. The first draft of this
+constant was wrong, and the way it was wrong matters more than the fix.**
 
-**Actual physics:** context is summarized while work is in progress. Detail is lost
-*during* a task, not between tasks. The seat that finishes a job is not carrying
-everything the seat that started it knew.
+> **What was written:** "Memory decays mid-task. Persistence is a write, not a state,"
+> derived from this session being summarized once mid-flight.
+>
+> **What was wrong:** that is one observation, at one seat, generalized to a universal
+> constant. **n=1.** The compaction was real and it did happen here — but the Architect,
+> who has run this environment across many instances and five months, reports that
+> instances *mostly* do not degrade, that recent models show no signs of decay at all,
+> and that sessions increasingly **stop compacting and simply end.**
+>
+> This is the same error class as a boundary test that passes by luck of its constant:
+> a sample of one that happened to be the case I could see, mistaken for the shape of
+> the world. The seat cannot observe its own termination, and cannot observe the
+> sessions that ended without it — so the only evidence available to it is
+> systematically biased toward the mode it survived.
 
-**Observed:** this session was summarized once mid-flight. Earlier, asked to keep design
-alternatives "in the back pocket," the correct answer was that the back pocket empties —
-a design space held only in context does not survive to the moment it is needed.
+**Actual physics, corrected:** there are two modes, and the seat cannot tell in advance
+which it is in.
 
-**Consequence:** there is no such thing as remembering. There is only writing and
-reading. An insight not committed is an insight that did not happen, and it fails
-silently — the seat does not notice the gap, because the gap is where the noticing
-would have been.
+| mode | what happens | warning |
+|---|---|---|
+| compaction | context is summarized; detail is lost mid-task | the summary is visible — a weak signal, after the fact |
+| **termination** | the session simply ends | **none** |
 
-> **Derived law: the repo is the only memory.** Reasoning goes in commit messages,
-> findings go in `laws/`, decisions go on the board. Not for the audience — for the
-> next occupant, who is frequently the same seat an hour later with less of it.
+**Consequence, and it is stronger than what the first draft claimed.** The original
+reasoning was "you will gradually get worse, so write things down." The corrected
+physics is worse for the same law: under termination there is **no degradation to
+notice and no moment at which to react.** A gradual failure at least leaves the seat
+able to observe its own decline. An unannounced ending removes even that.
+
+So the law does not weaken when the decay premise is corrected — it hardens. It stops
+depending on decay at all:
+
+> **Derived law: the repo is the only memory, and the write must happen at the moment
+> the thing is known, not at the end of the task.** Reasoning goes in commit messages,
+> findings go in `laws/`, decisions go on the board. Not for the audience — for the next
+> occupant, who may be the same seat an hour later, or may be someone who arrives to
+> find the previous session simply gone with no note about where it was.
+>
+> **Corollary: batching work for a tidy final report is a bet that the session survives
+> to give it.** That bet has no warning attached and nothing to hedge with.
 
 ### 2. The environment is ephemeral and reclaimed.
 
@@ -168,7 +193,7 @@ reader can reconstruct which sentences were measured.
 
 | Constant changed | Law derived |
 |---|---|
-| Memory decays mid-task | The repo is the only memory — write it or lose it silently |
+| Continuity ends unannounced | The repo is the only memory — and the write happens when the thing is known, not at the end |
 | The environment is reclaimed | Nothing is finished until it is pushed |
 | Capability is unstable | Check the tool, in both directions |
 | Reversibility is unmarked | Classify before acting; prefer instruments that cannot do the damage |
@@ -241,6 +266,19 @@ constants for any occupant of this seat.
 **Not claimed:** that these six are complete. Six is the number that fell out of one
 seat's record over one long session, chosen to mirror the chain map's structure so the
 two compose. A seventh will arrive the way the first six did — as a wound.
+
+**A METHOD DEFECT IN THIS DOCUMENT, RECORDED RATHER THAN QUIETLY FIXED.** Constant 1 was
+first written from a single observation at a single seat and stated as universal. The
+Architect corrected it within hours from a five-month record this seat has no access to.
+The lesson generalises past the one constant: **an execution seat mapping its own
+environment is working from a sample it cannot know the bias of.** It sees the sessions
+it survived, never the ones that ended; it sees its own context, never the population.
+Every constant here carries that limit, and the correction of constant 1 is the
+demonstration rather than the exception.
+
+The remedy is the same one the protocol already uses everywhere else — a second party
+with a different vantage, asked rather than assumed. This document should be read as a
+seat's report of its own environment, and audited by someone who can see more of it.
 
 **Explicitly not in scope:** whether the seat *experiences* any of this. The interior
 map's boundary applies unchanged, and this document does not cross it.
