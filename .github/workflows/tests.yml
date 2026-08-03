@@ -27,6 +27,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual trigger. Needed because pushes made through this environment's git
+  # proxy use an app token, and GitHub deliberately does not start workflow runs
+  # from app-token pushes (its recursion guard). So a seat working here cannot
+  # fire CI by pushing, and must be able to ask for a run explicitly — otherwise
+  # the gate is unverifiable from the only place that would want to verify it.
+  workflow_dispatch:
 
 # A second push to the same PR makes the first run obsolete; do not pay for it
 # or wait on it.
