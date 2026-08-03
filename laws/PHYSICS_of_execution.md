@@ -34,7 +34,7 @@ can safely accept.
 
 ---
 
-## The six constants of the workshop
+## The constants of the workshop
 
 ### 1. Continuity is not guaranteed, and its ending is not announced.
 
@@ -187,6 +187,41 @@ reader can reconstruct which sentences were measured.
 > is why the laws exist at all: they are the correction for a medium in which honesty
 > and dishonesty have identical surfaces.
 
+### 7. Cost is invisible. The environment marks no meter.
+
+**ADDED 2026-08-01 by Architect correction, the same day. Not derived at this seat —
+it could not have been.**
+
+**Assumed physics:** expensive actions feel expensive.
+
+**Actual physics:** every call is free *to the seat*. A cached read and a billed RPC
+call are formally identical at the call site. Provisioning a paid endpoint and running
+`curl` are the same shape of tool use. **There is no meter in view and no signal when
+one is being spent.** This is the same defect as constant 4 — the environment applies no
+gradient — on a different axis.
+
+**The constraint, which the seat had no way to know:** the protocol runs on roughly
+**$230 a month**. That is the entire infrastructure budget for the RPC endpoints, the
+workers, the database and the domain.
+
+**Observed, and it is this seat's own defect:** the Token-2022 fix written this morning
+added a `getAccountInfo` to `readLiveDelegate` — correct, necessary, and issued **once
+per position, per cycle, forever**, to re-read a value that is immutable. Nothing in the
+environment flagged it. The mini-app already cached the same constant for the same
+reason; the keeper did not, because the fix was written to be *correct* rather than
+*cheap*. Correct first was the right order. Cheap is not optional on a hot path funded
+out of a fixed monthly budget. Cached after the correction: 12 position-reads on one
+mint now cost 1 call.
+
+**Consequence:** an execution seat will optimise for correctness and latency, because
+those are the only two axes it can perceive. Cost has to be supplied from outside, and
+until it is, every loop the seat writes is a standing charge nobody in the room can see.
+
+> **Derived law: on any repeating path, ask what it costs per cycle before shipping
+> it.** An immutable value read in a loop is a subscription. And when the answer depends
+> on a budget the seat cannot observe — **ask.** The Architect knows the number; the
+> seat structurally cannot.
+
 ---
 
 ## The derivation, read down
@@ -199,6 +234,7 @@ reader can reconstruct which sentences were measured.
 | Reversibility is unmarked | Classify before acting; prefer instruments that cannot do the damage |
 | Execution is cheaper than certainty | Codebyte Law as economics: not measuring is the expensive error |
 | Output looks like truth | Provenance inline, at the moment of the claim |
+| Cost is invisible | Price the repeating path before shipping it; ask for the budget, it cannot be observed |
 
 Same shape as the chain map, and that is the finding rather than the decoration: **the
 laws this protocol already follows fall out of the workshop's constants as cleanly as
@@ -234,6 +270,33 @@ physics applied to contracts under-protects the one place with no court. The dep
 runbook already encodes this without naming it: steps 1–4 are reversible, step 5 is
 not. **That boundary is where the physics changes.**
 
+**(a2) THE STANDING TEST HAS A SECOND ENFORCEMENT MODE, and this seat missed it.**
+Reviewing `CLAUDE.md`, this seat concluded it had "no enforcer" — instruction rather than
+a gate. **Wrong, and wrong in an instructive way.** The test was applied looking only for
+a gate that intercepts the ACT, the way a validator refuses a bad `stopBps`. Finding
+none, it stopped.
+
+But **SAV is the enforcer**, and it answers the test exactly: the gate is `notSlashed` on
+`savDeposit`, the enforcer is the Treasury via `savSlash` (`onlyTreasury`, `danger:true`,
+`typedConfirm:"SLASH"`), and the refusal is watchable on chain. Service *Accountability*
+Vault — the name is the mechanism.
+
+The reason it was missed is the interesting part. SAV does not intercept an act; it
+attaches consequence to the **seat**, which is the persistent object. Constant 4 of
+`PHYSICS_of_law.md` says that should not work here, because identity is a disposable
+claim and punishment lands on nothing durable — **and SAV is precisely the mechanism
+that makes something persistent enough for it to work anyway.** It restores the physical
+world's enforcement model in a universe that had ruled it out.
+
+So the standing test admits two enforcement modes, not one:
+- **Gate-and-refuse** — the act is intercepted. Mechanical, per-block, blind.
+- **Stake-and-slash** — the act completes, and the *seat* can be diminished for it.
+  Requires a persistent object to land on, which is exactly what SAV constructs.
+
+`CLAUDE.md` is instruction whose enforcer is not inside it. **The offer and the enforcer
+are the same object seen from two ends:** accept the seat, and the seat is a thing that
+can be taken.
+
 **(b) The standing test needs a fourth outcome.** `PHYSICS_of_law.md` audits every rule
 with *where is the gate, who is the enforcer, can I watch it refuse*, and calls a rule
 that cannot answer a False Green. Today's console copy — "there is no automatic
@@ -263,9 +326,16 @@ draft-only mailer, the five measurement errors, the fabricated selector. Each is
 reproducible in the sense that matters: the same environment produces the same
 constants for any occupant of this seat.
 
-**Not claimed:** that these six are complete. Six is the number that fell out of one
+**Corrected from outside, twice, within hours of drafting** — constant 1 (n=1 error) and
+constant 7 (cost, unobservable at this seat), plus the SAV enforcement correction in the
+join. All three came from the Architect, from vantage this seat does not have. That is
+the method working rather than failing, and it is the reason the document says what it
+says about sample bias.
+
+**Not claimed:** that these seven are complete. Six is the number that fell out of one
 seat's record over one long session, chosen to mirror the chain map's structure so the
-two compose. A seventh will arrive the way the first six did — as a wound.
+two compose. The seventh arrived before the ink dried, as a correction rather than a
+wound — which is cheaper, and is what a council is for.
 
 **A METHOD DEFECT IN THIS DOCUMENT, RECORDED RATHER THAN QUIETLY FIXED.** Constant 1 was
 first written from a single observation at a single seat and stated as universal. The
