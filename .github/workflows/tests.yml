@@ -90,7 +90,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install --no-audit --no-fund
+      # `npm ci --ignore-scripts`, not `npm install`. Both halves are load-bearing.
+      #
+      # --ignore-scripts closes the preinstall/postinstall execution vector. That
+      # is the exact mechanism of the ChainDrop npm worm (disclosed 2026-08-04,
+      # 868 packages across 1381 versions, ~2B monthly downloads): a compromised
+      # maintainer account added `"preinstall": "node setup.mjs"`, which ran
+      # automatically on install and exfiltrated GitHub PATs and workflow tokens,
+      # npm tokens, cloud credentials and the COMPLETE process environment. This
+      # job runs with GITHUB_TOKEN in scope, so an install-time script here is
+      # code execution against the repository's own credentials.
+      #
+      # `ci` instead of `install` pins the tree to the lockfile exactly, so a
+      # transitive dependency cannot silently resolve to a newer, compromised
+      # patch version between one run and the next.
+      #
+      # MEASURED before adopting, not assumed: this repo has 8 packages with
+      # install-time scripts, all native-build or prepare hooks
+      # (utf-8-validate, bufferutil, bigint-buffer, @solana/buffer-layout*,
+      # node-fetch, uuid). With scripts off, bigint-buffer falls back to pure JS
+      # exactly as its own script says it will, every direct dependency loads,
+      # and the full suite passes 75/75 exit 0. Nothing here needs to execute at
+      # install time.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
 
   # ── Credential scan. BLOCKING, and the only layer that cannot be skipped. ──
