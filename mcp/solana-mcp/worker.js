@@ -89,11 +89,40 @@ function keyMatches(given, expected) {
   return diff === 0;
 }
 
+// A secret reaches this worker in one of two shapes and the code must not care
+// which:
+//   `wrangler secret put`      -> a plain string on env
+//   Secrets Store binding      -> an OBJECT with an async get()
+//
+// The object shape is the dangerous one. `if (!env.SOLANA_RPC)` is true of a
+// string and false of a binding ALWAYS, secret or no secret behind it — so a
+// truthiness gate silently stops gating the moment the binding is introduced,
+// and the failure surfaces later as fetch(<object>) deep in a request. Resolve
+// FIRST, gate on the resolved value, never on the binding.
+//
+// Returns "" for absent/unreadable rather than throwing: callers gate on "",
+// and a Secrets Store outage must fail CLOSED (503 "not configured") instead of
+// throwing an unhandled error into the request path. The value is never logged.
+async function resolveSecret(v) {
+  if (typeof v === "string") return v;
+  if (v && typeof v.get === "function") {
+    try {
+      const s = await v.get();
+      return typeof s === "string" ? s : "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 async function solanaRpc(env, method, params) {
   if (!READ_METHODS.has(method)) {
     throw new Error("method not allowed on this read-only plane: " + method);
   }
-  const r = await fetch(env.SOLANA_RPC, {
+  const rpcUrl = await resolveSecret(env.SOLANA_RPC);
+  if (!rpcUrl) throw new Error("solana rpc not configured");
+  const r = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params || [] }),
@@ -183,13 +212,20 @@ async function handleMcp(env, msg) {
 
 export default {
   async fetch(request, env) {
-    if (!env.ACCESS_KEY || env.ACCESS_KEY.length < 32 || !env.SOLANA_RPC) {
+    // RESOLVE BEFORE GATING. Both secrets may be Secrets Store bindings, and a
+    // binding object is unconditionally truthy — gating on env.* directly would
+    // let an unconfigured worker past this 503 and serve /mcp with no upstream
+    // and no access key to compare against. Secrets Store cannot be read at
+    // module scope, so this is the earliest point it can happen.
+    const accessKey = await resolveSecret(env.ACCESS_KEY);
+    const rpcUrl = await resolveSecret(env.SOLANA_RPC);
+    if (!accessKey || accessKey.length < 32 || !rpcUrl) {
       return jsonResponse({ error: "worker not configured (secrets missing)" }, 503);
     }
 
     const parts = new URL(request.url).pathname.split("/").filter(Boolean);
     // Expected shapes: /<key>/mcp and /<key>/health - anything else is 404.
-    if (parts.length !== 2 || !keyMatches(parts[0], env.ACCESS_KEY)) {
+    if (parts.length !== 2 || !keyMatches(parts[0], accessKey)) {
       return new Response("not found", { status: 404 });
     }
     const route = parts[1];

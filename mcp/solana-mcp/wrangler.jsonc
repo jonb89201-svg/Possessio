@@ -8,6 +8,36 @@
 //   npx wrangler deploy
 //
 // Secrets NEVER go in this file or anywhere else in the repo.
+//
+// ---------------------------------------------------------------------------
+// SECRETS STORE MIGRATION (preferred path — not yet armed)
+//
+// `wrangler secret put` stores a per-worker copy that anyone with account
+// access can re-read. A Secrets Store secret is write-only after creation: not
+// readable by any human, any dashboard, or any connected agent — only usable by
+// a permitted service at runtime. That is the difference that matters, because
+// a credential that cannot be read back cannot be leaked into a transcript, a
+// screenshot, or a repo.
+//
+// To arm it:
+//   1. Create the store and secret (Cloudflare dashboard, or:
+//        npx wrangler secrets-store store create possessio
+//        npx wrangler secrets-store secret put SOLANA_RPC --store-id <ID>)
+//   2. Paste the real <STORE_ID> below and uncomment the block.
+//   3. npx wrangler deploy
+//   4. Delete the old per-worker secret: npx wrangler secret delete SOLANA_RPC
+//
+// Step 4 is LAST. Deleting before the binding is live takes the worker to 503.
+//
+// worker.js already handles BOTH shapes via resolveSecret(), so it runs
+// unchanged before, during, and after this migration. Do not uncomment with a
+// placeholder store_id — an invalid ID fails the deploy.
+//
+//   "secrets_store_secrets": [
+//     { "binding": "SOLANA_RPC", "store_id": "<STORE_ID>", "secret_name": "SOLANA_RPC" },
+//     { "binding": "ACCESS_KEY", "store_id": "<STORE_ID>", "secret_name": "ACCESS_KEY" }
+//   ],
+// ---------------------------------------------------------------------------
 {
   "name": "possessio-solana-mcp",
   "main": "worker.js",

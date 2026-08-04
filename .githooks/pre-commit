@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# Refuse to commit a credential.
+#
+# This hook is CONVENIENCE, not enforcement, and the difference matters:
+#   - it does not exist in a fresh clone until `npm run hooks:install` runs
+#   - `git commit --no-verify` skips it
+#   - an agent committing from a container may not have it configured at all
+#
+# The real gate is the `scrub` job in .github/workflows/tests.yml, which runs on
+# every pull request and cannot be bypassed. This hook only saves you the round
+# trip of finding out from CI.
+#
+# It scans the INDEX, not the worktree — the staged bytes are what become the
+# commit, and a secret staged then edited out of the file would otherwise slip.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found — scrub SKIPPED, CI will still check." >&2
+  exit 0
+fi
+
+exec node "$root/tools/scrub.mjs" --check --staged

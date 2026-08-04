@@ -93,6 +93,30 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm test
 
+  # ── Credential scan. BLOCKING, and the only layer that cannot be skipped. ──
+  #
+  # .githooks/pre-commit runs the same scan locally, but a hook is not
+  # enforcement: it is absent in a fresh clone, `--no-verify` skips it, and an
+  # agent committing from a container may never have configured it. This job is
+  # the boundary that holds.
+  #
+  # It matters more than an ordinary lint because the failure is IRREVERSIBLE.
+  # A secret in a commit stays in history, in every fork, and in caches after a
+  # force-push. Private visibility does not help — private is an access-control
+  # setting, not a property of the data. Catching it here is the last cheap
+  # moment; after the merge the only remedy is rotation.
+  scrub:
+    name: scrub (credentials)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # No npm install: tools/scrub.mjs is dependency-free on purpose, so the
+      # gate cannot be taken down by a registry outage or a bad lockfile.
+      - run: node tools/scrub.mjs --check
+
   # ── Fork coverage. NON-BLOCKING by design. ───────────────────────────
   # These hit live Base mainnet, so they can fail for reasons that have nothing
   # to do with the diff — an RPC hiccup is not a defect in the code. Kept off

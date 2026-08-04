@@ -1,0 +1,37 @@
+# SCRUB ALLOWLIST — the exemptions, in the open.
+#
+# Every line here is a deliberate decision that a high-entropy string is safe to
+# publish. The list is short on purpose: if it starts growing weekly, the rules
+# in tools/scrub.mjs are wrong and should be fixed rather than papered over.
+#
+# Two forms:
+#   <literal>        exact string, never reported
+#   path:<prefix>    a path prefix never scanned
+#
+# NOTE: nothing in this file exempts a real credential. A secret that is
+# genuinely published is not made safe by being listed here — it is rotated.
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+# Fixture-bearing. The test builds its fake credentials by CONCATENATION at
+# runtime precisely so no literal secret shape exists in the file — this entry
+# is belt-and-braces, not the mechanism.
+path:keeper/test/scrub.test.js
+
+# The scrubber's own rule sources are patterns, not values.
+path:tools/scrub.mjs
+
+# ---------------------------------------------------------------------------
+# Literals
+# ---------------------------------------------------------------------------
+# Anvil/Hardhat development account #0. This IS a real private key and the rule
+# was RIGHT to flag it — it is exempt only because it is one of the most widely
+# published keys in existence, shipped in the default output of every local
+# EVM node, and holds nothing on any live chain. Used in
+# mcp/council-signer/test/adversarial.test.mjs to prove the signer refuses a
+# malformed seat without ever touching a real one.
+#
+# It is listed as a literal rather than exempting the file, so that a DIFFERENT
+# key appearing in that same test still blocks.
+0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
