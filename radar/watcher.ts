@@ -32,7 +32,10 @@ export type WatcherEnv = Env & {
   BIRTHS_KEEP_HOURS?: string; // retention for expired births before prune (default 48h)
   RAW_JSON_KEEP_MIN?: string; // minutes to keep raw_birth_json before nulling it (default 30) — caps DB size
   DEV_REP_MAX_PRIOR?: string; // dev-rep paper gate: max prior launches to still count as "fresh" (default 20)
-  SOLANA_RPC_URL?: string;    // secret: Solana JSON-RPC for the rug gate (getTokenLargestAccounts); gate no-ops if unset
+  // secret: Solana JSON-RPC for the rug gate (getTokenLargestAccounts); gate no-ops if unset.
+  // string = `wrangler secret put`; the object shape = a Secrets Store binding.
+  // Always read it through resolveSecret() — never truthiness-test it directly.
+  SOLANA_RPC_URL?: string | { get(): Promise<string> };
   RUG_MAX_TOP_HOLDER_PCT?: string; // rug gate: max top-holder share of float to pass (default 0.20)
   STRAT_VEL_LO?: string;      // go-to strategy: min entry velocity for the momentum band (default 7)
   STRAT_VEL_HI?: string;      // go-to strategy: max entry velocity (default 20 — above = parabolic top)

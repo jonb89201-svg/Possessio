@@ -154,10 +154,33 @@ function setOutcome(env: WatcherEnv, addr: string, outcome: string, now: number,
 // bonding-curve token account (its reserve is not a holder). Returns null if the
 // RPC is unset/unreachable or the payload is unusable, so the gate stays NULL
 // (not evaluated) and the qualify path is never blocked. Forward-measured.
+// MIRROR of resolveSecret in mcp/solana-mcp/worker.js. The BODY is kept byte
+// identical and keeper/test/secret-resolve.test.js lifts both out of their real
+// source files and fails if they drift — same discipline as the console/worker
+// preimage pair. Duplicated rather than shared because these are two separately
+// bundled wrangler projects, and a cross-root import would put a deploy-time
+// bundling risk on a path that currently has none.
+//
+// A Secrets Store binding is an object with async get(); `wrangler secret put`
+// gives a plain string. A binding is always truthy, so anything that gates on
+// the raw env value stops gating the moment the binding lands.
+async function resolveSecret(v: any): Promise<string> {
+  if (typeof v === "string") return v;
+  if (v && typeof v.get === "function") {
+    try {
+      const s = await v.get();
+      return typeof s === "string" ? s : "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 async function topHolderShare(
   env: WatcherEnv, mint: string, curveTokenAccount: string | null,
 ): Promise<number | null> {
-  const url = env.SOLANA_RPC_URL;
+  const url = await resolveSecret(env.SOLANA_RPC_URL);
   if (!url || !mint) return null;
   let res: Response;
   try {

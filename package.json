@@ -16,6 +16,7 @@
     "test:keeper": "node keeper/test/keeper.test.js",
     "test:rule": "node keeper/test/rule-signature.test.js",
     "test:live": "node keeper/test/keeper-live.js",
-    "test": "node keeper/test/keeper.test.js && node keeper/test/rule-signature.test.js"
+    "test:secret": "node keeper/test/secret-resolve.test.js",
+    "test": "node keeper/test/keeper.test.js && node keeper/test/rule-signature.test.js && node keeper/test/secret-resolve.test.js"
   }
 }

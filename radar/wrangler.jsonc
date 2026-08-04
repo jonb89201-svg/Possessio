@@ -1,9 +1,27 @@
 // possessio-radar — its OWN worker (session ledger: radar gets its own worker;
 // the console worker stays the console's). Deployed by the Architect:
 //   cd radar && npm install && npx wrangler deploy
-// No secrets: the toll sink is a public address, prices are public, and the
-// x402 middleware verifies payments via the facilitator — this worker holds
-// no keys at all.
+// No keys: the toll sink is a public address, prices are public, and the
+// x402 middleware verifies payments via the facilitator — this worker signs
+// nothing and holds no signing key.
+//
+// It does read ONE credential, optionally: SOLANA_RPC_URL, used only by the
+// rug gate in screen.ts (getTokenLargestAccounts). Unset is a supported state —
+// the gate stays NULL and never blocks qualification. If it IS set, prefer
+// Secrets Store over `wrangler secret put`, because a Secrets Store value
+// cannot be read back by anyone after creation:
+//
+//   npx wrangler secrets-store secret put SOLANA_RPC_URL --store-id <ID>
+//
+// then paste the real <STORE_ID> and uncomment:
+//
+//   "secrets_store_secrets": [
+//     { "binding": "SOLANA_RPC_URL", "store_id": "<STORE_ID>", "secret_name": "SOLANA_RPC_URL" }
+//   ],
+//
+// screen.ts reads it through resolveSecret(), which accepts a plain string or a
+// binding, so both paths work and the migration needs no code change. Never
+// uncomment with a placeholder store_id — an invalid ID fails the deploy.
 {
   "name": "possessio-radar",
   "main": "index.ts",
