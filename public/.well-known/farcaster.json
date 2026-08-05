@@ -6,9 +6,9 @@
     "homeUrl": "https://possessio.io",
     "splashImageUrl": "https://possessio.io/splash-200.png",
     "splashBackgroundColor": "#0B1220",
-    "subtitle": "You pick. The desk holds the exit.",
-    "description": "A live screen of newborn coins across Solana and Base. You pick one and tap a target; a hard -10% stop is always on and the desk fires the exit. Your coin stays in your own wallet - the desk only ever holds a bounded, revocable permission to sell that one position.",
+    "subtitle": "Deploying on a phone near you soon.",
+    "description": "Deploy sovereign, immutable and deterministic smart contracts for a small fee. Deploying on a phone near you soon.",
     "primaryCategory": "finance",
-    "tags": ["trading", "solana", "base", "self-custody", "memecoins"]
+    "tags": ["smart-contracts", "base", "solana", "self-custody", "defi"]
   }
 }
