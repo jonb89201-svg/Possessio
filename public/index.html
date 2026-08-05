@@ -2067,13 +2067,38 @@ function typedConfirm(fnName, fnSig, fnDesc, phrase) {
 // WALLET
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The EVM provider, whichever way this page was opened.
+///
+/// A wallet browser INJECTS window.ethereum. A Farcaster mini app does NOT —
+/// the host hands the app a provider through the SDK instead, exactly as the
+/// Solana desk already does with getSolanaProvider(). Measured 2026-08-05: the
+/// console was injected-only, so Connect Wallet inside Farcaster dead-ended on
+/// "no injected wallet" and told the user to go open a different browser — on
+/// the same day the mini app link was cast.
+///
+/// STRICTLY ADDITIVE. If window.ethereum exists it is used and nothing below
+/// runs, so the wallet-browser and desktop paths are byte-for-byte unchanged.
+/// If the SDK path fails for any reason it falls through to the same refusal
+/// as before. This cannot regress what already worked.
+async function getEvmProvider() {
+  if (window.ethereum) return window.ethereum;
+  try {
+    const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
+    if (!(await sdk.isInMiniApp?.())) return null;
+    return (await sdk.wallet.getEthereumProvider?.()) || null;
+  } catch {
+    return null;   // not a mini app, or the CDN is unreachable
+  }
+}
+
 async function connectWallet() {
   try {
-    if (!window.ethereum) {
-      alert("No injected wallet detected. Open this page in a wallet browser (MetaMask, Rabby, etc.).");
+    const eth = await getEvmProvider();
+    if (!eth) {
+      alert("No wallet found. Open this page in a wallet browser (MetaMask, Rabby) or inside Farcaster.");
       return;
     }
-    state.provider = new ethers.BrowserProvider(window.ethereum);
+    state.provider = new ethers.BrowserProvider(eth);
     const accounts = await state.provider.send("eth_requestAccounts", []);
     state.walletAddr = accounts[0];
     state.signer = await state.provider.getSigner();
@@ -2081,11 +2106,14 @@ async function connectWallet() {
     state.walletChainId = Number(net.chainId);
     updateWalletUI();
 
-    window.ethereum.on?.("chainChanged", hex => {
+    // Bind to the provider actually in use, not to window.ethereum — inside a
+    // mini app that global is undefined and these listeners would silently
+    // never attach, leaving the chain pill stale after a network switch.
+    eth.on?.("chainChanged", hex => {
       state.walletChainId = parseInt(hex, 16);
       updateWalletUI();
     });
-    window.ethereum.on?.("accountsChanged", accs => {
+    eth.on?.("accountsChanged", accs => {
       state.walletAddr = accs[0] || null;
       updateWalletUI();
     });
