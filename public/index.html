@@ -2080,16 +2080,36 @@ function typedConfirm(fnName, fnSig, fnDesc, phrase) {
 /// runs, so the wallet-browser and desktop paths are byte-for-byte unchanged.
 /// If the SDK path fails for any reason it falls through to the same refusal
 /// as before. This cannot regress what already worked.
-async function getEvmProvider() {
-  if (window.ethereum) return window.ethereum;
-  try {
-    const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
-    if (!(await sdk.isInMiniApp?.())) return null;
-    return (await sdk.wallet.getEthereumProvider?.()) || null;
-  } catch {
-    return null;   // not a mini app, or the CDN is unreachable
-  }
-}
+/// ONE accessor, on window, because the console's wallet code lives in several
+/// separate IIFEs that cannot see `state`. Every EVM call in this file goes
+/// through it. A bare `window.ethereum` anywhere else is a bug — it is the
+/// exact shape that made Connect Wallet refuse a Farcaster user.
+window.PossessioEvm = {
+  cached: null,
+  address: null,
+
+  /// Async. Resolves the provider, importing the mini-app SDK only if needed.
+  async get() {
+    if (this.cached) return this.cached;
+    if (window.ethereum) return (this.cached = window.ethereum);
+    try {
+      const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
+      if (!(await sdk.isInMiniApp?.())) return null;
+      this.cached = (await sdk.wallet.getEthereumProvider?.()) || null;
+      return this.cached;
+    } catch {
+      return null;   // not a mini app, or the CDN is unreachable
+    }
+  },
+
+  /// Sync. Only valid after get() has resolved once — for the handful of call
+  /// sites that are not async and only run post-connect.
+  now() { return this.cached || window.ethereum || null; },
+
+  clear() { this.cached = null; this.address = null; },
+};
+
+async function getEvmProvider() { return window.PossessioEvm.get(); }
 
 async function connectWallet() {
   try {
@@ -2101,6 +2121,7 @@ async function connectWallet() {
     state.provider = new ethers.BrowserProvider(eth);
     const accounts = await state.provider.send("eth_requestAccounts", []);
     state.walletAddr = accounts[0];
+    window.PossessioEvm.address = accounts[0];
     state.signer = await state.provider.getSigner();
     const net = await state.provider.getNetwork();
     state.walletChainId = Number(net.chainId);
@@ -2132,6 +2153,7 @@ function updateWalletUI() {
     btn.textContent = "Disconnect";
     btn.onclick = () => {
       state.walletAddr = null; state.signer = null; state.walletChainId = null; state.provider = null;
+      window.PossessioEvm.address = null;
       btn.textContent = "Connect Wallet";
       btn.onclick = connectWallet;
       updateWalletUI();
@@ -2186,10 +2208,12 @@ function updateWalletUI() {
 
   async function gateSwitch(){
     try {
-      await window.ethereum.request({ method:"wallet_switchEthereumChain", params:[{ chainId:"0x2105" }] });
+      var __e = await window.PossessioEvm.get();
+      if (!__e) return;
+      await __e.request({ method:"wallet_switchEthereumChain", params:[{ chainId:"0x2105" }] });
     } catch(e){
       if (e && e.code === 4902){
-        await window.ethereum.request({ method:"wallet_addEthereumChain", params:[{
+        await (await window.PossessioEvm.get()).request({ method:"wallet_addEthereumChain", params:[{
           chainId:"0x2105", chainName:"Base", nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},
           rpcUrls:["https://mainnet.base.org"], blockExplorerUrls:["https://basescan.org"]
         }]});
@@ -2629,9 +2653,10 @@ function scheduleTreasuryRefresh(delayMs) {
 var __chainSel = document.getElementById("chain-sel");
 if (__chainSel) __chainSel.addEventListener("change", async e => {
   state.selectedChainId = parseInt(e.target.value, 10);
-  if (window.ethereum && state.provider) {
+  const __eth = await window.PossessioEvm.get();
+  if (__eth && state.provider) {
     try {
-      await window.ethereum.request({
+      await __eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: "0x" + state.selectedChainId.toString(16) }],
       });
@@ -2851,7 +2876,7 @@ refreshTreasury();
       // module runs in PREVIEW: the deploy button stays disabled and no address
       // is ever produced. Owner: the Safe address, or the connected account.
       if(!window.LaunchRailLive){return;}
-      var owner=L.owner==="safe"?L.safe:(window.ethereum&&window.ethereum.selectedAddress?window.ethereum.selectedAddress:"");
+      var owner=L.owner==="safe"?L.safe:(window.PossessioEvm.address||"");
       window.LaunchRailLive.deploy(owner,"0x");
     }
   };
@@ -2934,8 +2959,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
   /* ---------- HELPERS ---------- */
   async function _provider() {
-    if (!window.ethereum) throw new Error("No wallet");
-    return new ethers.BrowserProvider(window.ethereum);
+    const eth = await window.PossessioEvm.get();
+    if (!eth) throw new Error("No wallet");
+    return new ethers.BrowserProvider(eth);
   }
   function _fmtUSDC(x) { return (Number(x) / 1e6).toFixed(2) + " USDC"; }
   function _randNonce() {
@@ -3175,8 +3201,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   }
 
   async function balances() {
-    if (!window.ethereum || !window.ethers) return null;
-    var provider = new ethers.BrowserProvider(window.ethereum);
+    var eth = await window.PossessioEvm.get();
+    if (!eth || !window.ethers) return null;
+    var provider = new ethers.BrowserProvider(eth);
     var accts = await provider.send("eth_accounts", []); // never prompts
     if (!accts || !accts.length) return null;
     var net = await provider.getNetwork();
@@ -3918,10 +3945,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var units; try{ units=BigInt(Math.round(sizeUsd*1e6)); }catch(e){ toast("Bad size."); return; }
     if(units>v.maxPerTrade){ toast("Over per-trade cap ("+usd(v.maxPerTrade)+")."); return; }
     if(units>v.available){ toast("Over available capital ("+usd(v.available)+")."); return; }
-    if(!window.ethereum){ toast("No wallet to sign with."); return; }
+    var __sig = await window.PossessioEvm.get();
+    if(!__sig){ toast("No wallet to sign with."); return; }
     var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
     try{
-      var bp=new ethers.BrowserProvider(window.ethereum); var signer=await bp.getSigner();
+      var bp=new ethers.BrowserProvider(__sig); var signer=await bp.getSigner();
       var vc=new ethers.Contract(v.addr,VAULT_ABI,signer);
       var rb=new Uint8Array(32); crypto.getRandomValues(rb); var intentId=ethers.toBigInt(ethers.hexlify(rb));
       var tx=await vc.drawForTrade(intentId,units); toast("Drawing "+usd(units)+" · "+esc(c.s)+"…");
@@ -4007,7 +4035,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         renderList(); return;
       }
       var trader=reads[0],owner=reads[1],mpt=reads[2],avail=reads[3],outs=reads[4],paused=reads[5];
-      var wallet=""; try{ if(window.ethereum){ var a=await window.ethereum.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
+      var wallet=""; try{ var __w=await window.PossessioEvm.get(); if(__w){ var a=await __w.request({method:"eth_accounts"}); wallet=(a&&a[0])||""; } }catch(e){}
       S.wallet=wallet;
       var role=wallet? (wallet.toLowerCase()===String(trader).toLowerCase()?"trader":(wallet.toLowerCase()===String(owner).toLowerCase()?"owner":"other")) : "none";
       S.vault={ addr:addr, trader:String(trader), owner:String(owner), maxPerTrade:BigInt(mpt), available:BigInt(avail), outstanding:BigInt(outs), paused:!!paused, role:role };
