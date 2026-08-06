@@ -177,6 +177,24 @@ async function quote({ inputMint, outputMint, amount, slippageBps }) {
   return j;
 }
 
+/// The wallet's spendable SOL, read from the chain.
+///
+/// Returns both the raw balance and what the desk will actually let you spend.
+/// The sheet needs BOTH: a cap with no balance beside it reads as "you don't
+/// have enough" when it means "that number is too big", which is exactly how
+/// this failed the first time — the limit was a constant derived from one
+/// reading of one wallet, and it told the user a rule instead of their own
+/// numbers.
+export async function solBalance() {
+  const lamports = await conn.getBalance(pubkey, "confirmed");
+  const spendable = Math.max(0, lamports - SOL_FEE_RESERVE_LAMPORTS);
+  return {
+    sol: lamports / 1e9,
+    maxSpendable: spendable / 1e9,
+    reserve: SOL_FEE_RESERVE_LAMPORTS / 1e9,
+  };
+}
+
 /// SOL/USD from a live route, for denominating the entry in dollars.
 ///
 /// One USDC-out quote for 1 SOL. Not cached: the fill it prices happened

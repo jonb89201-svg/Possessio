@@ -3814,7 +3814,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(c.ch==="sol"){
       var M=window.PossessioMiniApp;
       if(!M||!M.ready){ sheetGate("sol-miniapp"); return; }
-      pending={c:c,bps:bps}; return solanaSheet(c,bps);
+      pending={c:c,bps:bps}; solanaSheet(c,bps); fillSolBalance(); return;
     }
     if(!S.connected){ sheetGate("base"); return; }
     pending={c:c,bps:bps};
@@ -3895,7 +3895,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '</div>'+
       gainSliderHTML(c,bps)+
       '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — <b>SOL</b> from your own wallet</label>'+
-        '<div style="font-size:11px;color:var(--dink-faint);margin:-2px 0 6px;line-height:1.45">A newborn coin only trades against SOL — it has no dollar market — so the buy spends SOL. Keep a little back for fees; you need it to sell.</div>'+
+        '<div style="font-size:11px;color:var(--dink-faint);margin:-2px 0 6px;line-height:1.45">A newborn coin only trades against SOL — it has no dollar market — so the buy spends SOL. This is <b>SOL, not dollars</b>.</div>'+
+        '<div id="dk-solbal" style="font-size:11px;color:var(--dink-faint);margin:-2px 0 6px">reading your balance…</div>'+
         '<input id="dk-size" inputmode="decimal" placeholder="e.g. 0.05" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
       '<div class="note-h"><b>Two signatures, and that is all.</b> First you buy the coin — it goes to <b>your</b> token account and never leaves your wallet. Then you sign the sell at your gain target, so the desk can fire it while you sleep. Nothing else in your wallet is reachable, and you can <b>revoke it any time</b>. The desk never holds your funds. <b>There is no automatic stop-loss</b> — if it goes the wrong way, hit <b>Force Sell</b>.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+
@@ -3934,6 +3935,31 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       '<button class="b-pri" onclick="Desk.closeSheet();document.getElementById(\'dk-addr\').focus();">Go to connect</button></div>';
     $("#dk-scrim").classList.add("on");
   }
+
+  /* THE USER'S OWN NUMBERS, not a rule about numbers.
+     The first version of this capped the size at a hardcoded 0.16 SOL, a
+     constant taken from whatever the wallet held the day it was written, and
+     said "leave 0.02 for fees" with no balance beside it. A user with plenty of
+     SOL read that as "not enough SOL". Read the chain and show the two figures
+     that actually decide it. */
+  async function fillSolBalance(){
+    var el=$("#dk-solbal"); if(!el) return;
+    var M=window.PossessioMiniApp;
+    if(!M||!M.solBalance){ el.textContent=""; return; }
+    try{
+      var b=await M.solBalance();
+      window.__deskSolMax=b.maxSpendable;
+      el.innerHTML="You have <b>"+b.sol.toFixed(4)+" SOL</b> · most you can trade is <b>"+
+        b.maxSpendable.toFixed(4)+"</b> (keeping "+b.reserve+" back for fees) "+
+        "<a href=\"javascript:void 0\" onclick=\"Desk.useMax()\" style=\"color:var(--dblue);font-weight:600\">use max</a>";
+    }catch(e){
+      el.textContent="could not read your SOL balance";
+      window.deskReport && window.deskReport("sol-balance", String(e&&e.message||e), null);
+    }
+  }
+  function useMax(){
+    var i=$("#dk-size"); if(i&&window.__deskSolMax>0) i.value=String(Number(window.__deskSolMax.toFixed(4)));
+  }
   function closeSheet(){ $("#dk-scrim").classList.remove("on"); pending=null; }
   // REAL drawForTrade — releases capital from the connected vault to the rail.
   // Strict preconditions; nothing is faked. (The DEX swap at the rail and the
@@ -3954,7 +3980,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     // Refuse to spend the fee reserve. Being unable to SELL is the failure the
     // user cannot undo, so it is checked before the wallet is ever opened — a
     // refusal here costs a sentence, a refusal at exit time costs the position.
-    if(sizeSol>0.16){ toast("Leave at least 0.02 SOL for fees — you need it to sell."); return; }
+    var maxSol=window.__deskSolMax;
+    if(typeof maxSol==="number" && sizeSol>maxSol){
+      toast("That's "+sizeSol+" SOL. You can trade up to "+maxSol.toFixed(4)+" — the rest is held back for fees so you can sell.");
+      return;
+    }
     var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
     try{
       var res=await M.buyAndDelegate({
@@ -4155,7 +4185,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, sell:sell, closeSheet:closeSheet, confirmOpen:confirmOpen, connect:connect,
+    pick:pick, sell:sell, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
     solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
 })();
@@ -4401,7 +4431,7 @@ try {
       providerKeys: res.providerKeys || null,
       providerFeatures: res.providerFeatures || null,
     }, {
-      buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy,
+      buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy, solBalance: M.solBalance,
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,
     });
     if (window.dbgLog) window.dbgLog("[MINIAPP] " + JSON.stringify(res));
