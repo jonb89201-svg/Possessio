@@ -26,6 +26,30 @@ import {
 } from "https://esm.sh/@solana/spl-token@0.4.9";
 
 const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+
+/// WHY THE DESK SPENDS SOL, NOT USDC — Architect, 2026-08-06.
+///
+/// A pump.fun coin launches against SOL. It has no USDC market at all. So a
+/// USDC purchase is always TWO hops (USDC->SOL->coin), and that second hop is
+/// what pushes the transaction past Solana's 1232-byte packet limit.
+///
+/// MEASURED, same coin, three calls each, minutes apart:
+///   USDC in   1325B  1356B  1294B   2 hops   every one over the limit
+///   SOL  in   1212B  1212B  1212B   1 hop    fits every time
+///
+/// This was first read as the route drifting. It is not drift — the extra hop
+/// is structural for every coin the desk can offer, and its size varies only
+/// with which venue serves USDC->SOL. USDC could never have worked here.
+const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
+
+/// Left in the wallet, never spendable by the desk.
+///
+/// SOL pays for gas AND buys the coin, so a user who spends it all cannot
+/// afford the transaction that SELLS. Being unable to exit is a worse failure
+/// than being unable to enter, and it is the one the user cannot undo. Covers
+/// the ATA rent for a coin never held before (~0.002) plus fees for the buy,
+/// the delegate and the exit, with room to spare.
+const SOL_FEE_RESERVE_LAMPORTS = 20_000_000;   // 0.02 SOL
 const JUP = "https://lite-api.jup.ag/swap/v1";
 
 let sdk = null, provider = null, conn = null, pubkey = null;
@@ -153,12 +177,28 @@ async function quote({ inputMint, outputMint, amount, slippageBps }) {
   return j;
 }
 
+/// SOL/USD from a live route, for denominating the entry in dollars.
+///
+/// One USDC-out quote for 1 SOL. Not cached: the fill it prices happened
+/// seconds ago and a stale rate silently moves the user's entry price.
+async function solPriceUsd() {
+  const q = await quote({
+    inputMint: SOL_MINT.toBase58(), outputMint: USDC_MINT.toBase58(),
+    amount: 1_000_000_000, slippageBps: 50,
+  });
+  const usd = Number(q.outAmount) / 1e6;
+  if (!Number.isFinite(usd) || usd <= 0) {
+    throw new Error("could not price SOL in dollars — refusing to arm off an unknown entry price");
+  }
+  return usd;
+}
+
 /// What the user is about to authorize, priced from a live route — so the
 /// sheet shows the real number, not an estimate the desk invented.
-export async function quoteBuy({ mint, usdcAmount, slippageBps = 300 }) {
+export async function quoteBuy({ mint, solAmount, slippageBps = 300 }) {
   const q = await quote({
-    inputMint: USDC_MINT.toBase58(), outputMint: mint,
-    amount: Math.round(usdcAmount * 1e6), slippageBps,
+    inputMint: SOL_MINT.toBase58(), outputMint: mint,
+    amount: Math.round(solAmount * 1e9), slippageBps,
   });
   return {
     outAmount: q.outAmount,
@@ -302,12 +342,24 @@ async function fillFor({ signature, mint, dec, quotedOut }) {
         return BigInt(row?.uiTokenAmount?.amount ?? "0");
       };
       const tokens = amt(tx.meta.postTokenBalances, String(mint)) - amt(tx.meta.preTokenBalances, String(mint));
-      const usdcDelta = amt(tx.meta.preTokenBalances, usdc) - amt(tx.meta.postTokenBalances, usdc);
+
+      // SOL IS NATIVE, so it is not in the token-balance arrays at all — it is
+      // in preBalances/postBalances, indexed by account position, and the fee
+      // is already included in that delta. Reading it as a token balance the
+      // way USDC was read would have silently returned zero forever.
+      const i = tx.transaction.message.accountKeys.findIndex(
+        (k) => (k.pubkey ? k.pubkey.toString() : String(k)) === me
+      );
+      const lamportsSpent = i >= 0
+        ? BigInt(tx.meta.preBalances[i]) - BigInt(tx.meta.postBalances[i])
+        : 0n;
+
       if (tokens <= 0n) throw new Error("the buy landed but delivered no tokens to this wallet");
-      if (usdcDelta <= 0n) throw new Error("the buy landed but spent no USDC from this wallet");
+      if (lamportsSpent <= 0n) throw new Error("the buy landed but spent no SOL from this wallet");
       return {
         tokens: tokens.toString(),
-        usdcSpent: Number(usdcDelta) / 1e6,
+        solSpent: Number(lamportsSpent) / 1e9,
+        feeLamports: tx.meta.fee ?? 0,
         // How far the receipt landed from the estimate. Surfaced so the sheet
         // can show it rather than quietly absorbing it.
         slippagePct: quotedOut ? (Number(tokens) - Number(quotedOut)) / Number(quotedOut) * 100 : null,
@@ -514,7 +566,7 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
 /// holding a position with NO automated exit. That state is real and the UI
 /// must say so rather than pretend the trade is armed.
 export async function buyAndDelegate({
-  mint, usdcAmount, keeper, slippageBps = 300, targetBps, onStep = () => {},
+  mint, solAmount, keeper, slippageBps = 300, targetBps, onStep = () => {},
 }) {
   // RE-QUOTE ON AN OVERSIZED ROUTE, up to three times.
   //
@@ -530,8 +582,8 @@ export async function buyAndDelegate({
   let q = null, buy = null, lastTooLarge = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     onStep({ step: "quote", text: attempt === 1 ? "finding a route…" : "route too large, retrying…" });
-    q = await quoteBuy({ mint, usdcAmount, slippageBps });
-    onStep({ step: "buy", text: `buy ${usdcAmount} USDC via ${q.route}`, quote: q });
+    q = await quoteBuy({ mint, solAmount, slippageBps });
+    onStep({ step: "buy", text: `buy ${solAmount} SOL via ${q.route}`, quote: q });
     try {
       buy = await signBuy({ quoteResponse: q.quote });
       break;
@@ -563,7 +615,24 @@ export async function buyAndDelegate({
   // memecoin — arming against a number that was never real.
   const dec = await mintDecimals(mint);
   const fill = await fillFor({ signature: buy.signature, mint, dec, quotedOut: q.outAmount });
-  const entryPrice = fill.usdcSpent / (Number(fill.tokens) / 10 ** dec);
+
+  // THE ENTRY PRICE IS STILL IN DOLLARS, because the target the user tapped is
+  // a percentage of a dollar price and the ledger is denominated in dollars.
+  // The buy now spends SOL, so the dollar figure needs SOL/USD — priced from a
+  // live Jupiter quote at the moment of the fill, not from a stored constant
+  // and not from the coin feed (measured 2026-08-01: only 3 of 66 radar rows
+  // carry a price at all, and its market cap assumes a supply that disagrees
+  // with the chain).
+  //
+  // If that price cannot be read, this THROWS. It does not fall back to a
+  // guess. An entry price is the basis of the signed sell; a wrong one arms the
+  // user against a number that was never real, which is the same defect as
+  // arming off a quote instead of a fill and was ratified against on 2026-08-01.
+  const solUsd = await solPriceUsd();
+  const usdSpent = fill.solSpent * solUsd;
+  const entryPrice = usdSpent / (Number(fill.tokens) / 10 ** dec);
+  fill.usdSpent = usdSpent;
+  fill.solUsd = solUsd;
 
   // The delegate covers what the user ACTUALLY holds. Granting the quoted
   // amount over-grants on negative slippage and, worse, UNDER-grants on
