@@ -4011,6 +4011,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // The buy landed and the delegate did not. Say so plainly: the user
         // holds a coin with NO automated exit, and pretending otherwise would
         // be the single most dangerous lie this UI could tell.
+        //
+        // And REPORT it — this branch returns normally, so the catch below
+        // never sees it. On 2026-08-06 23:38 UTC this was the only path that
+        // knew why the rule vanished, and it said so only in a toast.
+        window.deskReport("solana-arm-failed", res.error||"no error carried", res.warning||null);
         closeSheet();
         toast("⚠ "+c.s+" bought — but the STOP IS NOT ARMED. "+(res.warning||"Grant the permission or sell it yourself."));
       }

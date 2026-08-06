@@ -590,6 +590,17 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
     ? raw
     : b58encode(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
 
+  // SECOND BREADCRUMB — measured gap 2026-08-06 23:38 UTC: the attempt row
+  // landed and then NOTHING, so "the wallet died at the ask" and "the wallet
+  // answered and the ledger refused" were indistinguishable. This row splits
+  // them. Shape only, never the signature: its length and type are the whole
+  // diagnosis (a base64 answer decodes to the wrong byte count and the worker
+  // 401s), and the value itself belongs in one place, the signed rule.
+  // b58ok is the one bit that convicts an encoding: base64 carries '+', '/',
+  // '=' and '0OIl', none of which exist in base58. A false here means the host
+  // answered in an alphabet the worker's decoder was never going to accept.
+  try { window.deskReport?.("solana-rule-signed", "wallet answered the rule ask", JSON.stringify({ returnType: typeof raw, sigChars: signature.length, b58ok: /^[1-9A-HJ-NP-Za-km-z]+$/.test(signature) })); } catch {}
+
   const r = await fetch("/api/desk/rules", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -601,6 +612,10 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
+    // The refusal is a fact about the ledger, not the phone, so it must not
+    // live only in a 90-character toast. BAD_* / SIGNER_MISMATCH names the
+    // exact gate that said no.
+    try { window.deskReport?.("solana-rule-rejected", (err.error || "no body") + " (" + r.status + ")", JSON.stringify({ sigChars: signature.length })); } catch {}
     throw new Error(err.error || `rule rejected (${r.status})`);
   }
   return r.json();
