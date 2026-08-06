@@ -81,8 +81,41 @@ export async function initMiniApp(rpcUrl) {
       };
     }
 
-    const res = await provider.connect();
-    pubkey = new PublicKey(res?.publicKey?.toString?.() || res?.publicKey || provider.publicKey);
+    // TWO PROVIDER SHAPES, because the SDK changed under us.
+    //
+    // MEASURED 2026-08-05 inside Farcaster: `provider.connect is not a
+    // function`. The older SDK returned a phantom-style object with .connect();
+    // the current one returns a Wallet Standard wallet, where connecting is
+    // features["standard:connect"].connect() and the account comes back in an
+    // accounts array. The code assumed the first shape and threw on the second.
+    //
+    // Both are supported rather than picking one, because the host decides
+    // which it hands over and that is not ours to pin. If it is neither, the
+    // provider's own keys are reported instead of a guess — the shape is the
+    // one fact needed to adapt, and it is free to print.
+    let acct = null;
+    if (typeof provider.connect === "function") {
+      const res = await provider.connect();
+      acct = res?.publicKey?.toString?.() || res?.publicKey || provider.publicKey;
+    } else if (typeof provider.features?.["standard:connect"]?.connect === "function") {
+      const res = await provider.features["standard:connect"].connect();
+      const a = res?.accounts?.[0] || provider.accounts?.[0];
+      acct = a?.address || a?.publicKey?.toString?.() || a?.publicKey;
+    } else {
+      await sdk.actions.ready();
+      return {
+        miniApp: true, solana: false, caps,
+        providerKeys: Object.keys(provider || {}),
+        providerFeatures: provider?.features ? Object.keys(provider.features) : null,
+        reason: "the Solana provider is a shape this app does not know how to connect to",
+      };
+    }
+    if (!acct) {
+      await sdk.actions.ready();
+      return { miniApp: true, solana: false, caps, reason: "the wallet connected but returned no account" };
+    }
+
+    pubkey = new PublicKey(String(acct));
     conn = new Connection(rpcUrl || "https://solana-rpc.publicnode.com", "confirmed");
 
     await sdk.actions.ready();               // dismiss the splash

@@ -3884,6 +3884,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
           ((window.PossessioMiniApp && window.PossessioMiniApp.caps)
             ? '<br><br><b>What this Farcaster client supports</b><br>'+esc(JSON.stringify(window.PossessioMiniApp.caps))
             : '')+
+          ((window.PossessioMiniApp && window.PossessioMiniApp.providerKeys)
+            ? '<br><br><b>What the wallet object looks like</b><br>'+esc(JSON.stringify(window.PossessioMiniApp.providerKeys))+
+              (window.PossessioMiniApp.providerFeatures ? '<br>features: '+esc(JSON.stringify(window.PossessioMiniApp.providerFeatures)) : '')
+            : '')+
         '</div>'+
         '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button></div>';
       $("#dk-scrim").classList.add("on"); return;
@@ -4351,6 +4355,8 @@ try {
       keeper: KEEPER || null,
       reason: res.reason || (KEEPER ? "" : "no keeper configured"),
       caps: res.caps || null,
+      providerKeys: res.providerKeys || null,
+      providerFeatures: res.providerFeatures || null,
     }, {
       buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy,
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,
