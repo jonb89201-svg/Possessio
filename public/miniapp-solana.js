@@ -20,7 +20,6 @@
 import {
   Connection, PublicKey, VersionedTransaction, TransactionMessage,
 } from "https://esm.sh/@solana/web3.js@1.95.3";
-import bs58 from "https://esm.sh/bs58@6.0.0";
 import {
   createApproveInstruction, createRevokeInstruction,
   getAssociatedTokenAddress, getAccount, getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
@@ -198,13 +197,25 @@ export async function quoteBuy({ mint, usdcAmount, slippageBps = 300 }) {
 /// phantom-family convention and this provider is phantom-shaped everywhere
 /// else it has been measured.
 async function sendTx(tx) {
-  const b58 = bs58.encode(tx.serialize());
   let sent;
   try {
-    sent = await provider.request({
-      method: "signAndSendTransaction",
-      params: { message: b58 },
-    });
+    // READ OUT OF THE SDK BUNDLE, 2026-08-06, not inferred:
+    //
+    //   signAndSendTransaction: t => e({ method:"signAndSendTransaction", params: t })
+    //   ...
+    //   if (o.method === "signAndSendTransaction") {
+    //     let { transaction: c } = o.params;
+    //     let l = { transaction: I(c) };            // I(c) = c.serialize(...) -> base64
+    //
+    // So params.transaction must be the transaction OBJECT and the SDK
+    // serializes it itself. Both prior failures are one bug seen twice:
+    //   provider.signAndSendTransaction(tx)      -> params = tx, params.transaction undefined
+    //   request({params:{ message: b58 }})       -> params.transaction undefined
+    // and `I(undefined)` is precisely "Cannot read properties of undefined
+    // (reading 'serialize')" — the error text was naming the missing KEY the
+    // whole time, and three rounds were spent guessing at encodings instead of
+    // reading the twenty lines that define the contract.
+    sent = await provider.signAndSendTransaction({ transaction: tx });
   } catch (e) {
     // Surfaced verbatim. A user rejection and a shape mismatch are different
     // events and the caller must be able to tell them apart.
