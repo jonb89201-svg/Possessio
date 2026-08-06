@@ -3894,8 +3894,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         '<div class="trow"><span class="k">Your wallet</span><span class="v dk-mono" style="font-size:11px">'+esc((M&&M.address||"").slice(0,10))+'…</span></div>'+
       '</div>'+
       gainSliderHTML(c,bps)+
-      '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — USDC from your own wallet</label>'+
-        '<input id="dk-size" inputmode="decimal" placeholder="e.g. 25" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
+      '<div style="margin:2px 0 12px"><label style="font-size:11px;color:var(--dink-faint);font-weight:600;display:block;margin-bottom:6px">Position size — <b>SOL</b> from your own wallet</label>'+
+        '<div style="font-size:11px;color:var(--dink-faint);margin:-2px 0 6px;line-height:1.45">A newborn coin only trades against SOL — it has no dollar market — so the buy spends SOL. Keep a little back for fees; you need it to sell.</div>'+
+        '<input id="dk-size" inputmode="decimal" placeholder="e.g. 0.05" style="width:100%;padding:11px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:14px;color:var(--dink)"></div>'+
       '<div class="note-h"><b>Two signatures, and that is all.</b> First you buy the coin — it goes to <b>your</b> token account and never leaves your wallet. Then you sign the sell at your gain target, so the desk can fire it while you sleep. Nothing else in your wallet is reachable, and you can <b>revoke it any time</b>. The desk never holds your funds. <b>There is no automatic stop-loss</b> — if it goes the wrong way, hit <b>Force Sell</b>.</div>'+
       '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Cancel</button>'+
       '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Buy &amp; sign the sell</button></div>';
@@ -3948,12 +3949,16 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return;
     var M=window.PossessioMiniApp;
     if(!M||!M.ready){ toast("Solana picks need the Farcaster app — open Possessio there."); return; }
-    var sizeUsd=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
-    if(!(sizeUsd>0)){ toast("Enter a position size."); return; }
+    var sizeSol=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
+    if(!(sizeSol>0)){ toast("Enter a position size in SOL."); return; }
+    // Refuse to spend the fee reserve. Being unable to SELL is the failure the
+    // user cannot undo, so it is checked before the wallet is ever opened — a
+    // refusal here costs a sentence, a refusal at exit time costs the position.
+    if(sizeSol>0.16){ toast("Leave at least 0.02 SOL for fees — you need it to sell."); return; }
     var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
     try{
       var res=await M.buyAndDelegate({
-        mint:c.addr, usdcAmount:sizeUsd, keeper:M.keeper,
+        mint:c.addr, solAmount:sizeSol, keeper:M.keeper,
         // The target the human tapped, carried through to the signed rule. The
         // keeper reads that rule; without it the delegate is power with no
         // instruction and nothing ever fires.
