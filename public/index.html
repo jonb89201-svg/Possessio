@@ -366,6 +366,40 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
 <script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});function fmtAge(ms){if(ms==null)return'n/a';var s=Math.round(ms/1000);if(s<90)return s+'s';var m=Math.floor(s/60);if(m<90)return m+'m';return(Math.round(m/6)/10)+'h';}
 window.mibFeedHealth=function(){mibLog('FEED HEALTH … /api/radar/health','#0ff');fetch('/api/radar/health',{cache:'no-store'}).then(function(r){return r.json();}).then(function(h){var col={healthy:'#0f0',quiet:'#fa0',btc_lagging:'#fa0',market_quiet:'#fa0',ingest_stalled:'#f55',ws_dropped:'#f55',radar_down:'#f55',unknown:'#fa0'}[h.status]||'#0ff';mibLog('FEED: '+String(h.status||'?').toUpperCase().replace(/_/g,' '),col);var s=h.streams||{},b=s.births||{},tp=s.tape||{},bt=s.btc||{};mibLog('  births '+fmtAge(b.age_ms)+'   5m:'+(b.last_5min||0)+'  1h:'+(b.last_1h||0),'#9f9');mibLog('  tape   '+fmtAge(tp.age_ms),'#9f9');mibLog('  btc    '+fmtAge(bt.age_ms)+(bt.usd?'   $'+Math.round(bt.usd):''),'#9f9');var pp=h.pumpfun_program;if(pp&&pp.checked)mibLog('  pump.fun program: '+(pp.alive?('LIVE '+pp.age_s+'s ago'):(pp.age_s==null?'unreachable':'quiet')),pp.alive?'#0f0':'#fa0');var sc=h.scans||{};var fk=Object.keys(sc).filter(function(k){return sc[k]&&sc[k].failing;});if(fk.length)fk.forEach(function(k){var f=sc[k];mibLog('  ⚠ '+k+' failing'+(f.err_age_ms!=null?' '+fmtAge(f.err_age_ms)+' ago':'')+(f.err?': '+f.err:''),'#f55');});if(h.db_mb!=null)mibLog('  db '+h.db_mb+'MB','#888');if(h.diagnosis)mibLog('  → '+h.diagnosis,col);if(h.action)mibLog('  ⇒ '+h.action,'#ff0');}).catch(function(e){mibLog('FEED health error: '+(e&&e.message?e.message:e),'#f55');});};
 mibLog('MIB bridge active.','#0ff');})();</script>
+<script>
+/* CLIENT ERROR SINK — the console reports its own failures to a place a seat
+   can read, instead of the Architect photographing a toast at 4am.
+
+   Fire-and-forget by construction: keepalive, no await, every call wrapped so a
+   reporting failure can never become a second visible error. Truncated here as
+   well as at the worker, because the cheapest place to not send 4KB is here. */
+window.deskReport = function (stage, message, detail) {
+  try {
+    fetch("/api/desk/error", {
+      method: "POST", keepalive: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        stage: String(stage || "").slice(0, 60),
+        message: String(message || "").slice(0, 400),
+        detail: detail == null ? null : String(detail).slice(0, 900),
+        wallet: (window.PossessioMiniApp && window.PossessioMiniApp.address) ||
+                (window.PossessioEvm && window.PossessioEvm.address) || null,
+        build: (document.getElementById("build-tag") || {}).textContent || null,
+      }),
+    }).catch(function () {});
+  } catch (e) { /* never throw out of the reporter */ }
+};
+/* Anything nobody thought to catch. These are the errors that cost the most,
+   because they arrive with no handler and therefore no message. */
+window.addEventListener("unhandledrejection", function (e) {
+  var r = e && e.reason;
+  window.deskReport("unhandledrejection", (r && (r.message || r)) || "unknown", r && r.stack);
+});
+window.addEventListener("error", function (e) {
+  window.deskReport("window.onerror", (e && e.message) || "unknown",
+    (e && e.filename ? e.filename + ":" + e.lineno + ":" + e.colno : null));
+});
+</script>
 
 
 <header class="console-head">
@@ -3946,6 +3980,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         toast("⚠ "+c.s+" bought — but the STOP IS NOT ARMED. "+(res.warning||"Grant the permission or sell it yourself."));
       }
     }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
+      // Report BEFORE the toast. The toast shows 90 characters on a phone; the
+      // sink takes the whole message and the stack, which is where the answer
+      // has been every single time.
+      window.deskReport("solana-buy", m, (e&&e.stack)||null);
       if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing signed.");
       else toast("Failed: "+m.slice(0,90));
       if(btn){ btn.disabled=false; btn.textContent="🔑 Buy & sign the sell"; } }
@@ -4362,6 +4400,9 @@ try {
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,
     });
     if (window.dbgLog) window.dbgLog("[MINIAPP] " + JSON.stringify(res));
+    if (!window.PossessioMiniApp.ready && window.deskReport) {
+      window.deskReport("miniapp-init", window.PossessioMiniApp.reason || "not ready", JSON.stringify(res));
+    }
   } catch (e) {
     window.PossessioMiniApp.reason = String(e && e.message || e);
     if (window.dbgLog) window.dbgLog("[MINIAPP] unavailable: " + window.PossessioMiniApp.reason);

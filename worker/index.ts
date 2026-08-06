@@ -923,6 +923,57 @@ export default {
       return json({ error: "METHOD" }, 405);
     }
 
+    // CLIENT ERROR SINK — so a failure on a phone stops being a screenshot.
+    //
+    // WHY THIS EXISTS: the Solana buy path was debugged across five rounds by
+    // the Architect photographing a toast at 4am on 26% battery. Every round
+    // cost a merge, a deploy and a tap, and each screenshot carried one
+    // truncated line. The error was always available in the browser; nothing
+    // was carrying it anywhere a seat could read it.
+    //
+    // PUBLIC AND UNAUTHENTICATED, because it runs before any wallet exists —
+    // so it is bounded rather than trusted:
+    //   - 2 KB request cap, and every field truncated on the way in
+    //   - 20 reports per IP per minute via the existing KV limiter
+    //   - fields are fixed; no arbitrary blob is stored
+    //   - failure is silent to the caller. An error sink that can itself
+    //     produce an error the user sees is worse than no sink.
+    if (pathname === "/api/desk/error") {
+      if (request.method !== "POST") return json({ error: "METHOD" }, 405);
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      const key = `errsink:${ip}`;
+      try {
+        const hits = Number((await env.DRIP_LIMITS.get(key)) ?? 0);
+        if (hits >= 20) return json({ ok: true, dropped: "rate" });
+        await env.DRIP_LIMITS.put(key, String(hits + 1), { expirationTtl: 60 });
+      } catch { /* limiter unavailable -> still accept, still bounded below */ }
+
+      let b: any;
+      try {
+        const raw = await request.text();
+        if (raw.length > 2048) return json({ ok: true, dropped: "size" });
+        b = JSON.parse(raw);
+      } catch { return json({ ok: true, dropped: "parse" }); }
+
+      const cut = (v: unknown, n: number) =>
+        typeof v === "string" && v.length ? v.slice(0, n) : null;
+      const stage = cut(b?.stage, 60);
+      const message = cut(b?.message, 400);
+      if (!stage || !message) return json({ ok: true, dropped: "empty" });
+
+      try {
+        await env.COUNCIL_DB.prepare(
+          `INSERT INTO client_errors (ts_ms, stage, message, detail, ua, wallet, build)
+           VALUES (?1,?2,?3,?4,?5,?6,?7)`
+        ).bind(
+          Date.now(), stage, message,
+          cut(b?.detail, 900), cut(request.headers.get("user-agent"), 200),
+          cut(b?.wallet, 60), cut(b?.build, 40),
+        ).run();
+      } catch { /* never surface a sink failure to the user */ }
+      return json({ ok: true });
+    }
+
     if (pathname === "/api/testnet/drip") {
       const deployed = env.POOL_ADDRESS && env.POOL_ADDRESS.toLowerCase() !== ZERO;
 
