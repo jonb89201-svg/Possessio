@@ -106,7 +106,15 @@ const MINIAPP = R("public/miniapp-solana.js");
 const ALPHA = 'const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";';
 
 const workerPreimage = lift(WORKER, "deskRulePreimage", "r");
-const miniPreimage = lift(MINIAPP, "rulePreimage", "{ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }");
+
+// THE CONSOLE BUILDS TEXT, THE WORKER BUILDS BYTES, and that asymmetry is
+// deliberate: the Farcaster Solana provider declares signMessage(message:
+// string) and hands the argument across comlink with no encoding step, so the
+// console cannot pass a Uint8Array. Everything below still compares BYTES —
+// miniPreimage encodes the console's text exactly the way the worker encodes
+// its own, which is the property that has to hold.
+const miniMessage = lift(MINIAPP, "ruleMessage", "{ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }");
+const miniPreimage = (r) => new TextEncoder().encode(miniMessage(r));
 const b58encode = lift(MINIAPP, "b58encode", "bytes", ALPHA);
 const b58decode = lift(WORKER, "b58decode", "s", ALPHA);
 
@@ -127,6 +135,31 @@ t("the console and the worker build the SAME bytes for the same rule", () => {
   const b = Buffer.from(miniPreimage(RULE));
   assert.strictEqual(b.toString("hex"), a.toString("hex"),
     `preimages differ:\n  worker: ${JSON.stringify(a.toString())}\n  console: ${JSON.stringify(b.toString())}`);
+});
+
+// ── the console hands the host a type the host can actually carry ──────────
+//
+// MEASURED FAILURE 2026-08-06 23:00 UTC: the buy landed, the delegate landed
+// (approve confirmed on chain, keeper as delegate), and then the Farcaster host
+// died with its own full-screen "unexpected error". desk_rules stayed empty and
+// the client error sink recorded NOTHING, because a host crash takes the frame
+// and there is no promise left to reject. The only step between the confirmed
+// delegate and the crash is this signature, and it was passing a Uint8Array to
+// a method whose own declaration is signMessage(message: string)
+// (@farcaster/miniapp-core@0.6.0/dist/solana.d.ts:38).
+t("the console signs TEXT, because that is the only type the host accepts", () => {
+  assert.strictEqual(typeof miniMessage(RULE), "string",
+    "ruleMessage returned bytes again — the Farcaster provider takes a string and " +
+    "passes it across comlink unencoded, so bytes kill the host instead of throwing");
+});
+
+t("the rule signature is requested with one argument and no encoding hint", () => {
+  const call = /provider\.signMessage\(([^)]*)\)/.exec(MINIAPP);
+  assert.ok(call, "signRule no longer calls provider.signMessage");
+  assert.ok(!call[1].includes(","),
+    `signMessage was called with more than one argument: (${call[1]}). The second ` +
+    `"utf8" argument was Phantom's shape; this provider declares a single string ` +
+    `parameter and silently drops the rest.`);
 });
 
 t("the preimage is domain-separated and version-tagged", () => {
