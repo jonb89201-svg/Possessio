@@ -504,12 +504,21 @@ function b58encode(bytes) {
   return out;
 }
 
-/// The exact bytes the wallet signs. MUST match deskRulePreimage() in
+/// The exact TEXT the wallet signs. MUST match deskRulePreimage() in
 /// worker/index.ts byte for byte — the worker recomputes this and verifies the
-/// signature against it, so any drift here is a silent 401 rather than a bug
-/// that shows up in testing. Field order is fixed; every value is stringified
-/// explicitly.
-function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }) {
+/// signature against its UTF-8 bytes, so any drift here is a silent 401 rather
+/// than a bug that shows up in testing. Field order is fixed; every value is
+/// stringified explicitly.
+///
+/// RETURNS A STRING, NOT BYTES, and that is the fix for 2026-08-06 23:00 UTC.
+/// The Farcaster Solana provider declares `signMessage(message: string)` —
+/// @farcaster/miniapp-core@0.6.0/dist/solana.d.ts:38, and the wrapper it hands
+/// over is `signMessage: t => request({method:"signMessage", params:{message:t}})`
+/// with NO encoding step, so whatever is passed goes across comlink verbatim.
+/// This used to pass a Uint8Array. The worker encodes the same text with
+/// TextEncoder before verifying, so the signed bytes are identical either way —
+/// the string is what the host can actually carry.
+function ruleMessage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce }) {
   // THE STOP IS STATED POSITIVELY, NEVER INFERRED FROM A MISSING FIELD.
   //
   // Architect ratification 2026-08-01: "no stop" is an absence, not a value.
@@ -526,7 +535,7 @@ function rulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, s
   const stopLines = hasStop === true
     ? `hasStop:true\nstopBps:${stopBps}\n`
     : `hasStop:false\n`;
-  return new TextEncoder().encode(
+  return (
     "possessio.desk.rule.v1\n" +
     `owner:${owner}\n` +
     `mint:${mint}\n` +
@@ -556,11 +565,30 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   if (!provider) throw new Error("no Solana provider");
   const owner = pubkey.toBase58();
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const msg = rulePreimage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
+  const text = ruleMessage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
 
-  const res = await provider.signMessage(msg, "utf8");
-  const raw = res?.signature || res;
-  const signature = typeof raw === "string" ? raw : b58encode(raw);
+  // BREADCRUMB BEFORE THE CALL, because the last failure produced no row at all.
+  //
+  // On 2026-08-06 the delegate confirmed on chain at 23:00:34 UTC and the host
+  // then showed its own full-screen "unexpected error". desk_rules stayed empty
+  // and client_errors recorded NOTHING — the webview died, so the catch below
+  // never ran and there was no rejected promise to report. A crash that takes
+  // the frame with it cannot be caught from inside the frame; the only thing
+  // that survives is a row written BEFORE the call. This is that row.
+  try { window.deskReport?.("solana-rule-attempt", "about to request the rule signature", JSON.stringify({ mint, decimals, targetBps, bytes: text.length })); } catch {}
+
+  // ONE ARGUMENT, AND A STRING. The second "utf8" argument was Phantom's shape
+  // and this provider is not Phantom — it drops extra arguments, and it wants
+  // text. See ruleMessage above for the measurement.
+  const res = await provider.signMessage(text);
+
+  // The host returns a base58 STRING (solana.d.ts:38-40). A raw-bytes return is
+  // still accepted because a non-Farcaster provider may hand one back, and
+  // encoding bytes we were given is safe; inventing them would not be.
+  const raw = res?.signature ?? res;
+  const signature = typeof raw === "string"
+    ? raw
+    : b58encode(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
 
   const r = await fetch("/api/desk/rules", {
     method: "POST",

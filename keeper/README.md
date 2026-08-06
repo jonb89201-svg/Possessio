@@ -46,7 +46,8 @@ SOLANA_RPC_URL=<rpc> SOLANA_KEEPER_KEY=<bs58-or-json-array> DRY_RUN=0 node keepe
 | `DRY_RUN` | `1` | anything but `"0"` means sign nothing |
 | `SOLANA_KEEPER_KEY` | — | bs58 string or JSON byte array; required only for live |
 | `KEEPER_PUBKEY` | — | public key alone, enough for a dry run |
-| `POSITION_SOURCE` | `ledger` | `ledger` \| `onchain` |
+| `POSITION_SOURCE` | `desk` | `desk` \| `ledger` \| `onchain` |
+| `DESK_URL` | `https://possessio.io` | rules, when the source is `desk` — polls `/api/desk/rules` |
 | `LEDGER_FILE` | `./keeper/positions.json` | rules, when the source is `ledger` |
 | `AUTOTARGET_ADDRESS`, `BASE_RPC_URL` | — | rules, when the source is `onchain` |
 | `POLL_MS` | `5000` | tick interval |
