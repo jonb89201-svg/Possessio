@@ -244,9 +244,36 @@ export async function signBuy({ quoteResponse }) {
   });
   if (!r.ok) throw new Error("swap build failed (" + r.status + ")");
   const { swapTransaction } = await r.json();
-  const tx = VersionedTransaction.deserialize(
-    Uint8Array.from(atob(swapTransaction), (c) => c.charCodeAt(0))
-  );
+  const bytes = Uint8Array.from(atob(swapTransaction), (c) => c.charCodeAt(0));
+
+  // SOLANA'S PACKET LIMIT IS 1232 BYTES, and Jupiter routinely returns more
+  // than that for newborn coins.
+  //
+  // MEASURED 2026-08-06 against live Jupiter, same mint, same parameters,
+  // four calls each: 1223, 1356, 1325, 1524 bytes. The route changes call to
+  // call as liquidity moves, and for these coins it sits right at the limit and
+  // crosses it often — 3 of 4 attempts on one mint, 4 of 4 on another minutes
+  // later, then all six under the limit ten minutes after that.
+  //
+  // An oversized transaction cannot land. web3.js does not say that: its
+  // serialize() writes into a fixed PACKET_DATA_SIZE buffer and throws
+  // "encoding overruns Uint8Array", which is what reached the Architect's
+  // screen and named nothing useful. Worse, when a slightly-oversized one got
+  // through to the wallet, the confirm sheet rendered empty skeletons forever —
+  // the wallet could not decode it either, and said so by saying nothing.
+  //
+  // So the size is checked HERE, before web3.js is asked to do the impossible,
+  // and the caller is told the one thing that is actionable: try again.
+  if (bytes.length > 1232) {
+    const e = new Error(
+      "no route for this coin fits in one transaction right now (" +
+      bytes.length + " bytes, limit 1232)"
+    );
+    e.code = "TX_TOO_LARGE";
+    throw e;
+  }
+
+  const tx = VersionedTransaction.deserialize(bytes);
   const sent = await sendTx(tx);
   return { signature: sent.signature };
 }
@@ -489,11 +516,31 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
 export async function buyAndDelegate({
   mint, usdcAmount, keeper, slippageBps = 300, targetBps, onStep = () => {},
 }) {
-  onStep({ step: "quote", text: "finding a route…" });
-  const q = await quoteBuy({ mint, usdcAmount, slippageBps });
-
-  onStep({ step: "buy", text: `buy ${usdcAmount} USDC via ${q.route}`, quote: q });
-  const buy = await signBuy({ quoteResponse: q.quote });
+  // RE-QUOTE ON AN OVERSIZED ROUTE, up to three times.
+  //
+  // This is a retry around QUOTING, not around sending. Nothing has been signed
+  // at this point and no transaction exists, so re-running it cannot double
+  // anything — the opposite of the send-retry removed earlier today, and the
+  // distinction is the whole reason this is safe to do here and was not there.
+  //
+  // Three attempts because the route is re-chosen each call and the measured
+  // hit rate was between 1-in-4 and 4-in-4 depending on the minute. Three is
+  // enough to clear a transient bad route and few enough that a coin with no
+  // viable route fails quickly instead of hanging on the sheet.
+  let q = null, buy = null, lastTooLarge = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    onStep({ step: "quote", text: attempt === 1 ? "finding a route…" : "route too large, retrying…" });
+    q = await quoteBuy({ mint, usdcAmount, slippageBps });
+    onStep({ step: "buy", text: `buy ${usdcAmount} USDC via ${q.route}`, quote: q });
+    try {
+      buy = await signBuy({ quoteResponse: q.quote });
+      break;
+    } catch (e) {
+      if (e && e.code === "TX_TOO_LARGE" && attempt < 3) { lastTooLarge = e; continue; }
+      throw e;
+    }
+  }
+  if (!buy) throw (lastTooLarge || new Error("could not build a sendable route for this coin"));
 
   // THE SIGNING BASIS IS THE FILL — Architect-ratified 2026-08-01.
   //
