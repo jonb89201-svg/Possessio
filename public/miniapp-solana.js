@@ -169,47 +169,57 @@ export async function quoteBuy({ mint, usdcAmount, slippageBps = 300 }) {
   };
 }
 
-/// SEND A TRANSACTION THROUGH WHATEVER SHAPE THIS PROVIDER WANTS.
+/// SEND A TRANSACTION. ONE SHAPE, ONE ATTEMPT, NO FALLBACK CHAIN.
 ///
-/// MEASURED 2026-08-06, from inside Farcaster, calling
-/// provider.signAndSendTransaction(tx) directly:
+/// THIS FUNCTION USED TO TRY FOUR SHAPES IN SEQUENCE. That was wrong and it is
+/// worth recording why, because it looked reasonable and it was the same
+/// pattern that had just succeeded on connect().
 ///
-///   "Cannot read properties of undefined (reading 'serialize')"
+/// connect() is idempotent — calling it four times costs nothing. THIS IS NOT.
+/// If a shape opens the wallet prompt, the user approves, and the promise then
+/// hangs or returns something unrecognised, moving to the next shape opens a
+/// SECOND prompt for a transaction that may already be in flight. A retry loop
+/// around a signing call is a double-spend generator. The rule that a failed
+/// send must never be silently retried is older than this codebase.
 ///
-/// Note WHICH error that is. Not "serialize is not a function" — which is what
-/// a stripped class instance across the comlink boundary would give — but
-/// "properties of UNDEFINED". The provider read `something.serialize` where
-/// `something` was undefined, so the transaction did not arrive where it was
-/// looked for. A bare positional argument is the wrong shape for this provider.
+/// MEASURED 2026-08-06, inside Farcaster, with the four-shape version: the
+/// wallet's "Confirm transaction" sheet DID open — so the provider was reached
+/// — but every detail row rendered as an empty skeleton and never filled, and
+/// Confirm returned to the buy screen with no signature and no error. The
+/// wallet received something it could not decode.
 ///
-/// Three shapes are attempted rather than a fourth guess, because two guesses
-/// have already been wrong here (phantom .connect(), then Wallet Standard) and
-/// each cost a round trip to a phone at 4am. If all three fail, every error is
-/// reported together — the collection IS the diagnostic, and one screenshot
-/// then names the right shape instead of narrowing to it.
+/// That points at one thing: a VersionedTransaction is a class instance, and it
+/// is being handed across a comlink boundary to the host. Methods and prototype
+/// do not survive that trip. What arrives is a shapeless object — which is
+/// exactly what an undecodable transaction looks like, and exactly why the
+/// preview stayed empty.
+///
+/// So: serialize HERE, send bytes. base58 over the JSON-RPC surface is the
+/// phantom-family convention and this provider is phantom-shaped everywhere
+/// else it has been measured.
 async function sendTx(tx) {
-  const attempts = [];
-  const raw = tx.serialize();
-  const b58 = bs58.encode(raw);
-
-  const shapes = [
-    ["object arg",   () => provider.signAndSendTransaction({ transaction: tx })],
-    ["rpc/message",  () => provider.request({ method: "signAndSendTransaction", params: { message: b58 } })],
-    ["rpc/tx",       () => provider.request({ method: "signAndSendTransaction", params: { transaction: b58 } })],
-    ["positional",   () => provider.signAndSendTransaction(tx)],
-  ];
-
-  for (const [name, call] of shapes) {
-    try {
-      const sent = await call();
-      const sig = sent?.signature || sent?.result?.signature || sent;
-      if (typeof sig === "string" && sig.length > 40) return { signature: sig, shape: name };
-      attempts.push(name + ": returned " + JSON.stringify(sent));
-    } catch (e) {
-      attempts.push(name + ": " + String(e?.message || e));
-    }
+  const b58 = bs58.encode(tx.serialize());
+  let sent;
+  try {
+    sent = await provider.request({
+      method: "signAndSendTransaction",
+      params: { message: b58 },
+    });
+  } catch (e) {
+    // Surfaced verbatim. A user rejection and a shape mismatch are different
+    // events and the caller must be able to tell them apart.
+    throw new Error("wallet refused the send: " + String(e?.message || e));
   }
-  throw new Error("no send shape worked — " + attempts.join(" | "));
+  const sig = sent?.signature || sent?.result?.signature || sent;
+  if (typeof sig !== "string" || sig.length < 40) {
+    // NOT retried with another shape, deliberately. The transaction may already
+    // be on chain; the honest move is to say what came back and stop.
+    throw new Error(
+      "the wallet returned no signature — it may or may not have sent. " +
+      "Check your wallet before retrying. Got: " + JSON.stringify(sent)
+    );
+  }
+  return { signature: sig };
 }
 
 /// STEP 1 — the buy. The user signs; the coin lands in the user's own account.
