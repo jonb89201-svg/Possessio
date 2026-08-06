@@ -596,7 +596,10 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   // them. Shape only, never the signature: its length and type are the whole
   // diagnosis (a base64 answer decodes to the wrong byte count and the worker
   // 401s), and the value itself belongs in one place, the signed rule.
-  try { window.deskReport?.("solana-rule-signed", "wallet answered the rule ask", JSON.stringify({ returnType: typeof raw, sigChars: signature.length })); } catch {}
+  // b58ok is the one bit that convicts an encoding: base64 carries '+', '/',
+  // '=' and '0OIl', none of which exist in base58. A false here means the host
+  // answered in an alphabet the worker's decoder was never going to accept.
+  try { window.deskReport?.("solana-rule-signed", "wallet answered the rule ask", JSON.stringify({ returnType: typeof raw, sigChars: signature.length, b58ok: /^[1-9A-HJ-NP-Za-km-z]+$/.test(signature) })); } catch {}
 
   const r = await fetch("/api/desk/rules", {
     method: "POST",
