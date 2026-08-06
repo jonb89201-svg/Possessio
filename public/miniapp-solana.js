@@ -101,6 +101,20 @@ export async function initMiniApp(rpcUrl) {
       const res = await provider.features["standard:connect"].connect();
       const a = res?.accounts?.[0] || provider.accounts?.[0];
       acct = a?.address || a?.publicKey?.toString?.() || a?.publicKey;
+    } else if (typeof provider.request === "function") {
+      // THE SHAPE FARCASTER ACTUALLY HANDS OVER, measured 2026-08-05 by printing
+      // the provider's own keys inside the mini app:
+      //
+      //   ["request","signMessage","signTransaction","signAndSendTransaction",…]
+      //
+      // Phantom-like in every method EXCEPT connect, which is reachable only
+      // through the JSON-RPC surface. Neither of the two shapes guessed at
+      // before this was measured. Worth remembering the next time a provider
+      // shape looks obvious: two rounds were spent on shapes that were not
+      // there, and one Object.keys() ended it.
+      const res = await provider.request({ method: "connect" });
+      acct = res?.publicKey?.toString?.() || res?.publicKey
+          || provider.publicKey?.toString?.() || provider.publicKey;
     } else {
       await sdk.actions.ready();
       return {

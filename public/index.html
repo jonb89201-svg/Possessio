@@ -3878,7 +3878,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // a keeper configured — and the copy above used to blame the first one
         // whichever had failed. Someone already inside the mini app was told to
         // go open the mini app. Print what the SDK reported instead.
-        '<div class="note-h" style="font-family:var(--dmono);font-size:11px;line-height:1.5">'+
+        '<div class="note-h" style="font-family:var(--dmono);font-size:11px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere">'+
           '<b>Why this is unavailable right now</b><br>'+
           esc((window.PossessioMiniApp && window.PossessioMiniApp.reason) || "not initialised")+
           ((window.PossessioMiniApp && window.PossessioMiniApp.caps)
