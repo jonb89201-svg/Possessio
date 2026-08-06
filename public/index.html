@@ -3872,7 +3872,19 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(chain==="sol-miniapp"){
       $("#dk-sheet").innerHTML='<h3>Solana picks live in Farcaster</h3>'+
         '<p class="sub">The list is open to watch anywhere.</p>'+
-        '<div class="note-h">A Solana pick is <b>self-custody</b>: the coin is bought by <b>your own wallet</b> and stays there. That needs the Solana wallet built into the Farcaster app, so open Possessio as a mini app there to trade Solana picks. Base picks work here in the browser with your connected vault.</div>'+
+        '<div class="note-h">A Solana pick is <b>self-custody</b>: the coin is bought by <b>your own wallet</b> and stays there. That needs the Solana wallet built into the Farcaster app. Base picks work here in the browser with your connected vault.</div>'+
+        // THE ACTUAL REASON, not a guess at it. `ready` requires three things —
+        // running inside Farcaster, the client handing over a Solana wallet, and
+        // a keeper configured — and the copy above used to blame the first one
+        // whichever had failed. Someone already inside the mini app was told to
+        // go open the mini app. Print what the SDK reported instead.
+        '<div class="note-h" style="font-family:var(--dmono);font-size:11px;line-height:1.5">'+
+          '<b>Why this is unavailable right now</b><br>'+
+          esc((window.PossessioMiniApp && window.PossessioMiniApp.reason) || "not initialised")+
+          ((window.PossessioMiniApp && window.PossessioMiniApp.caps)
+            ? '<br><br><b>What this Farcaster client supports</b><br>'+esc(JSON.stringify(window.PossessioMiniApp.caps))
+            : '')+
+        '</div>'+
         '<div class="sh-act"><button class="b-sec" onclick="Desk.closeSheet()">Close</button></div>';
       $("#dk-scrim").classList.add("on"); return;
     }
@@ -4338,6 +4350,7 @@ try {
       address: res.address || null,
       keeper: KEEPER || null,
       reason: res.reason || (KEEPER ? "" : "no keeper configured"),
+      caps: res.caps || null,
     }, {
       buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy,
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,

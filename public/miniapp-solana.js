@@ -38,17 +38,47 @@ export function solanaAddress() { return pubkey ? pubkey.toBase58() : null; }
 /// Boot the mini-app SDK. Safe to call in a normal browser: it resolves to
 /// {miniApp:false} instead of throwing, so the console degrades rather than dies.
 export async function initMiniApp(rpcUrl) {
+  let provErr = null;
   try {
-    const mod = await import("https://esm.sh/@farcaster/miniapp-sdk@0.1.x");
+    // UNPINNED, to match the import in index.html. This file pinned 0.1.x while
+    // the page loaded latest, so the console ran TWO Farcaster SDK versions at
+    // once (measured 2026-08-05: 0.1.10 here, 0.3.0 there). Both expose
+    // getSolanaProvider, so the pin was not the Solana failure — but two
+    // versions of the same SDK in one page is a defect waiting for its turn.
+    const mod = await import("https://esm.sh/@farcaster/miniapp-sdk");
     sdk = mod.sdk;
     const inHost = await sdk.isInMiniApp?.().catch(() => false);
     if (!inHost) { sdk = null; return { miniApp: false, reason: "not in a Farcaster host" }; }
 
-    // Not every Farcaster client has a Solana wallet — check, never assume.
-    provider = await sdk.wallet.getSolanaProvider?.().catch(() => null);
+    // ASK the host what it supports instead of calling and interpreting the
+    // silence. getSolanaProvider is proxied to the Farcaster client; a client
+    // that does not offer it answers with nothing, which is byte-identical to a
+    // bug on our side. Without this question the app blamed the user's setup
+    // for what might be the client's limitation or our own defect — one message
+    // for three different causes.
+    let caps = null;
+    try { caps = await sdk.getCapabilities?.(); } catch (e) { caps = null; }
+    const hasSolCap = Array.isArray(caps) ? caps.includes("wallet.getSolanaProvider") : null;
+
+    if (hasSolCap === false) {
+      await sdk.actions.ready();
+      return {
+        miniApp: true, solana: false, caps,
+        reason: "this Farcaster client does not offer a Solana wallet to mini apps",
+      };
+    }
+
+    provider = await sdk.wallet.getSolanaProvider?.().catch((e) => { provErr = e; return null; });
     if (!provider) {
       await sdk.actions.ready();
-      return { miniApp: true, solana: false, reason: "this client has no Solana wallet" };
+      return {
+        miniApp: true, solana: false, caps,
+        reason: provErr
+          ? "getSolanaProvider failed: " + String(provErr.message || provErr)
+          : (hasSolCap === null
+              ? "getSolanaProvider returned nothing, and this client did not answer a capability query"
+              : "the client lists Solana support but returned no provider"),
+      };
     }
 
     const res = await provider.connect();
@@ -56,7 +86,7 @@ export async function initMiniApp(rpcUrl) {
     conn = new Connection(rpcUrl || "https://solana-rpc.publicnode.com", "confirmed");
 
     await sdk.actions.ready();               // dismiss the splash
-    return { miniApp: true, solana: true, address: pubkey.toBase58() };
+    return { miniApp: true, solana: true, caps, address: pubkey.toBase58() };
   } catch (e) {
     sdk = null; provider = null;
     return { miniApp: false, reason: String(e?.message || e) };
