@@ -20,6 +20,7 @@
 import {
   Connection, PublicKey, VersionedTransaction, TransactionMessage,
 } from "https://esm.sh/@solana/web3.js@1.95.3";
+import bs58 from "https://esm.sh/bs58@6.0.0";
 import {
   createApproveInstruction, createRevokeInstruction,
   getAssociatedTokenAddress, getAccount, getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
@@ -168,6 +169,49 @@ export async function quoteBuy({ mint, usdcAmount, slippageBps = 300 }) {
   };
 }
 
+/// SEND A TRANSACTION THROUGH WHATEVER SHAPE THIS PROVIDER WANTS.
+///
+/// MEASURED 2026-08-06, from inside Farcaster, calling
+/// provider.signAndSendTransaction(tx) directly:
+///
+///   "Cannot read properties of undefined (reading 'serialize')"
+///
+/// Note WHICH error that is. Not "serialize is not a function" — which is what
+/// a stripped class instance across the comlink boundary would give — but
+/// "properties of UNDEFINED". The provider read `something.serialize` where
+/// `something` was undefined, so the transaction did not arrive where it was
+/// looked for. A bare positional argument is the wrong shape for this provider.
+///
+/// Three shapes are attempted rather than a fourth guess, because two guesses
+/// have already been wrong here (phantom .connect(), then Wallet Standard) and
+/// each cost a round trip to a phone at 4am. If all three fail, every error is
+/// reported together — the collection IS the diagnostic, and one screenshot
+/// then names the right shape instead of narrowing to it.
+async function sendTx(tx) {
+  const attempts = [];
+  const raw = tx.serialize();
+  const b58 = bs58.encode(raw);
+
+  const shapes = [
+    ["object arg",   () => provider.signAndSendTransaction({ transaction: tx })],
+    ["rpc/message",  () => provider.request({ method: "signAndSendTransaction", params: { message: b58 } })],
+    ["rpc/tx",       () => provider.request({ method: "signAndSendTransaction", params: { transaction: b58 } })],
+    ["positional",   () => provider.signAndSendTransaction(tx)],
+  ];
+
+  for (const [name, call] of shapes) {
+    try {
+      const sent = await call();
+      const sig = sent?.signature || sent?.result?.signature || sent;
+      if (typeof sig === "string" && sig.length > 40) return { signature: sig, shape: name };
+      attempts.push(name + ": returned " + JSON.stringify(sent));
+    } catch (e) {
+      attempts.push(name + ": " + String(e?.message || e));
+    }
+  }
+  throw new Error("no send shape worked — " + attempts.join(" | "));
+}
+
 /// STEP 1 — the buy. The user signs; the coin lands in the user's own account.
 export async function signBuy({ quoteResponse }) {
   const r = await fetch(JUP + "/swap", {
@@ -182,8 +226,8 @@ export async function signBuy({ quoteResponse }) {
   const tx = VersionedTransaction.deserialize(
     Uint8Array.from(atob(swapTransaction), (c) => c.charCodeAt(0))
   );
-  const sent = await provider.signAndSendTransaction(tx);
-  return { signature: sent?.signature || sent };
+  const sent = await sendTx(tx);
+  return { signature: sent.signature };
 }
 
 /// WHAT THE SWAP ACTUALLY DELIVERED, from the confirmed transaction.
@@ -268,8 +312,8 @@ export async function signDelegate({ mint, amount, keeper }) {
     new TransactionMessage({ payerKey: pubkey, recentBlockhash: blockhash, instructions: [ix] })
       .compileToV0Message()
   );
-  const sent = await provider.signAndSendTransaction(tx);
-  return { signature: sent?.signature || sent, ata: ata.toBase58() };
+  const sent = await sendTx(tx);
+  return { signature: sent.signature, ata: ata.toBase58() };
 }
 
 /// The kill switch. No keeper cooperation required, ever.
@@ -282,8 +326,8 @@ export async function signRevoke({ mint }) {
     new TransactionMessage({ payerKey: pubkey, recentBlockhash: blockhash, instructions: [ix] })
       .compileToV0Message()
   );
-  const sent = await provider.signAndSendTransaction(tx);
-  return { signature: sent?.signature || sent };
+  const sent = await sendTx(tx);
+  return { signature: sent.signature };
 }
 
 /// Read the grant back FROM THE CHAIN so the console shows what is actually
