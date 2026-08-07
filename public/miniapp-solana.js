@@ -658,7 +658,16 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
     // The refusal is a fact about the ledger, not the phone, so it must not
     // live only in a 90-character toast. BAD_* / SIGNER_MISMATCH names the
     // exact gate that said no.
-    try { window.deskReport?.("solana-rule-rejected", (err.error || "no body") + " (" + r.status + ")", JSON.stringify({ sigChars: signature.length })); } catch {}
+    //
+    // On SIGNER_MISMATCH the row also carries the SIGNATURE and the exact TEXT
+    // — measured 2026-08-07 00:15:03 UTC, row 46: the encoding is right and the
+    // Ed25519 check still fails, so this host signs some ENVELOPE around the
+    // text (Solana off-chain preamble, or similar) and the envelope cannot be
+    // read out of a closed-source app. It can be recovered offline from one
+    // (signature, message, pubkey) triple by testing candidate framings.
+    // Nothing here is secret: the signature exists to be published to the
+    // ledger, and every message field is already stored on acceptance.
+    try { window.deskReport?.("solana-rule-rejected", (err.error || "no body") + " (" + r.status + ")", JSON.stringify({ sigChars: signature.length, signature, message: text })); } catch {}
     throw new Error(err.error || `rule rejected (${r.status})`);
   }
   return r.json();
