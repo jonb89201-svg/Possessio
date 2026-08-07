@@ -548,6 +548,17 @@ function sigToBase58(raw) {
   throw new Error("the wallet's signature is neither base58 nor base64 for 64 bytes (" + raw.length + " chars)");
 }
 
+/// The rule text as this host must receive it: unpadded url-safe base64 of its
+/// UTF-8. See the measurement above signMessage — the host base64-decodes the
+/// incoming string (discarding foreign characters) and signs the RESULT, so
+/// only a message that IS base64 arrives at the signer intact. Every character
+/// this emits is inside the url-safe alphabet, so the host's lenient decode
+/// discards nothing and signs exactly the UTF-8 of the text.
+function toWireMessage(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 /// The exact TEXT the wallet signs. MUST match deskRulePreimage() in
 /// worker/index.ts byte for byte — the worker recomputes this and verifies the
 /// signature against its UTF-8 bytes, so any drift here is a silent 401 rather
@@ -608,8 +619,18 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   // exist.
   if (!provider) throw new Error("no Solana provider");
   const owner = pubkey.toBase58();
-  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const text = ruleMessage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
+  // The nonce absorbs an alignment constraint: the text is grown to a multiple
+  // of 3 BYTES so its base64 form is a multiple of 4 with no padding and no
+  // ragged tail. The one measured sample happened to be tail-less, so whether
+  // this host truncates or decodes a ragged tail is UNKNOWN — at an even
+  // length the question never arises, for either behavior. The text is pure
+  // ASCII, so bytes and characters agree and the loop runs at most twice.
+  let nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let text = ruleMessage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
+  while (text.length % 3 !== 0) {
+    nonce += "0";
+    text = ruleMessage({ owner, mint, decimals, entryPrice, targetBps, hasStop, stopBps, nonce });
+  }
 
   // BREADCRUMB BEFORE THE CALL, because the last failure produced no row at all.
   //
@@ -621,10 +642,32 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   // that survives is a row written BEFORE the call. This is that row.
   try { window.deskReport?.("solana-rule-attempt", "about to request the rule signature", JSON.stringify({ mint, decimals, targetBps, bytes: text.length })); } catch {}
 
-  // ONE ARGUMENT, AND A STRING. The second "utf8" argument was Phantom's shape
-  // and this provider is not Phantom — it drops extra arguments, and it wants
-  // text. See ruleMessage above for the measurement.
-  const res = await provider.signMessage(text);
+  // THE WIRE ENCODING IS URL-SAFE BASE64, and that is a measurement, not a
+  // reading of documentation — the declaration (solana.d.ts:38) says only
+  // `string` and never says of WHAT.
+  //
+  // Solved offline 2026-08-07 from client_errors row 51, the first row to
+  // carry a (signature, message, pubkey) triple: the host treats the incoming
+  // string as url-safe base64, DISCARDS every character outside that alphabet
+  // — colons, newlines, '+', '/', '=' — decodes what is left, and signs those
+  // bytes. Sent plain text, our field separators were the discarded part, so
+  // the wallet signed a mangled remainder and the worker's SIGNER_MISMATCH
+  // was correct. Of 40+ candidate framings tested against the real signature
+  // (raw text, Solana off-chain envelopes in every variant, hashes, JSON
+  // wrappings), exactly one verified: lenient url-safe base64 decode.
+  //
+  // The worker-side alternative — verifying against the mangled bytes — was
+  // rejected as FORGEABLE: the discarded characters are the field separators,
+  // so distinct rules collide onto the same signed bytes.
+  //
+  // So the text is encoded to unpadded url-safe base64. The host's decode
+  // then yields EXACTLY the UTF-8 of the rule text, the bytes the worker has
+  // verified against all along. Unpadded because '=' is itself outside the
+  // alphabet and only survives by being discarded.
+  //
+  // ONE ARGUMENT — the second "utf8" argument was Phantom's shape; this host
+  // drops extra arguments.
+  const res = await provider.signMessage(toWireMessage(text));
 
   // The declaration says string (solana.d.ts:38-40); it does NOT say which
   // alphabet. This host answers base64 (measured, client_errors row 29);
