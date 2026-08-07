@@ -504,6 +504,50 @@ function b58encode(bytes) {
   return out;
 }
 
+/// Base58-decode — the mirror of the worker's decoder, present here only so a
+/// signature CLAIMING to be base58 can be proven to be one before it is sent.
+function b58decode(s) {
+  const out = [0];
+  for (const ch of s) {
+    const v = B58_ALPHABET.indexOf(ch);
+    if (v < 0) throw new Error("bad base58 char");
+    let carry = v;
+    for (let i = 0; i < out.length; i++) {
+      carry += out[i] * 58;
+      out[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) { out.push(carry & 0xff); carry >>= 8; }
+  }
+  for (let k = 0; k < s.length && s[k] === "1"; k++) out.push(0);
+  return new Uint8Array(out.reverse());
+}
+
+/// The wallet's answer, in the ONE encoding the worker reads.
+///
+/// MEASURED 2026-08-06 23:59:06 UTC, client_errors row 29: the Farcaster host
+/// answers the rule ask with an 88-character string that is NOT base58 — it is
+/// standard base64 ("...==": 64 bytes always pad to two '='). The worker
+/// decodes base58 only, so row 30 is the ledger refusing a perfectly valid
+/// signature: BAD_SIGNATURE (400), thrown by the decoder before verification
+/// was ever attempted. Phantom answers base58; this host answers base64; the
+/// rule dies in the alphabet gap. Fourth shape mismatch on this provider,
+/// after connect, the transaction envelope, and the message type.
+///
+/// Order of proof, not guesswork: it IS base58 only if it base58-decodes to
+/// exactly 64 bytes; else it IS base64 only if it base64-decodes to exactly
+/// 64 bytes; else refuse loudly. A 64-byte signature can never satisfy both —
+/// base64 padding ('=') is outside the base58 alphabet.
+function sigToBase58(raw) {
+  if (typeof raw !== "string") return b58encode(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
+  try { if (b58decode(raw).length === 64) return raw; } catch {}
+  try {
+    const bin = atob(raw.replace(/-/g, "+").replace(/_/g, "/"));
+    if (bin.length === 64) return b58encode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch {}
+  throw new Error("the wallet's signature is neither base58 nor base64 for 64 bytes (" + raw.length + " chars)");
+}
+
 /// The exact TEXT the wallet signs. MUST match deskRulePreimage() in
 /// worker/index.ts byte for byte — the worker recomputes this and verifies the
 /// signature against its UTF-8 bytes, so any drift here is a silent 401 rather
@@ -582,13 +626,13 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   // text. See ruleMessage above for the measurement.
   const res = await provider.signMessage(text);
 
-  // The host returns a base58 STRING (solana.d.ts:38-40). A raw-bytes return is
-  // still accepted because a non-Farcaster provider may hand one back, and
-  // encoding bytes we were given is safe; inventing them would not be.
+  // The declaration says string (solana.d.ts:38-40); it does NOT say which
+  // alphabet. This host answers base64 (measured, client_errors row 29);
+  // Phantom answers base58; some other provider may hand back raw bytes.
+  // sigToBase58 proves what it was handed and emits the one encoding the
+  // worker reads.
   const raw = res?.signature ?? res;
-  const signature = typeof raw === "string"
-    ? raw
-    : b58encode(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
+  const signature = sigToBase58(raw);
 
   // SECOND BREADCRUMB — measured gap 2026-08-06 23:38 UTC: the attempt row
   // landed and then NOTHING, so "the wallet died at the ask" and "the wallet
@@ -596,10 +640,9 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   // them. Shape only, never the signature: its length and type are the whole
   // diagnosis (a base64 answer decodes to the wrong byte count and the worker
   // 401s), and the value itself belongs in one place, the signed rule.
-  // b58ok is the one bit that convicts an encoding: base64 carries '+', '/',
-  // '=' and '0OIl', none of which exist in base58. A false here means the host
-  // answered in an alphabet the worker's decoder was never going to accept.
-  try { window.deskReport?.("solana-rule-signed", "wallet answered the rule ask", JSON.stringify({ returnType: typeof raw, sigChars: signature.length, b58ok: /^[1-9A-HJ-NP-Za-km-z]+$/.test(signature) })); } catch {}
+  // `converted` records that the alphabet gap was crossed — the row that
+  // proves the base64 fix ran, the way row 29's b58ok:false proved the gap.
+  try { window.deskReport?.("solana-rule-signed", "wallet answered the rule ask", JSON.stringify({ returnType: typeof raw, rawChars: typeof raw === "string" ? raw.length : null, sigChars: signature.length, converted: raw !== signature })); } catch {}
 
   const r = await fetch("/api/desk/rules", {
     method: "POST",

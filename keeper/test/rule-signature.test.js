@@ -117,6 +117,10 @@ const miniMessage = lift(MINIAPP, "ruleMessage", "{ owner, mint, decimals, entry
 const miniPreimage = (r) => new TextEncoder().encode(miniMessage(r));
 const b58encode = lift(MINIAPP, "b58encode", "bytes", ALPHA);
 const b58decode = lift(WORKER, "b58decode", "s", ALPHA);
+const miniB58decode = lift(MINIAPP, "b58decode", "s", ALPHA);
+const sigToBase58 = lift(MINIAPP, "sigToBase58", "raw",
+  ALPHA + `\nconst b58encode = ${b58encode.toString()};\nconst b58decode = ${miniB58decode.toString()};` +
+  `\nconst atob = (s) => Buffer.from(s, "base64").toString("binary");`);
 
 const RULE = {
   owner: "ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5",
@@ -212,6 +216,40 @@ t("a rule signed by a DIFFERENT wallet fails verification", () => {
   const sig = nacl.sign.detached(miniPreimage(rule), attacker.secretKey);
   assert.ok(!nacl.sign.detached.verify(workerPreimage(rule), sig, victim.publicKey.toBytes()),
     "anyone could author a rule against someone else's wallet");
+});
+
+// ── the wallet's alphabet, whatever it is, reaches the worker as base58 ────
+//
+// MEASURED 2026-08-06 23:59 UTC (client_errors rows 28-31): the Farcaster host
+// answers signMessage with BASE64 — 88 chars, "==" padding — and the worker
+// decodes base58 only, so a valid signature died as BAD_SIGNATURE (400) before
+// verification was attempted. Phantom answers base58. The console must accept
+// both and emit exactly one.
+t("a base64 answer (this host, measured) is converted and verifies end to end", () => {
+  const kp = Keypair.generate();
+  const rule = { ...RULE, owner: kp.publicKey.toBase58() };
+  const sig = nacl.sign.detached(miniPreimage(rule), kp.secretKey);
+  const b64 = Buffer.from(sig).toString("base64");     // what the host hands back
+  const out = sigToBase58(b64);
+  const back = b58decode(out);                          // what the worker does next
+  assert.strictEqual(back.length, 64, "converted signature must decode to 64 bytes");
+  assert.ok(nacl.sign.detached.verify(workerPreimage(rule), back, kp.publicKey.toBytes()),
+    "the signature stopped verifying after base64→base58 conversion");
+});
+
+t("a base58 answer (Phantom's shape) passes through untouched", () => {
+  const sig = new Uint8Array(64); require("crypto").randomFillSync(sig);
+  const b58sig = b58encode(sig);
+  assert.strictEqual(sigToBase58(b58sig), b58sig,
+    "a base58 signature must not be re-encoded — Phantom's answer was already right");
+});
+
+t("raw bytes are encoded, and garbage is refused loudly", () => {
+  const sig = new Uint8Array(64); require("crypto").randomFillSync(sig);
+  assert.strictEqual(sigToBase58(sig), b58encode(sig), "raw bytes must encode to base58");
+  assert.throws(() => sigToBase58("definitely-not-a-signature"),
+    /neither base58 nor base64/,
+    "an unrecognizable answer must throw, not be sent to die at the worker");
 });
 
 // ── base58 agrees with the reference implementation ────────────────────────
