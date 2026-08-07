@@ -121,6 +121,18 @@ const miniB58decode = lift(MINIAPP, "b58decode", "s", ALPHA);
 const sigToBase58 = lift(MINIAPP, "sigToBase58", "raw",
   ALPHA + `\nconst b58encode = ${b58encode.toString()};\nconst b58decode = ${miniB58decode.toString()};` +
   `\nconst atob = (s) => Buffer.from(s, "base64").toString("binary");`);
+const toWireMessage = lift(MINIAPP, "toWireMessage", "text",
+  `const btoa = (s) => Buffer.from(s, "binary").toString("base64");`);
+
+/// The HOST's signing transform, reconstructed from the 2026-08-07 offline
+/// solve of client_errors row 51: keep only url-safe base64 characters,
+/// truncate to a whole number of groups, decode, sign the result. This is the
+/// adversary the wire encoding must survive — byte for byte.
+function hostLenientDecode(s) {
+  let f = s.replace(/[^A-Za-z0-9\-_]/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  f = f.slice(0, f.length - (f.length % 4 || 0));
+  return new Uint8Array(Buffer.from(f, "base64"));
+}
 
 const RULE = {
   owner: "ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5",
@@ -250,6 +262,59 @@ t("raw bytes are encoded, and garbage is refused loudly", () => {
   assert.throws(() => sigToBase58("definitely-not-a-signature"),
     /neither base58 nor base64/,
     "an unrecognizable answer must throw, not be sent to die at the worker");
+});
+
+// ── the wire message survives the host's signer intact ─────────────────────
+//
+// SOLVED OFFLINE 2026-08-07 from client_errors row 51: the host url-safe
+// base64-decodes the incoming string, DISCARDING every foreign character —
+// which for plain rule text meant the field separators — and signs the
+// mangled remainder. Verifying the mangle server-side was rejected as
+// forgeable (distinct rules collide once separators are discarded). The fix
+// is to send base64 so the discard set is empty.
+/// Grow the nonce until the text is a multiple of 3 bytes — the same
+/// alignment signRule enforces. Without it the simulated host truncates the
+/// last 1-2 bytes of the rule (proven: the un-aligned RULE text loses its
+/// final nonce character), which is exactly the production hazard.
+function alignedText(rule) {
+  let r = { ...rule };
+  let text = Buffer.from(miniPreimage(r)).toString();
+  while (text.length % 3 !== 0) {
+    r = { ...r, nonce: r.nonce + "0" };
+    text = Buffer.from(miniPreimage(r)).toString();
+  }
+  return { rule: r, text };
+}
+
+t("the wire encoding passes the host's lenient decoder byte-for-byte", () => {
+  const { text } = alignedText(RULE);
+  const wire = toWireMessage(text);
+  assert.ok(/^[A-Za-z0-9\-_]+$/.test(wire),
+    "wire message contains characters the host would discard");
+  const arrived = hostLenientDecode(wire);
+  assert.strictEqual(Buffer.from(arrived).toString("hex"),
+    Buffer.from(new TextEncoder().encode(text)).toString("hex"),
+    "the bytes the host signs are not the bytes the worker verifies");
+});
+
+t("a rule signed the way THIS host signs verifies at the worker", () => {
+  const kp = Keypair.generate();
+  const { rule, text } = alignedText({ ...RULE, owner: kp.publicKey.toBase58() });
+  // the host's whole pipeline: wire in, lenient decode, sign the result
+  const hostSigned = nacl.sign.detached(hostLenientDecode(toWireMessage(text)), kp.secretKey);
+  const b64answer = Buffer.from(hostSigned).toString("base64");   // and it answers base64
+  const back = b58decode(sigToBase58(b64answer));
+  assert.ok(nacl.sign.detached.verify(workerPreimage(rule), back, kp.publicKey.toBytes()),
+    "host-pipeline signature failed against the worker preimage — an encoding drifted");
+});
+
+t("the console pads the text so the wire form has no ragged base64 tail", () => {
+  // Whether the host truncates or decodes a ragged tail is unmeasured; the
+  // console must never find out. signRule grows the nonce until the text is a
+  // multiple of 3 bytes, so the encoded form is a whole number of groups.
+  assert.ok(/while\s*\(\s*text\.length\s*%\s*3\s*!==\s*0\s*\)/.test(MINIAPP),
+    "the %3 alignment loop is gone — a 226-byte rule text becomes a ragged-tail " +
+    "wire message, and the host's tail behavior is an unmeasured gamble");
 });
 
 // ── base58 agrees with the reference implementation ────────────────────────
