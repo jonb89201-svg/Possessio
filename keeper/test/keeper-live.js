@@ -120,7 +120,7 @@ async function stateAfter(txOrBase64, address, label) {
 
   // ── 3. the POSITIVE branch, from state the real grant actually produces ─
   const KEEPER = process.env.KEEPER_PUBKEY_TEST ||
-    "ARjf4vUNiU8cW6xXfBfiL8ibc5qC4pYim5mLxbe6uog5";   // the real Model B keeper
+    "4FrJDJjw4Q9odZ1RFXceZDkUJD1JHM83R3k28pmbSBLn";   // the real Model B keeper
   const GRANT = "1000000000";                          // bounded: not the balance
   let ata, granted;
   try {
