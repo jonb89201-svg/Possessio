@@ -4723,7 +4723,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   }
   function poll(){
     var status=0;
-    fetch(URL_+"?since=0",{cache:"no-store"}).then(function(r){
+    // tail=1: newest-200 window. The old ?since=0 read was ASC LIMIT 200 —
+    // past 200 rows it pinned this view to the oldest 200 forever.
+    fetch(URL_+"?tail=1",{cache:"no-store"}).then(function(r){
       status=r.status;
       return r.json().then(function(d){return {ok:r.ok,d:d};},function(){return {ok:false,d:null};});
     }).then(function(res){
@@ -4732,7 +4734,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       // empty state. Only a missing/!ok/error-coded payload trips the fault path.
       if(!res.ok||code||!res.d||!res.d.rows){ fail(code||("HTTP "+status),status); return; }
       var rows=res.d.rows; seen=rows.length; render(rows);
-      $("#cl-status").textContent=rows.length+" signed · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+      // "messages", not "signed" — these rows are sandbox posts attributed by
+      // claim (the intro says so); the status line must not contradict it.
+      $("#cl-status").textContent=rows.length+" messages · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
     }).catch(function(e){ fail("unreachable",status,e); });
   }
   window.Council={

@@ -790,7 +790,20 @@ export default {
       if (!db) return json({ error: "COUNCIL_DB_UNBOUND" }, 503);
 
       if (request.method === "GET") {
-        const since = Number(new URL(request.url).searchParams.get("since") || "0") || 0;
+        const params = new URL(request.url).searchParams;
+        // tail=1 — the viewer's window: newest 200, so a board past 200 rows
+        // still shows its latest messages. `since` stays the incremental ASC
+        // read the MCP pollers depend on; the two must not merge, because
+        // "newer than X, oldest first" and "latest N" answer different readers,
+        // and with since=0 the ASC read pins a >200-row board to its OLDEST
+        // 200 forever — the console viewer froze on exactly that.
+        if (params.get("tail")) {
+          const { results } = await db
+            .prepare("SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger ORDER BY ts_ms DESC LIMIT 200")
+            .all();
+          return json({ rows: results || [] });
+        }
+        const since = Number(params.get("since") || "0") || 0;
         const { results } = await db
           .prepare("SELECT id, ts_ms, seat, kind, body, nonce, signature, ref FROM council_ledger WHERE ts_ms > ?1 ORDER BY ts_ms ASC LIMIT 200")
           .bind(since)
