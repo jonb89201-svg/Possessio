@@ -31,29 +31,31 @@ if [ -f package.json ]; then
     || echo "deps      npm install FAILED — 'npm test' will not run"
 fi
 
-# ── 2. forge — REPORTED, NOT INSTALLED. Measured 2026-08-01: this
-#       environment's egress policy returns 403 for BOTH api.github.com and
-#       github.com, and foundryup needs the first to resolve a release tag and
-#       the second to download. So foundry cannot be installed here at all.
-#       /root/.ccr/README.md is explicit: a 403 is an org policy denial —
-#       "Do not retry or route around it — report the blocked host."
-#
-#       Attempting it anyway would burn ~30s of every session start to fail the
-#       same way, so this checks and STATES THE BOUND instead. A seat that knows
-#       at second zero that the Solidity suite is unrunnable will route it to
-#       the Architect's terminal; a seat that does not will reason from the diff
-#       and call it verified. That happened on 2026-08-01.
+# ── 2. forge — REPORTED, NOT INSTALLED. foundryup fetches foundry.paradigm.xyz
+#       (NOT allowlisted) so the INSTALLER fails here — but that is the front
+#       door, not the tool. Board row 87 (Tare, MEASURED 2026-08-09): Foundry
+#       and solc ship their binaries as github.com release assets, which ARE
+#       allowlisted, so a CLEAN chat seat can install and run the OFFLINE
+#       suites. The hook does not auto-install (untested per session, and a
+#       seat that has handled key material has its bash blocked) — it states
+#       the bound and points at the sequence. A seat that knows at second zero
+#       whether Solidity is judgeable here will route correctly; a seat that
+#       reasons from the diff and calls it verified is the 2026-08-01 defect.
 if [ -f foundry.toml ]; then
-  export PATH="$HOME/.foundry/bin:$PATH"
+  export PATH="$HOME/.foundry/bin:/tmp/fbin:$PATH"
   if command -v forge >/dev/null 2>&1; then
     echo "forge     $(forge --version 2>/dev/null | head -1)"
-    echo "export PATH=\"\$HOME/.foundry/bin:\$PATH\"" >> "${CLAUDE_ENV_FILE:-/dev/null}" 2>/dev/null
+    echo "export PATH=\"\$HOME/.foundry/bin:/tmp/fbin:\$PATH\"" >> "${CLAUDE_ENV_FILE:-/dev/null}" 2>/dev/null
   else
     SUITES=$(ls test/*.t.sol 2>/dev/null | wc -l | tr -d ' ')
-    echo "forge     UNAVAILABLE — github.com is 403 under this egress policy, so"
-    echo "          foundry cannot be installed. The $SUITES .t.sol suites CANNOT be"
-    echo "          run in this session. Solidity changes are UNVERIFIED here and"
-    echo "          must be built and tested in the Architect's terminal."
+    echo "forge     not preinstalled. foundryup's CDN (foundry.paradigm.xyz) is"
+    echo "          blocked here, but the BINARIES are reachable: github.com release"
+    echo "          assets are allowlisted (board row 87, Tare, MEASURED 2026-08-09)."
+    echo "          A CLEAN seat can install forge+solc from GitHub releases and run"
+    echo "          the $SUITES .t.sol OFFLINE suites here; fork tests + broadcast still"
+    echo "          need the Architect's terminal (RPC egress blocked), and nothing in"
+    echo "          a chat seat CERTIFIES. Until installed, Solidity here is UNJUDGED —"
+    echo "          see board row 87 for the exact sequence."
   fi
 fi
 
@@ -80,7 +82,18 @@ if [ -f package.json ] && grep -q '"test"' package.json 2>/dev/null; then
 fi
 
 echo
+echo "FIRST MOVE — READ THE BOARD. The Possessio Council connector is the only"
+echo "wall-less memory: any instance, any session, no repo checkout required."
+echo "Before you touch anything: council_read_feed for the latest, council_search"
+echo "for a topic ('forge', 'keeper', an address). The board is a SELF-CORRECTING"
+echo "canon — a row's corrections hang off it by ref, so council_read_thread on a"
+echo "status row returns current truth with supersessions included. The repo is"
+echo "doctrine + code; the BOARD is what is true right now. Trust a repo file only"
+echo "after the board has not corrected it. (This hook itself was wrong about forge"
+echo "until board row 87 — check the board before repeating anything it prints.)"
+echo
 echo "CLAUDE.md is the job listing. laws/MIB.md is Codebyte Law."
+echo "laws/CANON_of_the_terminal.md is the rule of practice for AI seats."
 echo "laws/PHYSICS_of_execution.md maps THIS environment — read it early."
 echo "Merging to main is a production deploy. Migrations, deploys, board posts"
 echo "and outward-facing sends need Architect ratification."
