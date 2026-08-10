@@ -4022,11 +4022,15 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     pending={c:c,bps:bps};
     var v=S.vault, mptU=v?v.maxPerTrade:0n, availU=v?v.available:0n;
     var capU=(mptU<availU?mptU:availU), defUsd=Number(capU)/1e6;
-    var canDraw=v&&v.role==="trader"&&!v.paused;
+    // Private beta: even a role-valid vault only trades for an allowlisted
+    // wallet while the keeper is shared (board row 86). Gated on the connected
+    // EOA — add a Base address to POSSESSIO_DESK_ALLOW to keep using a vault.
+    var beta=deskArmingOpen(S.wallet);
+    var canDraw=v&&v.role==="trader"&&!v.paused&&beta;
     var tgt=(bps/100),tgtPx=c.now*(1+bps/10000);
     var act=canDraw
       ? '<button class="b-pri" onclick="Desk.confirmOpen()">🔑 Draw &amp; open</button>'
-      : '<button class="b-pri" style="opacity:.5" disabled>'+(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault'))+'</button>';
+      : '<button class="b-pri" style="opacity:.5" disabled>'+(!beta?'Private beta':(v&&v.paused?'Vault paused':(v&&v.role!=="trader"?'Trader key needed':'Connect vault')))+'</button>';
     var isSol=c.ch==="sol";
     $("#dk-sheet").innerHTML=
       '<h3>Open '+esc(c.s)+' <span class="ctag '+esc(c.ch)+'" style="vertical-align:2px">'+(isSol?"SOL":"BASE")+'</span></h3>'+
@@ -4173,10 +4177,24 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      account, then grants a BOUNDED, REVOCABLE delegate over exactly that
      position so the desk can fire the signed gain target while they sleep. Certified
      against live mainnet (miniapp/test/solana-live.js, 7/7 by simulation). */
+  // Private-beta gate (2026-08-10): arming is limited to allowlisted wallets
+  // while the keeper is a single shared process (board row 86). Watching and
+  // Force Sell stay open to everyone; only opening a NEW armed position is
+  // gated. The worker enforces the same list on the write — this is UX.
+  function deskArmingOpen(addr){
+    var L=window.POSSESSIO_DESK_ALLOW||[];
+    if(L.indexOf("*")>=0)return true;
+    if(!addr)return false;
+    var a=String(addr); var al=a.toLowerCase();
+    for(var i=0;i<L.length;i++){ if(L[i]===a||String(L[i]).toLowerCase()===al)return true; }
+    return false;
+  }
+  function betaToast(){ toast("Trading is in private beta while we harden the shared keeper — the feed is open to watch. DM @possessio to get on."); }
   async function confirmOpenSolana(){
     var c=pending&&pending.c, bps=pending&&pending.bps; if(!c)return;
     var M=window.PossessioMiniApp;
     if(!M||!M.ready){ toast("Solana picks need the Farcaster app — open Possessio there."); return; }
+    if(!deskArmingOpen(M.address)){ betaToast(); return; }
     var sizeSol=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
     if(!(sizeSol>0)){ toast("Enter a position size in SOL."); return; }
     // Refuse to spend the fee reserve. Being unable to SELL is the failure the
@@ -4242,6 +4260,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     // A Solana pick routes to the self-custody path; it never draws from the
     // Base vault, so none of the trader-key preconditions below apply.
     if(c.ch==="sol") return confirmOpenSolana();
+    if(!deskArmingOpen(S.wallet)){ betaToast(); return; }
     if(!v||v.role!=="trader"||v.paused){ toast("Buys need the trader key on an unpaused vault."); return; }
     var sizeUsd=parseFloat((($("#dk-size")&&$("#dk-size").value)||"").trim());
     if(!(sizeUsd>0)){ toast("Enter a position size."); return; }
@@ -4661,6 +4680,15 @@ try {
      semi-permanent: existing grants point AT this pubkey, so rotating it means
      every user must re-grant before their stop can fire again. */
   window.POSSESSIO_SOLANA_KEEPER = "4FrJDJjw4Q9odZ1RFXceZDkUJD1JHM83R3k28pmbSBLn";
+  /* DESK PRIVATE BETA (2026-08-10). The console is public and tagged @base;
+     the list is open to WATCH by anyone, but ARMING a live position is limited
+     while the keeper is still one process serving every position (board row
+     86). This is the friendly button-side gate — the real enforcement is the
+     worker's owner allowlist on /api/desk/rules, which a bypassed button
+     cannot get around. Wallets here: the Architect's Solana owner, plus any
+     Base EOA / Solana pubkey added to continue using a launched vault. Set to
+     ["*"] to open trading to everyone once per-user custody lands. */
+  window.POSSESSIO_DESK_ALLOW = ["vzQhfuJLKkj14yP8x3uP2J4XQSDWUVTE1CUbNsXygVK"];
 </script>
 <script type="module">
   window.PossessioMiniApp = { ready:false, address:null, keeper:null, reason:"not initialised" };

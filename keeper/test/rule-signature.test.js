@@ -470,6 +470,43 @@ t("the cancel text survives the host's lenient decode intact", () => {
     "the host's decode must yield exactly the cancel text's UTF-8");
 });
 
+// ── THE PRIVATE-BETA ALLOWLIST (2026-08-10) — the shared-D1 gate ───────────
+//
+// The console is public and tagged @base; /api/desk/rules writes to the shared
+// radar D1 and the keeper is one process over every armed position (board row
+// 86). Arming is gated by OWNER at the worker — the button is bypassable, this
+// is not. The owner is Ed25519-verified, so the allowlist cannot be spoofed.
+const deskArmingAllowed = lift(WORKER, "deskArmingAllowed", "env, owner",
+  'const DESK_OWNER_DEFAULT = "vzQhfuJLKkj14yP8x3uP2J4XQSDWUVTE1CUbNsXygVK";');
+
+t("the baked owner is allowed with no env; a stranger is refused", () => {
+  assert.strictEqual(deskArmingAllowed({}, "vzQhfuJLKkj14yP8x3uP2J4XQSDWUVTE1CUbNsXygVK"), true);
+  assert.strictEqual(deskArmingAllowed({}, "STRANGERpk1111111111111111111111111111111111"), false,
+    "a stranger must not be able to write to the shared D1");
+});
+
+t("DESK_ALLOW_OWNERS extends the list; '*' opens it", () => {
+  const extra = "STRANGERpk1111111111111111111111111111111111";
+  assert.strictEqual(deskArmingAllowed({ DESK_ALLOW_OWNERS: extra }, extra), true, "an added owner is allowed");
+  assert.strictEqual(deskArmingAllowed({ DESK_ALLOW_OWNERS: extra }, "vzQhfuJLKkj14yP8x3uP2J4XQSDWUVTE1CUbNsXygVK"), true, "the baked owner still stands");
+  assert.strictEqual(deskArmingAllowed({ DESK_ALLOW_OWNERS: "*" }, "anyoneAtAll"), true, "star opens arming to everyone");
+  assert.strictEqual(deskArmingAllowed({ DESK_ALLOW_OWNERS: "" }, "STRANGERpk1111111111111111111111111111111111"), false, "empty env is gated, not open");
+});
+
+t("both desk write endpoints refuse a non-beta owner BEFORE the DB, after owner-shape", () => {
+  for (const path of ['pathname === "/api/desk/rules"', 'pathname === "/api/desk/rules/cancel"']) {
+    const w = WORKER.slice(WORKER.indexOf(path));
+    const badOwner = w.indexOf('"BAD_OWNER"');
+    const gate = w.indexOf("DESK_PRIVATE_BETA");
+    const write = w.search(/INSERT INTO desk_rules|UPDATE desk_rules/);
+    assert.ok(gate > -1, `${path}: the private-beta gate must exist`);
+    assert.ok(badOwner > -1 && gate > badOwner, `${path}: gate must come AFTER owner-shape (a malformed owner still 400s)`);
+    assert.ok(write > gate, `${path}: the gate must precede the DB write`);
+    assert.ok(/deskArmingAllowed\(env, owner\)/.test(w) || /deskArmingAllowed\(env, owner\)/.test(WORKER),
+      `${path}: the gate consults the allowlist helper on the verified owner`);
+  }
+});
+
 t("cancel route: verified before the write, owner+mint in the WHERE, open-only", () => {
   const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules/cancel"'));
   const verify = w.indexOf("verifyEd25519(");

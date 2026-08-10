@@ -64,6 +64,27 @@ function isBase58Pubkey(s: string): boolean {
   try { return b58decode(s).length === 32; } catch { return false; }
 }
 
+/// THE DESK ALLOWLIST (2026-08-10). The console is public and tagged @base, so
+/// strangers will find it — and /api/desk/rules writes to the SHARED radar D1
+/// while the keeper is still one process serving every armed position (board
+/// row 86's load-bearing finding: a compromise is theft across ALL of them).
+/// So arming is a private beta gated by OWNER, and the gate lives HERE, not on
+/// a button a stranger can bypass with curl.
+///
+/// The owner is Ed25519-verified below, so this cannot be spoofed: a caller
+/// who is not the allowlisted owner cannot produce the allowlisted owner's
+/// signature. Baked default is the Architect's own wallet; DESK_ALLOW_OWNERS
+/// (comma-separated) extends it, and the literal "*" opens arming to everyone
+/// once the per-user keeper lands.
+const DESK_OWNER_DEFAULT = "vzQhfuJLKkj14yP8x3uP2J4XQSDWUVTE1CUbNsXygVK";
+function deskArmingAllowed(env: any, owner: string): boolean {
+  const raw = (env.DESK_ALLOW_OWNERS ?? "").trim();
+  if (raw === "*") return true;
+  const set = new Set([DESK_OWNER_DEFAULT]);
+  for (const a of raw.split(/[,\s]+/)) if (a) set.add(a);
+  return set.has(owner);
+}
+
 /// The exact bytes the wallet signs. Field order is fixed and every value is
 /// stringified explicitly: the signature must cover the WHOLE instruction, so
 /// that nothing between the wallet and the table can alter a target and still
@@ -856,6 +877,10 @@ export default {
         // Shape first — every field bounded, because this writes into the
         // SHARED radar D1 whose size ceiling has halted writes before.
         if (typeof owner !== "string" || !isBase58Pubkey(owner)) return json({ error: "BAD_OWNER" }, 400);
+        // PRIVATE BETA GATE — refuse a stranger's write to the shared D1 before
+        // any work, but AFTER owner shape so a malformed owner still 400s. The
+        // owner is signature-verified below; the allowlist cannot be spoofed.
+        if (!deskArmingAllowed(env, owner)) return json({ error: "DESK_PRIVATE_BETA" }, 403);
         if (typeof mint !== "string" || !isBase58Pubkey(mint)) return json({ error: "BAD_MINT" }, 400);
         if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return json({ error: "BAD_DECIMALS" }, 400);
         if (typeof entryPrice !== "number" || !(entryPrice > 0) || !Number.isFinite(entryPrice))
@@ -953,6 +978,10 @@ export default {
       try { b = await request.json(); } catch { return json({ error: "BAD_JSON" }, 400); }
       const { owner, mint, ruleId, nonce, signature } = b || {};
       if (typeof owner !== "string" || !isBase58Pubkey(owner)) return json({ error: "BAD_OWNER" }, 400);
+      // A cancel only ever narrows to the signer's own open rule, so it is not
+      // a write-amplification surface — but gate it to the same allowlist for
+      // consistency: a non-beta owner has no rules to cancel anyway.
+      if (!deskArmingAllowed(env, owner)) return json({ error: "DESK_PRIVATE_BETA" }, 403);
       if (typeof mint !== "string" || !isBase58Pubkey(mint)) return json({ error: "BAD_MINT" }, 400);
       // ids are D1 rowids serialized as strings; bound tightly since this
       // lands in a WHERE against the shared ledger.
