@@ -7,6 +7,7 @@ import { buildTolledApp } from "./x402-toll";
 import { birthScan, discoveryScan, btcScan, type WatcherEnv } from "./watcher";
 import { screenScan, dexTrackScan } from "./screen";
 import { sessionGateScan } from "./sessiongate";
+import { handleTapeIngest } from "./tape-ingest.js";
 export { PumpTape } from "./pumptape";
 
 // R-7 (AUDIT 2026-07-14): staleness watchdog. The DO-era monitor left with the
@@ -93,7 +94,12 @@ export default {
     ctx.waitUntil(tracked("tapeWatchdog", env, tapeWatchdog(env)));
     // Layer 3 keepalive: poke the DO every minute so the WS engine (re)connects
     // even after eviction. The DO's own alarm is the fast watchdog in between.
+    // TAPE_HOST="railway" (board row 90): the subscriber moved to a host that
+    // can hold a socket; the DO stays in code as the fallback seam but is NOT
+    // poked, so the two never double-write. The Railway tape heartbeats the
+    // same feed_status row through /radar/tape-ingest instead.
     ctx.waitUntil(tracked("pumptapeEnsure", env, (async () => {
+      if ((env as any).TAPE_HOST === "railway") return;
       if (!env.PUMPTAPE) return;
       const stub = env.PUMPTAPE.get(env.PUMPTAPE.idFromName("main"));
       await stub.fetch("https://pumptape/ensure");
@@ -108,6 +114,10 @@ export default {
     // Recorded here rather than fetched on the health request path, so this costs
     // the request path nothing (see N-4).
     ctx.waitUntil((async () => {
+      // TAPE_HOST="railway": the remote tape reports its own health verdict on
+      // every ingest heartbeat — reading the dormant DO here would overwrite
+      // the live diagnosis with a stale one.
+      if ((env as any).TAPE_HOST === "railway") return;
       const ms = Date.now();
       try {
         if (!env.PUMPTAPE) return;
@@ -124,6 +134,12 @@ export default {
   },
 
   async fetch(request: Request, env: WatcherEnv, ctx: ExecutionContext): Promise<Response> {
+    // The Railway tape's write path (board row 90). Handled here, before the
+    // toll app, because it shares recordScan — every batch heartbeats the same
+    // feed_status surface the console's health readout already names.
+    if (request.method === "POST" && new URL(request.url).pathname === "/radar/tape-ingest") {
+      return handleTapeIngest(request, env as any, recordScan as any);
+    }
     // Rebuild only if the arming state changed (vars are static per deployment,
     // so in practice this builds once per isolate).
     const sink = (env.TOLL_SINK || "").toLowerCase();
