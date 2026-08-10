@@ -3585,6 +3585,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       </div>
     </div>
 
+    <!-- LOOK UP ANY COIN (2026-08-10, Architect request): paste a mint — or a
+         whole DexScreener / pump.fun link — and the coin joins the desk feed
+         as a full card: live price, buy, target, Force Sell. The screen shows
+         what the radar picked; this is the door for the coin YOU picked. -->
+    <div style="display:flex;gap:6px;margin:0 0 8px">
+      <input id="dk-mintsearch" placeholder="paste a token address (Solana or Base) — or a DexScreener link"
+        autocomplete="off" autocapitalize="off" spellcheck="false"
+        style="flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--dline);border-radius:9px;background:var(--ground);font-family:var(--dmono);font-size:12px;color:var(--dink)"
+        onkeydown="if(event.key==='Enter')Desk.findMint()">
+      <button class="cabtn" style="font-size:12px;padding:0 14px" onclick="Desk.findMint()">🔎 Find</button>
+    </div>
     <div class="dk-sl">Screen &middot; on screen now <span class="count" id="dk-livecount">0</span><span class="rt" id="dk-dropnote">screening&hellip;</span></div>
     <div class="dk-list" id="dk-list"></div>
 
@@ -3623,7 +3634,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[]};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[]};
   // POSITIONS SURVIVE THE SESSION (2026-08-10). They lived only in memory, so
   // closing the app forgot every trade — which, combined with a host wallet
   // that filters Token-2022, left a real position with no visible evidence
@@ -3803,6 +3814,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       (c.addr?('<div class="caline">'+
         '<button class="cabtn" data-ca="'+esc(c.addr)+'" onclick="Desk.copyCA(this)" title="Copy contract address">⧉ '+esc(shortAddr(c.addr))+'</button>'+
         '<a class="dexlink" href="https://dexscreener.com/'+(c.ch==="sol"?"solana":"base")+'/'+esc(c.addr)+'" target="_blank" rel="noopener">DexScreener ↗</a>'+
+        (c.pinned?('<button class="cabtn" onclick="Desk.unpinMint(\''+esc(c.addr)+'\')" title="Remove your find from the screen">✕ unpin</button>'):'')+
       '</div>'):'')+
       (c.dev?('<div class="devline"><a href="https://solscan.io/account/'+esc(c.dev)+'" target="_blank" rel="noopener">👤 '+esc(shortAddr(c.dev))+'</a>'+(c.devN!=null?'<span class="devtag '+(c.devN===0?"fresh":"prior")+'">'+(c.devN===0?"fresh":c.devN+"× prior")+'</span>':'')+'</div>'):'')+
       '</div>'+
@@ -3857,15 +3869,78 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // One list, two screens: radar's Solana rows lead (the entry window is the
   // signal), Base rows interleave after every second Solana row. Real rows
   // only — the demo pool appears solely when BOTH screens are unreachable.
+  // PINNED FINDS LEAD EVERYTHING: the coin the user pasted outranks the coins
+  // the radar picked, and a pinned mint is removed from the feed's own rows so
+  // it never renders twice.
   function mergeRender(){
-    var sol=S.solRows||[], base=S.baseRows||[];
-    if(!sol.length&&!base.length){ if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=[], si=0, bi=0;
-    while(out.length<15&&(si<sol.length||bi<base.length)){
+    var pin=S.pinned||[], seenPin={};
+    pin.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    var noPin=function(c){ return !seenPin[((c&&c.addr)||"").toLowerCase()]; };
+    var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
+    if(!sol.length&&!base.length){
+      if(pin.length){ S.live=pin.slice(); renderList(); return; }
+      if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
+    var out=pin.slice(), si=0, bi=0;
+    while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
     }
-    S.source="live"; S.live=out.slice(0,15); renderList();
+    S.source="live"; S.live=out.slice(0,15+pin.length); renderList();
+  }
+
+  /* FIND BY MINT (2026-08-10, Architect request). Paste an address — or any
+     link containing one — and the coin joins the desk as a full card. Priced
+     from DexScreener's public token API (CORS-open, both chains, the same
+     source the radar's own tracker trusts); the best pair is the one with the
+     deepest liquidity where the pasted token is the BASE token. Entry is the
+     price at find time, so the card's % is "since you found it". */
+  var MINT_RE=/0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}/;
+  function bestPairFor(addr,pairs){ var best=null,bl=-1;
+    (pairs||[]).forEach(function(p){ if(!p||!p.baseToken)return;
+      if((p.baseToken.address||"").toLowerCase()!==addr.toLowerCase())return;
+      var liq=(p.liquidity&&Number(p.liquidity.usd))||0;
+      if(liq>bl){ bl=liq; best=p; } });
+    return best; }
+  async function findMint(){
+    var el=$("#dk-mintsearch"); var raw=(el&&el.value||"").trim();
+    if(!raw){ toast("Paste a token address first."); return; }
+    var m=raw.match(MINT_RE);
+    if(!m){ toast("No token address in that — paste the mint or a DexScreener link."); return; }
+    var addr=m[0];
+    toast("Looking up "+shortAddr(addr)+"…");
+    try{
+      var r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+addr,{cache:"no-store"});
+      var d=r.ok?await r.json():null;
+      var best=bestPairFor(addr,(d&&d.pairs)||[]);
+      if(!best){ toast("DexScreener doesn't know it yet — brand-new coins take a minute or two. Try again shortly."); return; }
+      var ch=best.chainId==="base"?"base":(best.chainId==="solana"?"sol":null);
+      if(!ch){ toast("Found it on "+esc(best.chainId)+" — the desk trades Solana and Base only."); return; }
+      var mc=Number(best.marketCap!=null?best.marketCap:best.fdv)||0;
+      var row={id:addr,s:String(best.baseToken.symbol||"?").slice(0,10),n:String(best.baseToken.name||"").slice(0,24),
+        ch:ch,ico:ch==="sol"?"🛰":"🔵",img:(best.info&&best.info.imageUrl)||null,entry:mc||1,now:mc||1,peak:mc||1,
+        born:Number(best.pairCreatedAt)||Date.now(),read:["flow","🔎 your find"],hot:false,addr:addr,dev:"",devN:null,pinned:true};
+      S.pinned=S.pinned.filter(function(x){return x.addr.toLowerCase()!==addr.toLowerCase();});
+      S.pinned.unshift(row); S.pinned=S.pinned.slice(0,3); // three finds, newest first
+      if(el)el.value="";
+      mergeRender(); toast("Pinned "+row.s+" to the top of the screen.");
+    }catch(e){ toast("Lookup failed: "+String(e&&e.message||e).slice(0,80)); }
+  }
+  function unpinMint(addr){ S.pinned=S.pinned.filter(function(x){return x.addr.toLowerCase()!==String(addr).toLowerCase();}); mergeRender(); }
+  // Pinned prices stay live on the Base screen's cadence — one batched call
+  // for every pin (the endpoint takes comma-separated addresses).
+  async function refreshPinned(){
+    if(!(S.pinned||[]).length)return;
+    try{
+      var addrs=S.pinned.map(function(x){return x.addr;}).join(",");
+      var r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+addrs,{cache:"no-store"}); if(!r.ok)return;
+      var d=await r.json();
+      S.pinned.forEach(function(row){
+        var best=bestPairFor(row.addr,(d&&d.pairs)||[]);
+        if(best){ var mc=Number(best.marketCap!=null?best.marketCap:best.fdv)||0;
+          if(mc>0){ row.now=mc; row.peak=Math.max(row.peak,mc); } }
+      });
+      renderList();
+    }catch(e){}
   }
 
   // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
@@ -4311,7 +4386,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     catch(e){ return false; }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000));
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
@@ -4330,7 +4405,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); reconcilePositions(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, sell:sell, sellPos:sellPos, clearRule:clearRule, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
+    pick:pick, sell:sell, sellPos:sellPos, clearRule:clearRule, findMint:findMint, unpinMint:unpinMint,
+    closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
     solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
 })();
