@@ -3598,6 +3598,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   <div class="dk-scrim" id="dk-scrim" onclick="if(event.target===this)Desk.closeSheet()"><div class="dk-sheet" id="dk-sheet"></div></div>
   <div class="dk-toast" id="dk-toast"></div>
 </div>
+<script src="/desk-match.js"></script>
 <script>
 (function(){
   "use strict";
@@ -3681,13 +3682,16 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
   // ships on the bar; only the state changes.
-  function hasPos(c){ return S.positions.some(function(p){return p.state==="armed"&&(p.id===c.id||p.s===c.s);}); }
+  // Matching is keyed on MINT, never symbol — pump.fun symbols collide (two
+  // live TOADs, board row 90), and a symbol match lit Force Sell on every
+  // same-name card. The rule lives in /desk-match.js, shared with its test.
+  function hasPos(c){ return DeskMatch.hasPos(S.positions,c); }
   // On close the greyed Sell flashes the exit %gain/loss (green/red) beside it,
   // then clears after 30s.
   function scheduleExitClear(id){ if(id==null)return; var t=setTimeout(function(){ delete S.exits[id]; renderList(); },30000); S.timers.push(t); }
   function flashExit(id,pct){ if(id==null)return; S.exits[id]={pct:pct}; scheduleExitClear(id); renderList(); }
   function sell(id){ var c=(S.live.filter(function(x){return x.id===id;})[0])||null;
-    var p=S.positions.filter(function(x){return x.state==="armed"&&(x.id===id||(c&&x.s===c.s));})[0];
+    var p=DeskMatch.findArmed(S.positions,c,id);
     if(!p)return; // button is disabled without a position; this is the guard
     if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
     p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
@@ -4049,7 +4053,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       var tx=await vc.drawForTrade(intentId,units); toast("Drawing "+usd(units)+" · "+esc(c.s)+"…");
       var rcpt=await tx.wait();
       if(rcpt&&rcpt.status===1){
-        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString()});
+        S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString(),mint:c.addr});
         v.available=v.available-units; v.outstanding=v.outstanding+units;
         renderPos(); renderList(); closeSheet(); toast("✓ "+c.s+" · "+usd(units)+" drawn to the rail"); }
       else { closeSheet(); toast("✕ draw reverted — nothing drawn."); }
