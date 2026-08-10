@@ -65,6 +65,16 @@
     // egress is blocked, so /radar/ws-status (connection state, parse rate,
     // raw samples) is the live gate — pin the shape there before trusting it.
     "PUMPPORTAL_WS_URL": "wss://pumpportal.fun/api/data",
+    // Board row 90: the subscriber moved to Railway (tape/) — Workers are
+    // request-scoped and hostile to long-lived sockets; pumptapeTrades sat in
+    // socket_down for days. "railway" stops the cron poking the (dormant) DO
+    // and lets /radar/tape-ingest carry the tape + its health heartbeat.
+    // Delete this var to fall back to the Durable Object subscriber.
+    // NOTE: the ingest route also needs the TAPE_INGEST_TOKEN secret set
+    // (npx wrangler secret put TAPE_INGEST_TOKEN) — same value as the Railway
+    // service's TAPE_INGEST_TOKEN variable. Until it is set the route answers
+    // 503 INGEST_NOT_CONFIGURED and the tape runs dry.
+    "TAPE_HOST": "railway",
     "DISCOVERY_BATCH": "900", // R-5: young tokens swept per tick; batched 30/request = <=30 req/tick, well under DexScreener 300 req/min
     "EXPIRE_HOURS": "24", // birth older than this without discovery -> status 'expired' (bulk sweep)
     "YOUNG_WINDOW_MIN": "30", // R-8 (2026-07-08): tightened 120->30 per the Architect - trading only cares about <30min coins; tape's own data (median time-to-peak 8min) supports it. TRADEOFF: true graduations (measured median gap 41min) mostly happen AFTER 30min and will now go unrecorded (token ages out of the poll window, sits watching until 24h auto-expire). Population-level graduation-rate stats are DEGRADED from here forward; tonight's validated priors (1.59% grad rate) stand as the last clean measurement.

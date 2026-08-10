@@ -20,6 +20,6 @@
     "test:scrub": "node keeper/test/scrub.test.mjs",
     "scrub": "node tools/scrub.mjs --check",
     "hooks:install": "git config core.hooksPath .githooks && echo 'pre-commit scrub armed (CI enforces it regardless)'",
-    "test": "node keeper/test/keeper.test.js && node keeper/test/rule-signature.test.js && node keeper/test/secret-resolve.test.js && node keeper/test/scrub.test.mjs && node keeper/test/desk-match.test.js"
+    "test": "node keeper/test/keeper.test.js && node keeper/test/rule-signature.test.js && node keeper/test/secret-resolve.test.js && node keeper/test/scrub.test.mjs && node keeper/test/desk-match.test.js && node tape/test/engine.test.js && node tape/test/ingest.test.mjs"
   }
 }
