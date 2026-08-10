@@ -716,6 +716,123 @@ export async function signRule({ mint, decimals, entryPrice, targetBps, hasStop 
   return r.json();
 }
 
+/// The cancel text the wallet signs. MUST match deskCancelPreimage() in
+/// worker/index.ts byte for byte — same contract as ruleMessage above, same
+/// lifted-source byte comparison in keeper/test/rule-signature.test.js.
+///
+/// Scoped to the RULE ID, not just owner+mint, and that is the replay guard:
+/// a captured cancel signature replayed later can only re-cancel the same
+/// already-cancelled row. A NEW rule on the same coin has a new id, so the old
+/// signature can never touch it. No nonce table needed server-side.
+function cancelMessage({ owner, mint, ruleId, nonce }) {
+  return (
+    "possessio.desk.cancel.v1\n" +
+    `owner:${owner}\n` +
+    `mint:${mint}\n` +
+    `ruleId:${ruleId}\n` +
+    `nonce:${nonce}`
+  );
+}
+
+/// Cancel the open rule on a coin — the ledger half of Force Sell. The wallet
+/// signs the instruction exactly like a rule: without a signature, anyone who
+/// knew a rule id could silently disarm someone else's exit.
+export async function cancelRule({ mint, ruleId = null }) {
+  if (!provider) throw new Error("no Solana provider");
+  const owner = pubkey.toBase58();
+  if (ruleId == null) {
+    // The card may predate receipt-keeping; the open rule is public feed data.
+    const r = await fetch("/api/desk/rules").then((x) => x.json()).catch(() => null);
+    const mine = ((r && r.positions) || []).find((p) => p.user === owner && p.mint === mint);
+    if (!mine) return { ok: true, cancelled: 0, note: "no open rule to cancel" };
+    ruleId = mine.id;
+  }
+  // Same alignment constraint as the rule: grow the ASCII text to a multiple
+  // of 3 bytes so its url-safe base64 wire form has no ragged tail.
+  let nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let text = cancelMessage({ owner, mint, ruleId, nonce });
+  while (text.length % 3 !== 0) {
+    nonce += "0";
+    text = cancelMessage({ owner, mint, ruleId, nonce });
+  }
+  try { window.deskReport?.("solana-cancel-attempt", "about to request the cancel signature", JSON.stringify({ mint, ruleId })); } catch {}
+  const res = await provider.signMessage(toWireMessage(text));
+  const signature = sigToBase58(res?.signature ?? res);
+  const r = await fetch("/api/desk/rules/cancel", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ owner, mint, ruleId: String(ruleId), nonce, signature }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    try { window.deskReport?.("solana-cancel-rejected", (err.error || "no body") + " (" + r.status + ")", JSON.stringify({ ruleId, signature, message: text })); } catch {}
+    throw new Error(err.error || `cancel rejected (${r.status})`);
+  }
+  return r.json();
+}
+
+/// Price the exit the user is about to sign — the reverse of quoteBuy.
+export async function quoteSell({ mint, amountRaw, slippageBps = 300 }) {
+  const q = await quote({
+    inputMint: mint, outputMint: SOL_MINT.toBase58(),
+    amount: String(amountRaw), slippageBps,
+  });
+  return {
+    solOut: Number(q.outAmount) / 1e9,
+    priceImpactPct: Number(q.priceImpactPct || 0) * 100,
+    route: (q.routePlan || []).map((r) => r.swapInfo.label).join(" -> "),
+    quote: q,
+  };
+}
+
+/// FORCE SELL — the manual downside exit the no-stop ruling leans on
+/// (Architect, 2026-08-01: "downside is a manual Force Sell"). Until
+/// 2026-08-10 this path did not exist: the console's button dead-ended in a
+/// stale Base-rail toast while the live position sat invisible in a Farcaster
+/// wallet that filters Token-2022 (MEASURED: account C3QH…PBuB, 1.46M tokens,
+/// on chain and absent from every host surface).
+///
+/// Sells the FULL balance, read from the chain at tap time — never from what
+/// the console remembers buying: partial fills, airdrops, or an earlier manual
+/// sale all make memory wrong and the chain right. Then cancels the open rule
+/// so the keeper's feed stays honest. The rule cancel failing does NOT undo
+/// the sell — the user's money comes first; the position simply reads
+/// "position is empty" at the keeper until the cancel lands.
+///
+/// The SPL delegate is deliberately NOT revoked here: one wallet prompt per
+/// consequence. signRevoke stays the standalone kill switch (K3's drill).
+export async function sellNow({ mint, ruleId = null, onStep = () => {} }) {
+  const state = await readDelegate({ mint });
+  const amountRaw = BigInt(state.balance || "0");
+  if (amountRaw <= 0n) {
+    // Nothing to sell is a STATE, not an error — the TOAD case: hand-closed
+    // elsewhere, rule still open. Offer the ledger cleanup alone.
+    onStep({ step: "cancel", text: "position already empty — clearing the rule" });
+    const c = await cancelRule({ mint, ruleId }).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+    return { ok: true, sold: false, empty: true, cancel: c };
+  }
+
+  // Same oversized-route retry as the buy, for the same measured reason —
+  // quoting is unsigned and free to re-run; sending is neither.
+  let q = null, sold = null, lastTooLarge = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    onStep({ step: "quote", text: attempt === 1 ? "pricing the exit…" : "route too large, retrying…" });
+    q = await quoteSell({ mint, amountRaw });
+    onStep({ step: "sell", text: `sell all for ~${q.solOut.toFixed(4)} SOL via ${q.route}`, quote: q });
+    try {
+      sold = await signBuy({ quoteResponse: q.quote }); // direction-agnostic: build+sign+send this quote
+      break;
+    } catch (e) {
+      if (e && e.code === "TX_TOO_LARGE" && attempt < 3) { lastTooLarge = e; continue; }
+      throw e;
+    }
+  }
+  if (!sold) throw (lastTooLarge || new Error("could not build a sendable exit route for this coin"));
+
+  onStep({ step: "cancel", text: "sold — clearing your exit rule" });
+  const cancel = await cancelRule({ mint, ruleId }).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+  return { ok: true, sold: true, signature: sold.signature, solOutEst: q.solOut, cancel };
+}
+
 /// The whole SOL pick, in the order the user experiences it. Each step reports
 /// through `onStep` so the sheet can narrate honestly — including the case
 /// where the buy lands and the delegate is declined, which leaves the user

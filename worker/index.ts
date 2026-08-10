@@ -93,6 +93,23 @@ function deskRulePreimage(r: {
   return new TextEncoder().encode(msg) as Uint8Array<ArrayBuffer>;
 }
 
+function deskCancelPreimage(r: { owner: string; mint: string; ruleId: string; nonce: string }): Uint8Array<ArrayBuffer> {
+  // MUST stay byte-identical to cancelMessage in public/miniapp-solana.js —
+  // keeper/test/rule-signature.test.js lifts both sources and compares bytes.
+  //
+  // Scoped to the RULE ID on purpose: a replayed cancel can only re-cancel the
+  // row it already cancelled; a fresh rule on the same coin has a fresh id the
+  // old signature never covered. That id-scoping IS the replay guard, so no
+  // server-side nonce ledger is needed.
+  const msg =
+    "possessio.desk.cancel.v1\n" +
+    `owner:${r.owner}\n` +
+    `mint:${r.mint}\n` +
+    `ruleId:${r.ruleId}\n` +
+    `nonce:${r.nonce}`;
+  return new TextEncoder().encode(msg) as Uint8Array<ArrayBuffer>;
+}
+
 /// Verify an Ed25519 signature against a Solana pubkey using WebCrypto, which
 /// the Workers runtime supports natively — no dependency, and the verification
 /// runs in the runtime rather than in JS we would have to audit ourselves.
@@ -921,6 +938,42 @@ export default {
       }
 
       return json({ error: "METHOD" }, 405);
+    }
+
+    // CANCEL — the ledger half of Force Sell (2026-08-10). Owner-signed, like
+    // the rule itself: without a signature, anyone who knew a rule id could
+    // silently disarm someone else's exit. The only prior cancel path was
+    // implicit replacement on re-arm, which forced a user out of a position to
+    // get out of a rule.
+    if (pathname === "/api/desk/rules/cancel") {
+      const db = env.COUNCIL_DB;
+      if (!db) return json({ error: "COUNCIL_DB_UNBOUND" }, 503);
+      if (request.method !== "POST") return json({ error: "METHOD" }, 405);
+      let b: any;
+      try { b = await request.json(); } catch { return json({ error: "BAD_JSON" }, 400); }
+      const { owner, mint, ruleId, nonce, signature } = b || {};
+      if (typeof owner !== "string" || !isBase58Pubkey(owner)) return json({ error: "BAD_OWNER" }, 400);
+      if (typeof mint !== "string" || !isBase58Pubkey(mint)) return json({ error: "BAD_MINT" }, 400);
+      // ids are D1 rowids serialized as strings; bound tightly since this
+      // lands in a WHERE against the shared ledger.
+      if (typeof ruleId !== "string" || !/^\d{1,12}$/.test(ruleId)) return json({ error: "BAD_RULE_ID" }, 400);
+      if (typeof nonce !== "string" || !nonce.length || nonce.length > 64) return json({ error: "BAD_NONCE" }, 400);
+      if (typeof signature !== "string" || signature.length > 200) return json({ error: "BAD_SIGNATURE" }, 400);
+
+      const preimage = deskCancelPreimage({ owner, mint, ruleId, nonce });
+      let verified = false;
+      try {
+        verified = await verifyEd25519(owner, signature, preimage);
+      } catch { return json({ error: "BAD_SIGNATURE" }, 400); }
+      if (!verified) return json({ error: "SIGNER_MISMATCH" }, 401);
+
+      // Owner and mint are in the WHERE as well as the signature: even a valid
+      // signature over someone else's rule id cancels nothing.
+      const r = await db
+        .prepare("UPDATE desk_rules SET status = 'cancelled' WHERE id = ?1 AND owner = ?2 AND mint = ?3 AND status = 'open'")
+        .bind(Number(ruleId), owner, mint)
+        .run();
+      return json({ ok: true, cancelled: r.meta.changes ?? 0 });
     }
 
     // CLIENT ERROR SINK — so a failure on a phone stops being a screenshot.

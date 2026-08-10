@@ -420,4 +420,67 @@ t("owner is the VERIFIED signer, never a field copied from the request", () => {
     "a failed verification must refuse the write");
 });
 
+// ── THE CANCEL CONTRACT (2026-08-10) — same class, same stakes ─────────────
+//
+// Force Sell's ledger half. The console signs a cancel; the worker rebuilds
+// the preimage and verifies. One byte of drift and the user's coins sell but
+// the rule refuses to clear — a sale that looks like a failure, in production,
+// after real money moved.
+const workerCancelPreimage = lift(WORKER, "deskCancelPreimage", "r");
+const miniCancelMessage = lift(MINIAPP, "cancelMessage", "{ owner, mint, ruleId, nonce }");
+const CANCEL = { owner: RULE.owner, mint: RULE.mint, ruleId: "5", nonce: "1786400000000-cx7q2z00" };
+
+t("console and worker build the SAME bytes for the same cancel", () => {
+  const a = Buffer.from(workerCancelPreimage(CANCEL));
+  const b = Buffer.from(new TextEncoder().encode(miniCancelMessage(CANCEL)));
+  assert.strictEqual(b.toString("hex"), a.toString("hex"),
+    `cancel preimages differ:\n  worker: ${JSON.stringify(a.toString())}\n  console: ${JSON.stringify(b.toString())}`);
+});
+
+t("the cancel is scoped to the RULE ID — that scoping is the replay guard", () => {
+  const text = Buffer.from(workerCancelPreimage(CANCEL)).toString();
+  assert.ok(text.includes(`ruleId:${CANCEL.ruleId}\n`), "the signed bytes must name the rule id");
+  assert.notStrictEqual(
+    Buffer.from(workerCancelPreimage({ ...CANCEL, ruleId: "6" })).toString("hex"),
+    Buffer.from(workerCancelPreimage(CANCEL)).toString("hex"),
+    "a different rule id must produce different signed bytes — else a captured cancel replays onto new rules");
+});
+
+t("a signed cancel verifies with real Ed25519, and one flipped field does not", () => {
+  const kp = Keypair.generate();
+  const owner = b58.encode(kp.publicKey.toBytes());
+  const c = { ...CANCEL, owner };
+  const sig = nacl.sign.detached(workerCancelPreimage(c), kp.secretKey);
+  assert.ok(nacl.sign.detached.verify(new Uint8Array(Buffer.from(new TextEncoder().encode(miniCancelMessage(c)))), sig, kp.publicKey.toBytes()),
+    "the console's bytes must verify under the worker's contract");
+  assert.ok(!nacl.sign.detached.verify(workerCancelPreimage({ ...c, ruleId: "9" }), sig, kp.publicKey.toBytes()),
+    "a signature over one rule id must not verify for another");
+});
+
+t("the cancel text survives the host's lenient decode intact", () => {
+  // Same adversary as the rule: the host url-safe-base64-decodes the incoming
+  // string, discarding foreign characters. cancelRule pads its nonce to a
+  // 3-byte boundary exactly like signRule; an aligned wire form must decode to
+  // the exact UTF-8 of the text.
+  let nonce = CANCEL.nonce, text = miniCancelMessage({ ...CANCEL, nonce });
+  while (text.length % 3 !== 0) { nonce += "0"; text = miniCancelMessage({ ...CANCEL, nonce }); }
+  const decoded = hostLenientDecode(toWireMessage(text));
+  assert.strictEqual(Buffer.from(decoded).toString("hex"),
+    Buffer.from(new TextEncoder().encode(text)).toString("hex"),
+    "the host's decode must yield exactly the cancel text's UTF-8");
+});
+
+t("cancel route: verified before the write, owner+mint in the WHERE, open-only", () => {
+  const w = WORKER.slice(WORKER.indexOf('pathname === "/api/desk/rules/cancel"'));
+  const verify = w.indexOf("verifyEd25519(");
+  const update = w.indexOf("UPDATE desk_rules SET status = 'cancelled'");
+  assert.ok(verify > -1 && update > verify, "the signature must be checked before the write");
+  assert.ok(/if \(!verified\) return json\(\{ error: "SIGNER_MISMATCH" \}, 401\)/.test(w),
+    "a failed verification must refuse the write");
+  assert.ok(/id = \?1 AND owner = \?2 AND mint = \?3 AND status = 'open'/.test(w),
+    "even a valid signature must only cancel the signer's own OPEN rule by id");
+  assert.ok(w.includes("/^\\d{1,12}$/"),
+    "the rule id must be bounded digits before it reaches the WHERE");
+});
+
 console.log(`\n${pass} checks passed`);
