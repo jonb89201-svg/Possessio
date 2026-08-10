@@ -290,10 +290,19 @@ export function buildTolledApp(env: Env) {
     // Screen 0 — the early radar (0-4min, crossed $4k). Same ratified public
     // surface: which coins, never entry/exit prices or size.
     const early = await db.prepare(
+      // cur_mc/cur_ms (2026-08-10): the LIVE price for the card. screenScan has
+      // written one mc_ticks sample per minute for every watching early all
+      // along — but this route only served first_hit_mc, so the desk rendered
+      // birth prices forever (+0% on every card; MEASURED: 52 rows, zero mc
+      // changes across 75s). Serve the freshest tick; no schema change needed.
       `SELECT token_address, symbol, name, first_hit_ms, first_hit_mc, age_sec_at_hit,
               peak_mc, play_outcome, play_exit_mc, rungs_filled, levels, compound_mult,
               ws, t4k_ms, buys_hit, sells_hit, sol_net_hit, uniq_buyers_hit, top_buyer_share,
               graduated_ms, dex_mc, dex_peak_mc, dex_liq_usd, dex_vol_h1, dex_last_ms,
+              (SELECT m.mc FROM mc_ticks m WHERE m.token_address=earlies.token_address
+                ORDER BY m.ms DESC LIMIT 1) AS cur_mc,
+              (SELECT m.ms FROM mc_ticks m WHERE m.token_address=earlies.token_address
+                ORDER BY m.ms DESC LIMIT 1) AS cur_ms,
               ${imgCol("earlies")},
               (SELECT creator FROM births b WHERE b.token_address=earlies.token_address) AS creator,
               (SELECT dev_prior_launches FROM candidates cc WHERE cc.token_address=earlies.token_address) AS dev_prior_launches

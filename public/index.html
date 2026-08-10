@@ -3624,6 +3624,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
     ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[]};
+  // POSITIONS SURVIVE THE SESSION (2026-08-10). They lived only in memory, so
+  // closing the app forgot every trade — which, combined with a host wallet
+  // that filters Token-2022, left a real position with no visible evidence
+  // anywhere. The ledger of record is the chain + desk_rules; this is the
+  // card's memory of ids, receipts and entries, capped and best-effort.
+  var POS_KEY="dk_positions_v1";
+  function savePos(){ try{ localStorage.setItem(POS_KEY, JSON.stringify(S.positions.slice(0,50))); }catch(e){} }
+  function loadPos(){ try{ var raw=localStorage.getItem(POS_KEY); if(!raw)return;
+    var arr=JSON.parse(raw); if(Array.isArray(arr)) S.positions=arr.filter(function(p){return p&&typeof p==="object"&&typeof p.s==="string";}).slice(0,50);
+  }catch(e){} }
+  loadPos();
 
   function renderTicks(){ $("#dk-ticks").innerHTML=chains.map(function(c){
     return '<div class="dk-tick"><div class="sym">'+c.sym+'/USD</div><div class="px dk-mono" id="dk-px-'+c.sym+'">$'+money(c.px)+'</div>'+
@@ -3670,7 +3681,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // earlies row (early: first_hit_mc/dex_mc/first_hit_ms) into one desk coin shape.
   function mapRow(c){
     var entry=Number(c.entry_mc!=null?c.entry_mc:c.first_hit_mc)||0;
-    var now=Number(c.last_mc!=null?c.last_mc:(c.dex_mc!=null?c.dex_mc:(c.first_hit_mc!=null?c.first_hit_mc:c.entry_mc)))||entry;
+    // cur_mc: the freshest mc_ticks sample (earlies) — before this, early rows
+    // rendered first_hit_mc forever and every card read +0% (board finding,
+    // 2026-08-10). Preference: tracked candidate mc, then the live tick, then
+    // the post-graduation DEX read, then the birth price as last resort.
+    var now=Number(c.last_mc!=null?c.last_mc:(c.cur_mc!=null?c.cur_mc:(c.dex_mc!=null?c.dex_mc:(c.first_hit_mc!=null?c.first_hit_mc:c.entry_mc))))||entry;
     var take=Number(c.strat_take)===1, rug=Number(c.gate_rug)===1, oc=c.outcome||c.play_outcome||"";
     var read=rug?["fast","rug-gate"]:take?["go","◆ pick"]:oc==="target"?["go","▲ target"]:(oc==="stop"||oc==="timestop")?["fast","exited"]:oc==="live"?["flow","live"]:["reading","screening"];
     return {id:String(c.token_address||("row-"+(++S.seq))), s:(c.symbol||"?"), n:(c.name||"").slice(0,24),
@@ -3690,12 +3705,49 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // then clears after 30s.
   function scheduleExitClear(id){ if(id==null)return; var t=setTimeout(function(){ delete S.exits[id]; renderList(); },30000); S.timers.push(t); }
   function flashExit(id,pct){ if(id==null)return; S.exits[id]={pct:pct}; scheduleExitClear(id); renderList(); }
+  var sellArm={id:null,t:0};
   function sell(id){ var c=(S.live.filter(function(x){return x.id===id;})[0])||null;
     var p=DeskMatch.findArmed(S.positions,c,id);
     if(!p)return; // button is disabled without a position; this is the guard
+    if(p.live&&p.selfCustody&&p.ch==="sol"){
+      // THE REAL FORCE SELL (2026-08-10). Until now this branch fell into the
+      // stale Base-rail toast below — the only downside control the no-stop
+      // ruling promises, dead on the only positions that exist.
+      // TWO TAPS ~5s apart instead of a sheet: real money leaves on this tap,
+      // so one tap is too cheap — but the control must stay on the card, not
+      // behind a flow.
+      var nw=Date.now();
+      if(sellArm.id!==p.id||nw-sellArm.t>5000){ sellArm={id:p.id,t:nw}; toast("Tap Force Sell again to SELL EVERYTHING at market."); return; }
+      sellArm={id:null,t:0};
+      forceSellSol(p);
+      return;
+    }
     if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
     p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
-    renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
+    savePos(); renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
+  // Sell the WHOLE position at market from the user's own wallet, then clear
+  // the rule. The sale is the user's money and comes first; a failed rule
+  // cancel is reported, never allowed to look like a failed sale.
+  async function forceSellSol(p){
+    var M=window.PossessioMiniApp;
+    if(!M||!M.ready||!M.sellNow){ toast("Selling needs the Farcaster app — open Possessio there."); return; }
+    try{
+      var res=await M.sellNow({ mint:p.mint, ruleId:p.ruleId||null,
+        onStep:function(s){ if(s&&s.text) toast(s.text); } });
+      p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
+      if(res.sold){ p.sellSig=res.signature;
+        toast("✕ SOLD "+p.s+" for ~"+(res.solOutEst!=null?res.solOutEst.toFixed(4):"?")+" SOL"+
+          (res.cancel&&res.cancel.ok===false?" · rule cancel failed (keeper just sees it empty)":""));
+      } else {
+        toast("Position was already empty — rule cleared."); // the TOAD case
+      }
+      if(res.cancel&&res.cancel.ok===false){ window.deskReport&&window.deskReport("solana-cancel-after-sell", res.cancel.error||"cancel failed", JSON.stringify({mint:p.mint,ruleId:p.ruleId||null})); }
+      savePos(); renderPos(); renderList(); flashExit(p.id, p.exitPnl);
+    }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
+      window.deskReport&&window.deskReport("solana-force-sell", m, (e&&e.stack)||null);
+      if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing sold.");
+      else toast("Sell failed: "+m.slice(0,90)); }
+  }
   function coinHTML(c){ var up=c.now>=c.entry; var qid=esc(c.id); var hp=hasPos(c); var ex=S.exits[c.id];
     var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
     return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
@@ -4006,10 +4058,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // entry is the FILLED price from the swap, not the screen price that
         // was tapped: the stop is measured from what the user actually paid.
         var entry=res.entryPrice||c.now;
+        // RECEIPTS TRAVEL WITH THE POSITION (2026-08-10). The Farcaster wallet
+        // filters Token-2022 head to toe — asset list, activity, everything —
+        // so on 2026-08-10 a real 1.46M-token position looked like it never
+        // happened until the chain was queried by hand. The tx signatures are
+        // returned right here at arm time; keeping them is what lets the card
+        // prove the trade to its own owner.
         S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:entry,now:c.now,
           target:entry*(1+bps/10000),stop:entry*0.9,state:"armed",exitPnl:0,
-          born:Date.now(),live:true,selfCustody:true,mint:c.addr,ruleId:res.rule&&res.rule.id});
-        renderPos(); renderList(); closeSheet();
+          born:Date.now(),live:true,selfCustody:true,mint:c.addr,ruleId:res.rule&&res.rule.id,
+          buySig:res.buy&&res.buy.signature,delSig:res.delegate&&res.delegate.signature});
+        savePos(); renderPos(); renderList(); closeSheet();
         toast("✓ "+c.s+" — yours, and the stop is armed");
       } else {
         // The buy landed and the delegate did not. Say so plainly: the user
@@ -4054,6 +4113,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       var rcpt=await tx.wait();
       if(rcpt&&rcpt.status===1){
         S.positions.unshift({id:c.id,s:c.s,ch:c.ch,bps:bps,entry:c.now,now:c.now,target:c.now*(1+bps/10000),stop:c.now*0.9,state:"armed",exitPnl:0,born:Date.now(),live:true,units:units.toString(),intentId:intentId.toString(),mint:c.addr});
+        savePos();
         v.available=v.available-units; v.outstanding=v.outstanding+units;
         renderPos(); renderList(); closeSheet(); toast("✓ "+c.s+" · "+usd(units)+" drawn to the rail"); }
       else { closeSheet(); toast("✕ draw reverted — nothing drawn."); }
@@ -4080,6 +4140,21 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var armedN=S.positions.filter(function(p){return !p.live&&p.state==="armed";}).length;
     $("#dk-posnote").textContent=liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed");
     el.innerHTML=S.positions.map(function(p){ var armed=p.state==="armed";
+      if(p.live&&p.selfCustody){
+        // SOL SELF-CUSTODY — until 2026-08-10 these fell into the Base branch
+        // below and rendered as "BASE · at rail · drawn $NaN": the panel lying
+        // about the one position class that actually exists. The receipts row
+        // is the antidote to a host wallet that filters Token-2022: the card
+        // itself proves the trade on chain, one tap.
+        var rx=function(sig,label){ return sig?'<a href="https://solscan.io/tx/'+esc(sig)+'" target="_blank" rel="noopener" style="color:var(--dblue);font-weight:600">'+label+' ↗</a>':''; };
+        var receipts=[rx(p.buySig,"buy"),rx(p.delSig,"grant"),rx(p.sellSig,"sell")].filter(Boolean).join(" · ");
+        var sPnl=armed?null:p.exitPnl; var sCls=armed?"armed":(p.state==="hit"?"hit":"stopped");
+        var sTxt=armed?"◆ armed":(p.state==="hit"?"✓ +"+p.exitPnl+"%":"✕ "+p.exitPnl+"%");
+        return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag sol" style="vertical-align:1px">SOL</span></div>'+
+          '<div class="pmeta">yours, in your wallet · target +'+(p.bps/100)+'% · no stop · '+(armed?'keeper watching':'closed')+
+          (receipts?'<br>'+receipts:'')+'</div></div>'+
+          '<div class="ptarget"><span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span></div>'+
+          '<div class="pstate '+sCls+'">'+sTxt+'</div></div>'; }
       if(p.live){ return '<div class="prow"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">BASE</span></div>'+
         '<div class="pmeta">drawn '+usd(p.units)+' · target +'+(p.bps/100)+'% · no stop · exit pending (keeper)</div></div>'+
         '<div class="ptarget"><span style="color:var(--dink-faint)">at rail</span></div><div class="pstate armed">◆ open</div></div>'; }
@@ -4191,7 +4266,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       try{ var savedVault=localStorage.getItem("possessio_desk_vault");
         if(savedVault&&!S.connected){ var ai=$("#dk-addr");
           if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
-      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); },
+      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, sell:sell, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
@@ -4442,6 +4517,7 @@ try {
     }, {
       buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy, solBalance: M.solBalance,
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,
+      sellNow: M.sellNow, cancelRule: M.cancelRule,
     });
     if (window.dbgLog) window.dbgLog("[MINIAPP] " + JSON.stringify(res));
     if (!window.PossessioMiniApp.ready && window.deskReport) {
