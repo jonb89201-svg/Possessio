@@ -25,7 +25,7 @@
 const { TapeEngine } = require("./engine");
 
 const WS_URL = process.env.PUMPPORTAL_WS_URL || "wss://pumpportal.fun/api/data";
-const API_KEY = process.env.PUMPPORTAL_API_KEY || "";
+const API_KEY = process.env.PUMPPORTAL_API_KEY || ""; // scrub-allow:named-secret-assignment — an env read by NAME; the value never touches the repo
 const FEED_URL = process.env.PUMPFUN_FEED_URL ||
   "https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=true";
 const INGEST_URL = process.env.INGEST_URL ||
