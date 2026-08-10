@@ -3704,6 +3704,20 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       born:Number(c.qualified_ms!=null?c.qualified_ms:c.first_hit_ms)||Date.now(), read:read, hot:take, addr:c.token_address||"",
       dev:(c.creator||""), devN:(c.dev_prior_launches!=null?Number(c.dev_prior_launches):null) }; }
   function shortAddr(a){ return a?(a.slice(0,4)+"…"+a.slice(-4)):""; }
+  // JUST LISTED rows (2026-08-10): the DEX-pair birth moment — the screen the
+  // Architect hunts on (dexscreener/solana/newest), served from our own
+  // births ledger. Entry = mc at discovery, so the card's % reads "since it
+  // listed". liq arrives via the DexScreener refresh and feeds the ratio
+  // badge (the ≥30% liq/mc cohort produced 43 of 54 runners; thin cohorts 0).
+  function mapListing(c){
+    var ms=Number(c.listed_ms)||Date.now();
+    var mc=Number(c.mc_at_discovery_usd!=null?c.mc_at_discovery_usd:c.mc_peak_usd)||0;
+    if(!c.token_address)return null;
+    return {id:String(c.token_address), s:String(c.symbol||"?").slice(0,10), n:String(c.name||"").slice(0,24),
+      ch:"sol", ico:"🌱", img:c.img||null, entry:mc||1, now:mc||1, peak:mc||1,
+      born:ms, read:["go","🌱 just listed"+(c.graduation_dex?(" · "+c.graduation_dex):"")], hot:false,
+      addr:c.token_address, dev:(c.creator||""), devN:null, listed:true};
+  }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
@@ -3809,7 +3823,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
       '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
       '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
-      '<span class="age">'+ago(c.born)+'</span></div>'+
+      '<span class="age">'+ago(c.born)+'</span>'+
+      // The liq/mc ratio badge — graded 2026-08-10 against a month of
+      // graduations: the ≥30% cohort produced 43 of 54 runners (+50% or
+      // better); the thinner cohorts produced zero. Green when deep.
+      (c.liq&&c.now?('<span class="age" style="font-weight:700;color:'+((c.liq/c.now)>=0.30?'var(--dgreen,#189a4a)':'var(--dink-faint)')+'">L '+Math.round(c.liq/c.now*100)+'%</span>'):'')+
+      '</div>'+
       '<div class="read '+c.read[0]+'">'+esc(c.read[1])+'</div>'+
       (c.addr?('<div class="caline">'+
         '<button class="cabtn" data-ca="'+esc(c.addr)+'" onclick="Desk.copyCA(this)" title="Copy contract address">⧉ '+esc(shortAddr(c.addr))+'</button>'+
@@ -3876,11 +3895,15 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var pin=S.pinned||[], seenPin={};
     pin.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var noPin=function(c){ return !seenPin[((c&&c.addr)||"").toLowerCase()]; };
+    // Just-listed rows lead the feed after the user's own pins — the DEX-pair
+    // birth is the hunting window, so it outranks the radar's slower screens.
+    var lst=(S.listRows||[]).filter(noPin).slice(0,6);
+    lst.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
     if(!sol.length&&!base.length){
-      if(pin.length){ S.live=pin.slice(); renderList(); return; }
+      if(pin.length||lst.length){ S.live=pin.concat(lst); renderList(); return; }
       if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=pin.slice(), si=0, bi=0;
+    var out=pin.concat(lst), si=0, bi=0;
     while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
@@ -3926,18 +3949,21 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){ toast("Lookup failed: "+String(e&&e.message||e).slice(0,80)); }
   }
   function unpinMint(addr){ S.pinned=S.pinned.filter(function(x){return x.addr.toLowerCase()!==String(addr).toLowerCase();}); mergeRender(); }
-  // Pinned prices stay live on the Base screen's cadence — one batched call
-  // for every pin (the endpoint takes comma-separated addresses).
+  // Pinned + just-listed prices stay live on the Base screen's cadence — one
+  // batched call for all of them (the endpoint takes comma-separated
+  // addresses, up to 30). liq rides along and feeds the ratio badge.
   async function refreshPinned(){
-    if(!(S.pinned||[]).length)return;
+    var rows=(S.pinned||[]).concat(S.listRows||[]).slice(0,30);
+    if(!rows.length)return;
     try{
-      var addrs=S.pinned.map(function(x){return x.addr;}).join(",");
+      var addrs=rows.map(function(x){return x.addr;}).join(",");
       var r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+addrs,{cache:"no-store"}); if(!r.ok)return;
       var d=await r.json();
-      S.pinned.forEach(function(row){
+      rows.forEach(function(row){
         var best=bestPairFor(row.addr,(d&&d.pairs)||[]);
         if(best){ var mc=Number(best.marketCap!=null?best.marketCap:best.fdv)||0;
-          if(mc>0){ row.now=mc; row.peak=Math.max(row.peak,mc); } }
+          if(mc>0){ if(!(row.entry>1))row.entry=mc; row.now=mc; row.peak=Math.max(row.peak,mc); }
+          row.liq=Number((best.liquidity&&best.liquidity.usd)||0)||null; }
       });
       renderList();
     }catch(e){}
@@ -3958,6 +3984,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // current AND carry images; their raw_birth_json is still around). recent is
         // resolved history (old, image already space-cleaned) — last-resort fill only,
         // so the list is never blank in a quiet market.
+        S.listRows=((d&&d.listings)||[]).map(mapListing).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);

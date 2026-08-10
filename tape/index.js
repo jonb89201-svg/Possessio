@@ -79,6 +79,10 @@ function connect() {
     // subscribeNewToken is FREE and keyless; it carries the dev buy on every
     // create event. Trade subs are per-coin, sent on each birth when keyed.
     ws.send(JSON.stringify({ method: "subscribeNewToken" }));
+    // Migrations: the DEX-pair birth, the feed's "just listed" trigger.
+    // Harmless if the upstream refuses it keyless — the discovery scan
+    // remains the per-minute fallback stamp either way.
+    ws.send(JSON.stringify({ method: "subscribeMigration" }));
   });
   ws.addEventListener("message", (ev) => {
     lastMsgMs = Date.now();

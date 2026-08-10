@@ -98,6 +98,15 @@ class TapeEngine {
       return out;
     }
 
+    // THE MIGRATION (2026-08-10): the coin's DEX pair is born — the exact
+    // moment the Architect's graded edges hunt in. Stamped into births via
+    // the ingest so the feed's "just listed" section is sub-second instead of
+    // discovery-scan-late. PumpPortal announces it on subscribeMigration.
+    if (txType === "migrate" || txType === "migration") {
+      out.effects.push({ k: "listing", p: [mint, now, String(j.pool ?? j.dex ?? "pumpswap").slice(0, 30)] });
+      return out;
+    }
+
     if (txType !== "buy" && txType !== "sell") return out;
     const c = this.coins.get(mint);
     if (!c) return out; // trade for a coin we never saw born — skip
