@@ -3725,6 +3725,19 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
     p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
     savePos(); renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
+  // Force Sell FROM THE POSITIONS PANEL (2026-08-10, same-day finding): the
+  // coin card ages off the 15-row screen in minutes, taking the only Force
+  // Sell control with it — but the POSITION is the durable object, so the
+  // button lives on its row too. Same two-tap arm, keyed by mint.
+  function sellPos(mint){
+    var p=S.positions.filter(function(x){return x.state==="armed"&&x.selfCustody&&x.mint===mint;})[0];
+    if(!p)return;
+    var nw=Date.now();
+    if(sellArm.id!==p.id||nw-sellArm.t>5000){ sellArm={id:p.id,t:nw}; toast("Tap Force Sell again to SELL EVERYTHING at market."); renderPos();
+      S.timers.push(setTimeout(function(){ renderPos(); },5300)); return; } // the ⚠ label reverts when the arm window closes
+    sellArm={id:null,t:0};
+    forceSellSol(p);
+  }
   // Sell the WHOLE position at market from the user's own wallet, then clear
   // the rule. The sale is the user's money and comes first; a failed rule
   // cancel is reported, never allowed to look like a failed sale.
@@ -4136,9 +4149,14 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(any){ renderPos(); renderList(); } }
   function renderPos(){ var el=$("#dk-pos");
     if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
-    var liveN=S.positions.filter(function(p){return p.live&&p.state==="armed";}).length;
+    // Self-custody positions are NOT "at rail" — that label described the Base
+    // vault flow and miscounted every SOL position (measured on the phone,
+    // 2026-08-10: "3 at rail · exit pending" over three keeper-watched coins).
+    var selfN=S.positions.filter(function(p){return p.live&&p.selfCustody&&p.state==="armed";}).length;
+    var liveN=S.positions.filter(function(p){return p.live&&!p.selfCustody&&p.state==="armed";}).length;
     var armedN=S.positions.filter(function(p){return !p.live&&p.state==="armed";}).length;
-    $("#dk-posnote").textContent=liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed");
+    $("#dk-posnote").textContent=selfN?(selfN+" armed · keeper watching"+(liveN?(" · "+liveN+" at rail"):"")):
+      (liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed"));
     el.innerHTML=S.positions.map(function(p){ var armed=p.state==="armed";
       if(p.live&&p.selfCustody){
         // SOL SELF-CUSTODY — until 2026-08-10 these fell into the Base branch
@@ -4148,12 +4166,23 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // itself proves the trade on chain, one tap.
         var rx=function(sig,label){ return sig?'<a href="https://solscan.io/tx/'+esc(sig)+'" target="_blank" rel="noopener" style="color:var(--dblue);font-weight:600">'+label+' ↗</a>':''; };
         var receipts=[rx(p.buySig,"buy"),rx(p.delSig,"grant"),rx(p.sellSig,"sell")].filter(Boolean).join(" · ");
-        var sPnl=armed?null:p.exitPnl; var sCls=armed?"armed":(p.state==="hit"?"hit":"stopped");
+        // The mint travels with the row: the host wallet can't find these
+        // coins by name (it filters Token-2022), so the copyable address is
+        // how an owner looks their own position up anywhere else.
+        var mintLine=p.mint?('<button class="cabtn" data-ca="'+esc(p.mint)+'" onclick="Desk.copyCA(this)" title="Copy token address">⧉ '+esc(shortAddr(p.mint))+'</button>'+
+          ' <a class="dexlink" href="https://solscan.io/token/'+esc(p.mint)+'" target="_blank" rel="noopener">Solscan ↗</a>'):'';
+        var sCls=armed?"armed":(p.state==="hit"?"hit":"stopped");
         var sTxt=armed?"◆ armed":(p.state==="hit"?"✓ +"+p.exitPnl+"%":"✕ "+p.exitPnl+"%");
+        // Force Sell on the ROW — the durable home for the only downside
+        // control. The card copy of this button dies when the coin ages off
+        // the screen list; a position outlives its card.
+        var armedTap=sellArm.id===p.id&&(Date.now()-sellArm.t)<=5000;
+        var fsBtn=armed?('<button class="forcebtn" style="margin-top:4px" onclick="Desk.sellPos(\''+esc(p.mint)+'\')">'+(armedTap?'⚠ Tap again to SELL ALL':'Force Sell')+'</button>'):'';
         return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag sol" style="vertical-align:1px">SOL</span></div>'+
           '<div class="pmeta">yours, in your wallet · target +'+(p.bps/100)+'% · no stop · '+(armed?'keeper watching':'closed')+
+          (mintLine?'<br>'+mintLine:'')+
           (receipts?'<br>'+receipts:'')+'</div></div>'+
-          '<div class="ptarget"><span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span></div>'+
+          '<div class="ptarget"><span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span>'+fsBtn+'</div>'+
           '<div class="pstate '+sCls+'">'+sTxt+'</div></div>'; }
       if(p.live){ return '<div class="prow"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">BASE</span></div>'+
         '<div class="pmeta">drawn '+usd(p.units)+' · target +'+(p.bps/100)+'% · no stop · exit pending (keeper)</div></div>'+
@@ -4269,7 +4298,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, sell:sell, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
+    pick:pick, sell:sell, sellPos:sellPos, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
     solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
 })();
