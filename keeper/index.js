@@ -38,7 +38,8 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const usd = (a) => (Number(a) / 1e6).toFixed(2);
 
-const exited = new Set();   // ids closed this run; a second sell is never attempted
+const exited = new Set();   // ids SOLD this run; a second sell is never attempted
+const stoodDown = new Set(); // log-once for not-authorised readings — NEVER a blacklist
 
 function loadKeeper() {
   if (!KEEPER_KEY) return null;
@@ -165,10 +166,22 @@ async function cycle({ connection, keeper, source, readDelegate = readLiveDelega
     // authority over this exact position. A revoke lands here immediately.
     const live = await readDelegate({ connection, owner: pos.user, mint: pos.mint, keeper: keeperPk });
     if (!live.authorised) {
-      log(`  [${pos.id}] no live delegate for this keeper (revoked, spent, or never granted) — standing down`);
-      exited.add(String(pos.id));
+      // A STAND-DOWN IS A READING, NOT A VERDICT (2026-08-10, the fluffy
+      // fire). This used to feed the double-sell blacklist — one line, and it
+      // made every rule mortal at birth: readLiveDelegate returns REFUSED for
+      // a transient RPC failure or for the seconds after arming when this
+      // node hasn't seen the approve yet, and a rule whose FIRST read hit
+      // that window was ignored forever. Measured in production: rule 23
+      // (+1% target) sat armed with tokens held while price crossed its
+      // target by over 400% and the keeper never looked again. Standing down
+      // is per-cycle; the chain is re-read next tick. Logged once per id.
+      if (!stoodDown.has(String(pos.id))) {
+        log(`  [${pos.id}] no live delegate for this keeper (revoked, not yet visible, or RPC failed) — standing down THIS CYCLE, will re-read`);
+        stoodDown.add(String(pos.id));
+      }
       continue;
     }
+    stoodDown.delete(String(pos.id));
     authorised++;
     if (BigInt(live.amount) === 0n) { log(`  [${pos.id}] position is empty — nothing to sell`); continue; }
 

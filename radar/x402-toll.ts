@@ -333,6 +333,25 @@ export function buildTolledApp(env: Env) {
           AND (play_outcome IS NOT NULL OR first_hit_ms < ?1)
         GROUP BY conv_tag`
     ).bind(convResolvedBefore).all();
+    // JUST LISTED (2026-08-10, Architect: "dexscreener/solana/pumpfun/newest —
+    // that's the exact thing we need on our feed"). Births whose DEX pair was
+    // first sighted in the last 20 minutes, newest first — the hunting ground
+    // where tonight's graded edges live (dip-flip entries, the ≥30% liq/mc
+    // cohort that produced 43 of 43 runners). curve_pair_seen_ms is the
+    // earliest stamp (discoveryScan per-minute today; the tape's PumpPortal
+    // migration stream sub-second once keyed) with dexscreener_first_seen_ms
+    // as the completed-discovery fallback.
+    const listings = await db.prepare(
+      `SELECT token_address, symbol, name, creator,
+              COALESCE(curve_pair_seen_ms, dexscreener_first_seen_ms) AS listed_ms,
+              graduation_dex, mc_at_discovery_usd, mc_peak_usd,
+              (SELECT CASE WHEN json_valid(b2.raw_birth_json)
+                           THEN json_extract(b2.raw_birth_json,'$.image_uri') END
+                 FROM births b2 WHERE b2.token_address=births.token_address) AS img
+         FROM births
+        WHERE COALESCE(curve_pair_seen_ms, dexscreener_first_seen_ms) >= ?1
+        ORDER BY listed_ms DESC LIMIT 12`
+    ).bind(Date.now() - 20 * 60_000).all();
     // The oscillation tape for everything currently on screen. 25min covers
     // the longest possible early->qualify->track life; closed coins age out.
     const ticksRaw = await db.prepare(
@@ -347,6 +366,7 @@ export function buildTolledApp(env: Env) {
       live: live.results,
       recent: recent.results,
       early: early.results,
+      listings: listings.results,
       earlyPlay: earlyPlay.results,
       scorecard: scorecard.results,
       btc,

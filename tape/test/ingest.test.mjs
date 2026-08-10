@@ -77,6 +77,17 @@ await t("a valid batch executes the EXACT pumptape statements, params bound 1:1"
   assert.match(TAPE_SQL.hit.sql, /ON CONFLICT\(token_address\) DO UPDATE/);
   assert.match(TAPE_SQL.level1.sql, /play_outcome IS NULL/, "level1 must never overwrite an outcome");
   assert.match(TAPE_SQL.cycle.sql, /INSERT INTO early_cycles/);
+  // the listing stamp must be WRITE-ONCE and must not touch discovery's fields
+  assert.match(TAPE_SQL.listing.sql, /COALESCE\(curve_pair_seen_ms, \?2\)/, "the tape's stamp never overwrites an earlier sighting");
+  assert.ok(!/status|gap_ms|dexscreener_first_seen_ms/.test(TAPE_SQL.listing.sql),
+    "the tape stamps the moment; discoveryScan completes the record");
+});
+
+await t("a listing effect executes through the whitelist", async () => {
+  const env = fakeEnv();
+  const r = await post(env, { health: { status: "ok" }, effects: [{ k: "listing", p: ["MintA", 123, "pumpswap"] }] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(env.executed[0].sql, TAPE_SQL.listing.sql);
 });
 
 await t("an unknown effect kind rejects the whole batch, 400, nothing executed", async () => {

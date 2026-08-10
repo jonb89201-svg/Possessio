@@ -171,6 +171,17 @@ t("a late dip re-entry marks-to-window when its bell falls past 8:00", () => {
   assert.strictEqual(e.coins.size, 0);
 });
 
+// ── the migration: the DEX-pair birth becomes a listing stamp ──────────────
+t("a migration event emits the listing effect, write-once shape", () => {
+  const e = new TapeEngine();
+  const out = e.onMessage(msg({ txType: "migrate", mint: MINT, pool: "pumpswap" }), T0);
+  assert.strictEqual(out.effects.length, 1);
+  assert.deepStrictEqual(out.effects[0], { k: "listing", p: [MINT, T0, "pumpswap"] });
+  // and it is not mistaken for a trade: no coin state is created or touched
+  assert.strictEqual(e.coins.has(MINT), false);
+  assert.strictEqual(e.stats.trades, 0);
+});
+
 // ── the draining meter, ported: same fingerprints as the DO ────────────────
 t("health: births live + trades silent + keyed = trade_stream_dead", () => {
   const e = new TapeEngine();

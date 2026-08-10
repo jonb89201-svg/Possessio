@@ -42,6 +42,15 @@ export const TAPE_SQL = {
     params: 3,
     sql: `UPDATE earlies SET levels=?2, compound_mult=?3 WHERE token_address=?1`,
   },
+  // The sub-second listing stamp (2026-08-10). COALESCE keeps it write-once
+  // and leaves discoveryScan's fuller update (status/gap_ms/mc_at_discovery)
+  // untouched — the tape stamps the MOMENT, the scan completes the record.
+  listing: {
+    params: 3,
+    sql: `UPDATE births SET curve_pair_seen_ms = COALESCE(curve_pair_seen_ms, ?2),
+                 graduation_dex = COALESCE(graduation_dex, ?3)
+           WHERE token_address = ?1`,
+  },
 };
 
 const MAX_EFFECTS = 500;
