@@ -3738,6 +3738,37 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     sellArm={id:null,t:0};
     forceSellSol(p);
   }
+  // RECONCILE AGAINST THE CHAIN (2026-08-10): a sale made anywhere else — the
+  // pump.fun app, another wallet — left the panel claiming "armed" forever,
+  // forcing the owner to Force Sell a position they no longer held just to
+  // clean up. The chain is the ledger of record; the panel re-reads each armed
+  // position's real balance (same readDelegate the arm flow uses) and retires
+  // the ghosts. Capped and gentle: ≤10 reads, only when the mini app is live.
+  var reconBusy=false;
+  async function reconcilePositions(){
+    var M=window.PossessioMiniApp;
+    if(reconBusy||!M||!M.ready||!M.readDelegate)return;
+    var armedSol=S.positions.filter(function(p){return p.state==="armed"&&p.selfCustody&&p.mint;}).slice(0,10);
+    if(!armedSol.length)return;
+    reconBusy=true; var changed=false;
+    for(var i=0;i<armedSol.length;i++){ var p=armedSol[i];
+      try{
+        var d=await M.readDelegate({mint:p.mint});
+        if(d&&d.balance==="0"){ p.state="stopped"; p.soldOutside=true; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); changed=true; }
+      }catch(e){}
+    }
+    reconBusy=false;
+    if(changed){ savePos(); renderPos(); }
+  }
+  // Clear the open rule on a coin sold outside the desk — one signature, and
+  // the keeper's feed stops carrying an instruction over an empty account.
+  async function clearRule(mint){
+    var M=window.PossessioMiniApp;
+    if(!M||!M.ready||!M.cancelRule){ toast("Clearing the rule needs the Farcaster app."); return; }
+    try{ var r=await M.cancelRule({mint:mint});
+      toast(r&&Number(r.cancelled)>0?"Rule cleared — the keeper stops watching this one.":"No open rule to clear.");
+    }catch(e){ toast("Clear failed: "+String(e&&e.message||e).slice(0,80)); }
+  }
   // Sell the WHOLE position at market from the user's own wallet, then clear
   // the rule. The sale is the user's money and comes first; a failed rule
   // cancel is reported, never allowed to look like a failed sale.
@@ -4172,14 +4203,15 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         var mintLine=p.mint?('<button class="cabtn" data-ca="'+esc(p.mint)+'" onclick="Desk.copyCA(this)" title="Copy token address">⧉ '+esc(shortAddr(p.mint))+'</button>'+
           ' <a class="dexlink" href="https://solscan.io/token/'+esc(p.mint)+'" target="_blank" rel="noopener">Solscan ↗</a>'):'';
         var sCls=armed?"armed":(p.state==="hit"?"hit":"stopped");
-        var sTxt=armed?"◆ armed":(p.state==="hit"?"✓ +"+p.exitPnl+"%":"✕ "+p.exitPnl+"%");
+        var sTxt=armed?"◆ armed":(p.soldOutside?"✕ closed outside":(p.state==="hit"?"✓ +"+p.exitPnl+"%":"✕ "+p.exitPnl+"%"));
         // Force Sell on the ROW — the durable home for the only downside
         // control. The card copy of this button dies when the coin ages off
         // the screen list; a position outlives its card.
         var armedTap=sellArm.id===p.id&&(Date.now()-sellArm.t)<=5000;
         var fsBtn=armed?('<button class="forcebtn" style="margin-top:4px" onclick="Desk.sellPos(\''+esc(p.mint)+'\')">'+(armedTap?'⚠ Tap again to SELL ALL':'Force Sell')+'</button>'):'';
+        var cleanup=(!armed&&p.soldOutside)?' · <a href="javascript:void 0" onclick="Desk.clearRule(\''+esc(p.mint)+'\')" style="color:var(--dblue);font-weight:600">clear rule</a>':'';
         return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag sol" style="vertical-align:1px">SOL</span></div>'+
-          '<div class="pmeta">yours, in your wallet · target +'+(p.bps/100)+'% · no stop · '+(armed?'keeper watching':'closed')+
+          '<div class="pmeta">yours, in your wallet · target +'+(p.bps/100)+'% · no stop · '+(armed?'keeper watching':(p.soldOutside?'sold outside the desk':'closed'))+cleanup+
           (mintLine?'<br>'+mintLine:'')+
           (receipts?'<br>'+receipts:'')+'</div></div>'+
           '<div class="ptarget"><span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span>'+fsBtn+'</div>'+
@@ -4279,7 +4311,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     catch(e){ return false; }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000));
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
@@ -4295,10 +4327,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       try{ var savedVault=localStorage.getItem("possessio_desk_vault");
         if(savedVault&&!S.connected){ var ai=$("#dk-addr");
           if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
-      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); },
+      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); reconcilePositions(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
-    pick:pick, sell:sell, sellPos:sellPos, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
+    pick:pick, sell:sell, sellPos:sellPos, clearRule:clearRule, closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
     solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
 })();
