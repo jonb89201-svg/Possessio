@@ -14,6 +14,13 @@ const t = (name, fn) => {
   try { fn(); console.log(`  PASS  ${name}`); pass++; }
   catch (e) { console.error(`  FAIL  ${name}\n        ${e.message}`); process.exitCode = 1; }
 };
+// async-aware runner — the sync t() would count a rejected promise as a pass.
+const pending = [];
+const ta = (name, fn) => {
+  pending.push(Promise.resolve().then(fn)
+    .then(() => { console.log(`  PASS  ${name}`); pass++; })
+    .catch((e) => { console.error(`  FAIL  ${name}\n        ${e.message}`); process.exitCode = 1; }));
+};
 const SRC = (f) => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
 const K = require("../index");
 
@@ -152,7 +159,7 @@ t("a revoked or spent delegate stands the keeper down IN THE SAME CYCLE", () => 
   const s = SRC("index.js");
   const i = s.indexOf("RULE 1");
   assert.ok(i > -1, "rule 1 must be implemented where the loop can see it");
-  const near = s.slice(i, i + 500);
+  const near = s.slice(i, i + 1800); // widened 2026-08-10: the stand-down carries the fluffy-fire comment now
   assert.ok(/readDelegate\(/.test(near), "the chain must be consulted inside the loop");
   assert.ok(/if \(!live\.authorised\)/.test(near), "the live on-chain delegate must gate every action");
   assert.ok(/continue/.test(near), "a stood-down position must be skipped, not traded");
@@ -293,6 +300,39 @@ t("the trigger price is EXECUTABLE — quoted for the real size, not a mid-price
   assert.ok(/outputMint: L\.USDC_MINT/.test(body), "priced in the unit the user is paid in");
 });
 
+// ── NO BORN-DEAD RULES (2026-08-10, the fluffy fire) ───────────────────────
+//
+// One transient "not authorised" reading — RPC lag right after arming, or a
+// plain RPC failure (readLiveDelegate turns ANY error into REFUSED) — used to
+// blacklist the rule id forever via the exited set. Measured in production:
+// rule 23 sat armed with tokens held while price crossed its +1% target by
+// over 400%, and the keeper never re-read it. The blacklist belongs to SOLD
+// positions only; a stand-down is a per-cycle reading.
+ta("a transient not-authorised reading must NOT kill the rule — it recovers next cycle", async () => {
+  process.env.KEEPER_PUBKEY = "TestKeeperPk11111111111111111111111111111111";
+  const pos = { id: "77", user: "OwnerPk", mint: "MintPk", decimals: 6,
+    entryPrice: 0.00001, targetBps: 100, hasStop: false, stopBps: null };
+  const source = { list: async () => [pos] };
+  const REFUSED = { authorised: false, amount: "0", delegatedAmount: "0" };
+  // cycle 1: the birth-window reading — delegate not visible yet
+  let r1 = await K.cycle({ connection: {}, keeper: null, source, readDelegate: async () => REFUSED });
+  assert.strictEqual(r1.authorised, 0, "cycle 1 correctly stands down");
+  // cycle 2: the chain now shows the grant (empty balance stops it before any
+  // network pricing) — the rule MUST be re-evaluated, not skipped
+  let r2 = await K.cycle({ connection: {}, keeper: null, source,
+    readDelegate: async () => ({ authorised: true, amount: "0", delegatedAmount: "500" }) });
+  assert.strictEqual(r2.authorised, 1,
+    "a rule that stood down once was never re-read — born-dead rules are back (the fluffy bug)");
+});
+
+t("the exited blacklist is reserved for SOLD positions — source-level", () => {
+  const s = SRC("index.js");
+  const standDown = s.slice(s.indexOf("if (!live.authorised)"), s.indexOf("authorised++"));
+  assert.ok(!/exited\.add/.test(standDown), "stand-down must never feed the double-sell blacklist");
+  const sold = s.slice(s.indexOf("if (!res.dryRun)"), s.indexOf("} catch (e) {"));
+  assert.ok(/exited\.add/.test(sold), "a REAL exit must still be blacklisted against a second sell");
+});
+
 // ── NO KEY LEAKAGE ─────────────────────────────────────────────────────────
 t("the keeper never logs or writes its key", () => {
   const s = SRC("index.js");
@@ -303,4 +343,4 @@ t("the keeper never logs or writes its key", () => {
   assert.ok(!/KEEPER_KEY/.test(startup), "startup must not touch the secret");
 });
 
-console.log(`\n${pass} checks passed`);
+Promise.all(pending).then(() => console.log(`\n${pass} checks passed`));
