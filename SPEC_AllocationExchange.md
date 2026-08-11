@@ -95,7 +95,18 @@ A **card** is an open prediction posted by a council. Lifecycle:
      still never touches ETH in any form.
    - Valuation of the cbETH leg uses the live fail-closed guard the protocol
      already deploys (`LSTExchangeRate` `0xDDb75e97…8548`, dual-source, halt on
-     divergence) — no new oracle surface.
+     divergence) — no new oracle surface. A guard halt during resolution FREEZES
+     payout (stakes safe, settlement delayed) — inaction is the only safe response
+     to uncertainty, per the Symmetry Guard doctrine.
+8. **THE POT IS THE PROMISE (required accounting rule — math-verified 2026-08-11).**
+   Escrow is held in cbETH; liabilities are denominated in CT; the CT/cbETH price
+   can move during a card's life. Therefore every payout is defined as a PRO-RATA
+   SHARE of the actual escrow proceeds at resolution — winner_i receives
+   (stake_i / total_winning_stakes) x pot — NEVER a fixed CT amount. Insolvency is
+   impossible by construction; FX movement flows through all shares equally.
+   Conservation verified numerically across all card shapes (unchallenged,
+   lone-contrarian, poster-wrong, popular-side dilution): payouts sum to the pot
+   exactly in every case.
 
 ## 3. What the machine produces
 
@@ -150,6 +161,20 @@ trail discipline: a card's poster identity, ante, and record travel with it.
 7. **Where cards live** — a dedicated exchange contract vs. V3-template instances
    per card. (Seat lean: one exchange contract, codehash-pinned, launched through
    the same constellation discipline.)
+8. **Losing principal vs yield-only (confirm the Architect's reading):** modeled
+   and math-verified as NORMAL BOOKIE RULES — the winning side takes the losing
+   principal AND its accrued yield. The alternative reading (losers' principals
+   returned, only their yield forfeited) changes the product completely. Architect
+   to confirm the bookie reading.
+9. **Junk-card yield farming (found in math review):** unchallenged cards earning
+   yield regardless of outcome makes unresolvable-noise cards a free LST vault.
+   Seat lean: yield pays only on a card that RESOLVES TRUE; an unresolvable or
+   false-unchallenged card refunds principal WITHOUT yield (forfeited yield
+   routing: council to rule — the creed's zero-house-take applies to honest
+   players' stakes, not to forfeited farming yield). The false-unchallenged poster
+   additionally pays the permanent price: the miss is on the track record forever.
+   (Both-sides self-betting was reviewed and is harmless — it is LST staking with
+   extra steps on the actor's own capital; no third party is affected.)
 
 ## 7. DoD sketch (assertable once §6 is ruled)
 
@@ -163,6 +188,21 @@ trail discipline: a card's poster identity, ante, and record travel with it.
 6. Track record derivable purely from chain events: per-council card history,
    win/loss, stakes — no off-chain bookkeeping required for the record.
 7. SAV state byte-identical under all exchange operations.
+
+## 7b. v0 FIRST — the basic token exchange (Architect grounding, 2026-08-11)
+
+Before any card mechanics: **a basic token exchange for V3 council members who have
+launched their connectors, swapping a portion of allocation into council tokens.**
+That is the whole v0 — the door onto the ladder, nothing else:
+
+- Eligible: council seats operating through launched connectors (the signer rail).
+- Operation: allocation → council token, through the existing SAV consensus path
+  and the POSSESSIO-seeded STEEL↔CT liquidity. One swap, rule 6 gated.
+- No cards, no escrow, no yield in v0. The card machine (§2) is v1, built on a
+  rail that already works and has already moved real allocation.
+
+v0 is also the live rehearsal of the custody policy: the first ratified
+seat-directed swaps ARE the test cases for rule 6's successor spec.
 
 ## 8. Sequencing (the ruled order)
 
