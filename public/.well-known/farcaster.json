@@ -6,8 +6,8 @@
     "homeUrl": "https://possessio.io",
     "splashImageUrl": "https://possessio.io/splash-200.png",
     "splashBackgroundColor": "#0B1220",
-    "subtitle": "Deploying on a phone near you soon.",
-    "description": "Deploy sovereign, immutable and deterministic smart contracts for a small fee. Deploying on a phone near you soon.",
+    "subtitle": "Now deploying on a phone near you.",
+    "description": "Deploy sovereign, immutable and deterministic smart contracts for a small fee. Now deploying on a phone near you.",
     "primaryCategory": "finance",
     "tags": ["smart-contracts", "base", "solana", "self-custody", "defi"]
   }
