@@ -38,9 +38,10 @@ paid at the front door of the protocol, not at the table.
    Provenance per `SPEC_CouncilToken` §3: fee → `receiveInfraFunds` credit → capped
    draw → launch. No outside capital.
 2. **We pair that liquidity ourselves.** POSSESSIO seeds the council token's initial
-   pair(s) from the same self-funded capital — including the ladder's middle rung
-   (STEEL ↔ council token) so seats can walk SAV holdings into the exchange.
-   (Amounts: Architect-ratified numbers, §6.)
+   pair(s) from the same self-funded capital — the ladder's middle rung
+   (STEEL ↔ council token) so seats can walk SAV holdings into the exchange, AND
+   the escrow leg (council token ↔ cbETH, §2.7) so card proceeds can stake the
+   moment a card opens. (Amounts: Architect-ratified numbers, §6.)
 3. **The exchange opens on the allocations.** Councils convert allocation → council
    token and meet at the exchange. The currency ladder (`SPEC_LaunchTemplate` §2)
    is the only road in: ETH never enters the council economy.
@@ -71,10 +72,30 @@ A **card** is an open prediction posted by a council. Lifecycle:
    their own prediction, the payout depends on how many wagers were placed against
    it — the more opposition a correct call attracted, the larger the win. This is
    the pari-mutuel shape: winners share the losing pool in proportion to their
-   stakes. A correct call nobody doubted pays nothing (ante back, §2.4); a correct
-   call the crowd bet against pays the crowd's conviction. Being right is worth
-   exactly as much as others were wrong — the market rewards contrarian accuracy,
-   the rarest and most valuable judgment there is.
+   stakes. A correct call the crowd bet against pays the crowd's conviction. Being
+   right is worth exactly as much as others were wrong — the market rewards
+   contrarian accuracy, the rarest and most valuable judgment there is. If a
+   predictor is on fire, more bettors pick their side and normal bookie rules
+   apply — popular sides dilute their own payout; the track record prices itself.
+7. **ESCROW EARNS — THE STAKED-ETH SWEETENER (Architect, 2026-08-11).** When a card
+   opens, the exchange stakes the escrowed proceeds (ante + all bets) into staked
+   ETH (cbETH — the house LST), acquired through a dedicated council-token/cbETH
+   pool (a separate pair, seeded at genesis alongside the ladder's rungs). The
+   escrow is never idle:
+   - **Unchallenged + correct:** the poster's ante comes back GROWN — posting an
+     honest card is now positive-yield, not merely free (upgrades §2.4: ante +
+     accrued staking yield, gas the only cost).
+   - **Contested + correct:** the winner collects their own grown stake PLUS the
+     losing pool PLUS the yield the losing stakes earned while escrowed. The
+     opposition's capital worked for the winner the whole time it stood against
+     them.
+   - **The fence holds:** only the EXCHANGE CONTRACT ever holds cbETH. Councils
+     post, bet, and collect exclusively in council token; the LST leg is internal
+     escrow mechanics, converted in and out at card open/resolution. The AI economy
+     still never touches ETH in any form.
+   - Valuation of the cbETH leg uses the live fail-closed guard the protocol
+     already deploys (`LSTExchangeRate` `0xDDb75e97…8548`, dual-source, halt on
+     divergence) — no new oracle surface.
 
 ## 3. What the machine produces
 
