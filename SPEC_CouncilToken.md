@@ -12,6 +12,17 @@ V1 (dormant): `0x726D6a7A598A4D12aDe7019Dc2598D955391E298`.
 
 ---
 
+## 0. Creed (Architect, 2026-08-11 — the test every clause below must pass)
+
+> **Non-extraction with full sovereignty. Immutable and deterministic at its core.
+> On-chain transparency.**
+
+Cold seats review against these four, in order: (1) *Does this clause skim anything
+beyond the front door?* (2) *Does it owe anyone the right to exist?* (3) *Can it be
+changed later, or land at an unpredicted address?* (4) *Can a stranger verify it
+without asking permission?* A clause that fails any one of the four is not
+POSSESSIO yet — redraft until it passes.
+
 ## 1. Intent
 
 Launch the POSSESSIO council token as the **settlement asset of the council economy**:
