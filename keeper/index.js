@@ -118,13 +118,16 @@ function triggerFor(pos, price) {
 /// keeperPk is passed in rather than re-derived from the keypair: a DRY_RUN
 /// holds no key at all (that is the point of it), so deriving the pubkey here
 /// would crash the loop at the exact moment it tried to prove it works.
-async function fireExit({ connection, keeper, keeperPk, pos, live }) {
+async function fireExit({ connection, keeper, keeperPk, pos, live, kind = "target" }) {
   const built = await L.buildDelegatedExit({
     keeperPublicKey: keeperPk,
     userPublicKey: pos.user,
     mint: pos.mint,
     amount: live.delegatedAmount,          // rule 3: never more than delegated
     slippageBps: SLIPPAGE_BPS,
+    // Fee tier follows the trigger: a stop races a dump (veryHigh, 0.005 SOL
+    // cap); a target is a calm trade (high, 0.001 SOL cap). See the build.
+    urgent: kind === "stop",
   });
   if (DRY_RUN) {
     log(`  [${pos.id}] DRY_RUN: built the exit (${built.unsignedTxBase64.length}b) -> ` +
@@ -193,7 +196,7 @@ async function cycle({ connection, keeper, source, readDelegate = readLiveDelega
 
       log(`  [${pos.id}] ${t.kind.toUpperCase()} at ${price.toExponential(4)} ` +
           `(entry ${pos.entryPrice.toExponential(4)}, target ${t.target.toExponential(4)}, stop ${t.stop.toExponential(4)})`);
-      const res = await fireExit({ connection, keeper, keeperPk, pos, live });
+      const res = await fireExit({ connection, keeper, keeperPk, pos, live, kind: t.kind });
       fired.push({ id: pos.id, kind: t.kind, price, expected: res.expected, dryRun: res.dryRun });
       if (!res.dryRun) {
         exited.add(String(pos.id));

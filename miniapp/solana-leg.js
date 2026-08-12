@@ -149,7 +149,7 @@ async function readDelegate({ connection, userPublicKey, mint }) {
 /// smaller trust surface than handing the capital to an agent — but it is not
 /// zero, and calling it zero would be the kind of claim this project refuses
 /// to make.
-async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount, slippageBps = 300 }) {
+async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount, slippageBps = 300, urgent = false }) {
   const q = await quote({
     inputMint: mint, outputMint: USDC_MINT.toBase58(),
     amount, slippageBps,
@@ -168,12 +168,16 @@ async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount
       destinationTokenAccount: undefined, // default: the user's USDC ATA
       wrapAndUnwrapSol: false,
       dynamicComputeUnitLimit: true,
-      // PRIORITY FEE (2026-08-12): the keeper's exit fires at targets and
-      // stops — both are races. veryHigh tier, hard-capped at 0.005 SOL,
-      // paid by the keeper (the fee payer per rule 4). An exit that misses
-      // its block during a dump costs the user far more than the tip.
+      // PRIORITY FEE, TIERED (2026-08-12, Architect-ratified pre-merge): a
+      // STOP exit races a dump — veryHigh, capped 0.005 SOL, because a rug
+      // moment IS congestion and missing the block costs the user far more
+      // than the tip. A TARGET exit is a calm trade — high, capped 0.001 SOL;
+      // paying panic prices for a take-profit is spending the user's edge.
+      // The keeper pays either way (rule 4 unchanged).
       prioritizationFeeLamports: {
-        priorityLevelWithMaxLamports: { maxLamports: 5_000_000, priorityLevel: "veryHigh" },
+        priorityLevelWithMaxLamports: urgent
+          ? { maxLamports: 5_000_000, priorityLevel: "veryHigh" }
+          : { maxLamports: 1_000_000, priorityLevel: "high" },
       },
     }),
   });
