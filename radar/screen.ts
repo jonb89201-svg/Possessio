@@ -70,6 +70,24 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// BORN LOADED fast lane — 3-min momentum tag (RESEARCH_RadarMethod F4).
+// ratio = mc-at-~3min / mc-at-stamp, the honest FROM-ENTRY read: a coin that
+// 2x's by minute 3 doubles AGAIN from there 10.2% vs 3.2% for flat (3x lift).
+// Ranking/confirmation signal only — the stamp (entry basis) never moves.
+// Pure + exported for fastlane.test.mjs.
+export function momentumTag(ratio: number): "hot" | "warm" | "flat" | "down" {
+  if (ratio >= 2) return "hot";
+  if (ratio >= 1.3) return "warm";
+  if (ratio >= 0.95) return "flat";
+  return "down";
+}
+// The 3-min read window: a tick 90s-270s after the stamp, nearest 180s. Ticks
+// only exist while a coin is on the tape (earlies/candidates), so a row with
+// no tick by the window's close will never get one — that is 'untracked'.
+const FAST_MOMENTUM_AT_MS   = 180_000;
+const FAST_MOMENTUM_TOL_MS  = 90_000;
+const FAST_GRADE_AFTER_MS   = 6 * 3600_000; // outcome graded once peaks settle
+
 // SELF-HEAL: bounded fetch. An un-timed await on a hung upstream (pump.fun or
 // DexScreener stops responding) froze the whole scan for 21min once — every
 // cron tick piled a new hung fetch, none wrote a tape row, the eye went blind
@@ -468,6 +486,70 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
           WHERE token_address=?1 AND play_outcome IS NULL`
       ).bind(addr, exitVal, now));
     }
+  }
+
+  // (0.6) FAST LANE momentum re-rank (RESEARCH_RadarMethod F4 / §3.3). For each
+  //       ungraded stamp past the 3-min mark, read the tape tick nearest
+  //       stamp+180s and tag hot/warm/flat/down from the FROM-ENTRY ratio.
+  //       Fastlane coins in the 5-8k band have crossed the $3.5k early screen,
+  //       so most ARE on the tape; a row with no tick by the window's close is
+  //       'untracked' (terminal — ticks are only written live, none will appear
+  //       later). The stamp itself is immutable; this only fills momentum/mc3m.
+  const { results: fastMom } = await env.RADAR_DB.prepare(
+    `SELECT f.token_address, f.sighted_ms, f.birth_mc,
+            (SELECT m.mc FROM mc_ticks m
+              WHERE m.token_address=f.token_address
+                AND m.ms BETWEEN f.sighted_ms + ?2 AND f.sighted_ms + ?3
+              ORDER BY ABS(m.ms - (f.sighted_ms + ?4)) LIMIT 1) AS mc3m
+       FROM fastlane f
+      WHERE f.momentum IS NULL AND f.sighted_ms <= ?1
+      LIMIT 200`
+  ).bind(
+    now - FAST_MOMENTUM_AT_MS,
+    FAST_MOMENTUM_AT_MS - FAST_MOMENTUM_TOL_MS,
+    FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS,
+    FAST_MOMENTUM_AT_MS,
+  ).all();
+  for (const f of fastMom as any[]) {
+    const mc3m = numOrNull(f.mc3m);
+    const birthMc = Number(f.birth_mc);
+    if (mc3m !== null && birthMc > 0) {
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE fastlane SET mc3m=?2, momentum=?3
+          WHERE token_address=?1 AND momentum IS NULL`
+      ).bind(f.token_address, mc3m, momentumTag(mc3m / birthMc)));
+    } else if (now - Number(f.sighted_ms) > FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS) {
+      // window closed with no tape row — never got on screen, never will tick
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE fastlane SET momentum='untracked'
+          WHERE token_address=?1 AND momentum IS NULL`
+      ).bind(f.token_address));
+    } // else: still inside the window, next pass retries
+  }
+
+  // (0.7) FAST LANE grading (the scorekeeper — real trading is the test that
+  //       counts; this table just keeps score, per the Architect). Stamps aged
+  //       >=6h grade against births.mc_peak_usd — the same peak the research
+  //       measured, so forward numbers are directly comparable to F1/F3
+  //       (22.4% 2x core band, 26.8% stacked with the hot regime).
+  const { results: fastGrade } = await env.RADAR_DB.prepare(
+    `SELECT f.token_address, f.birth_mc, b.mc_peak_usd
+       FROM fastlane f JOIN births b ON b.token_address=f.token_address
+      WHERE f.outcome IS NULL AND f.sighted_ms <= ?1
+      LIMIT 200`
+  ).bind(now - FAST_GRADE_AFTER_MS).all();
+  for (const f of fastGrade as any[]) {
+    const peak = numOrNull(f.mc_peak_usd);
+    const birthMc = Number(f.birth_mc);
+    const mult = peak !== null && birthMc > 0 ? peak / birthMc : null;
+    const outcome = mult === null ? "untracked"
+      : mult >= 2 ? "2x"
+      : mult >= 1.5 ? "1_5x"
+      : "flat";
+    stmts.push(env.RADAR_DB.prepare(
+      `UPDATE fastlane SET peak_mc=?2, peak_mult=?3, outcome=?4, outcome_ms=?5
+        WHERE token_address=?1 AND outcome IS NULL`
+    ).bind(f.token_address, peak, mult, outcome, now));
   }
 
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
