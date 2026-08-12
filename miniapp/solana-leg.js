@@ -73,6 +73,11 @@ async function buildUserBuy({ userPublicKey, mint, usdcAmount, slippageBps = 300
     body: JSON.stringify({
       quoteResponse: q, userPublicKey, wrapAndUnwrapSol: true,
       dynamicComputeUnitLimit: true,
+      // Normal-tier tip, hard-capped at 0.001 SOL — a buy can afford to wait
+      // a block; the exits above cannot (see buildDelegatedExit).
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: { maxLamports: 1_000_000, priorityLevel: "high" },
+      },
     }),
   });
   if (!r.ok) throw new Error(`jupiter swap-build ${r.status}`);
@@ -144,7 +149,7 @@ async function readDelegate({ connection, userPublicKey, mint }) {
 /// smaller trust surface than handing the capital to an agent — but it is not
 /// zero, and calling it zero would be the kind of claim this project refuses
 /// to make.
-async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount, slippageBps = 300 }) {
+async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount, slippageBps = 300, urgent = false }) {
   const q = await quote({
     inputMint: mint, outputMint: USDC_MINT.toBase58(),
     amount, slippageBps,
@@ -163,6 +168,17 @@ async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount
       destinationTokenAccount: undefined, // default: the user's USDC ATA
       wrapAndUnwrapSol: false,
       dynamicComputeUnitLimit: true,
+      // PRIORITY FEE, TIERED (2026-08-12, Architect-ratified pre-merge): a
+      // STOP exit races a dump — veryHigh, capped 0.005 SOL, because a rug
+      // moment IS congestion and missing the block costs the user far more
+      // than the tip. A TARGET exit is a calm trade — high, capped 0.001 SOL;
+      // paying panic prices for a take-profit is spending the user's edge.
+      // The keeper pays either way (rule 4 unchanged).
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: urgent
+          ? { maxLamports: 5_000_000, priorityLevel: "veryHigh" }
+          : { maxLamports: 1_000_000, priorityLevel: "high" },
+      },
     }),
   });
   if (!r.ok) throw new Error(`jupiter exit-build ${r.status}`);

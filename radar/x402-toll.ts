@@ -390,12 +390,15 @@ export function buildTolledApp(env: Env) {
         WHERE COALESCE(curve_pair_seen_ms, dexscreener_first_seen_ms) >= ?1
         ORDER BY listed_ms DESC LIMIT 12`
     ).bind(Date.now() - 20 * 60_000).all();
-    // BORN LOADED fast lane (RESEARCH_RadarMethod §3): stamps from the last
-    // 90min, ranked by score, momentum-demoted rows ('down') dropped. Aliases
-    // match the candidate card shape (qualified_ms/entry_mc) so the console
-    // renders these with the existing card machinery; cur_mc is the freshest
-    // tape tick for a live +% read. Same ratified public surface: which coins,
-    // never entry/exit prices or size.
+    // BORN LOADED fast lane (RESEARCH_RadarMethod §3 + RESEARCH_ExitAlgo F7):
+    // stamps from the last 90min. WARM leads — the measured entry window
+    // (24.6% forward-2x from the 3-min price) — then fresh un-read stamps
+    // (the watchlist), then hot (informational: the move already ran, 0.7%
+    // reach 3x from there). down/flat are dropped (EV 0.82/1.01 — noise).
+    // Aliases match the candidate card shape (qualified_ms/entry_mc) so the
+    // console renders these with the existing card machinery; cur_mc is the
+    // freshest tape tick for a live +% read. Same ratified public surface:
+    // which coins, never entry/exit prices or size.
     const fastlane = await db.prepare(
       `SELECT f.token_address, f.symbol, f.name,
               f.sighted_ms AS qualified_ms, f.birth_mc AS entry_mc,
@@ -411,8 +414,11 @@ export function buildTolledApp(env: Env) {
               (SELECT creator FROM births b WHERE b.token_address=f.token_address) AS creator
          FROM fastlane f
         WHERE f.sighted_ms >= ?1
-          AND COALESCE(f.momentum,'') != 'down'
-        ORDER BY f.score DESC, f.sighted_ms DESC LIMIT 12`
+          AND COALESCE(f.momentum,'') NOT IN ('down','flat')
+        ORDER BY CASE WHEN f.momentum='warm' THEN 0
+                      WHEN f.momentum IS NULL THEN 1
+                      ELSE 2 END,
+                 f.score DESC, f.sighted_ms DESC LIMIT 12`
     ).bind(Date.now() - 90 * 60_000).all();
     // Fast-lane forward scorecard: graded stamps only (>=6h old). THIS is the
     // number that ratifies or kills the method — research said 22.4% 2x in the

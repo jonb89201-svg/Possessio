@@ -292,12 +292,24 @@ async function sendTx(tx) {
 }
 
 /// STEP 1 — the buy. The user signs; the coin lands in the user's own account.
-export async function signBuy({ quoteResponse }) {
+/// PRIORITY FEE (2026-08-12): until now the swap carried NO validator tip, so
+/// in a congested dump our exit stood at the back of the line — the exact
+/// moment it must not. Buys tip normally; `urgent` (the Force Sell path) tips
+/// veryHigh with a hard lamport cap, because a rug exit that lands one block
+/// earlier is worth far more than 0.005 SOL, and one that doesn't land is
+/// worth nothing. Caps bound the spend; "auto" tiers track congestion.
+export async function signBuy({ quoteResponse, urgent = false }) {
   const r = await fetch(JUP + "/swap", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({
       quoteResponse, userPublicKey: pubkey.toBase58(),
       wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true,
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: {
+          maxLamports: urgent ? 5_000_000 : 1_000_000, // 0.005 / 0.001 SOL hard cap
+          priorityLevel: urgent ? "veryHigh" : "high",
+        },
+      },
     }),
   });
   if (!r.ok) throw new Error("swap build failed (" + r.status + ")");
@@ -819,7 +831,9 @@ export async function sellNow({ mint, ruleId = null, onStep = () => {} }) {
     q = await quoteSell({ mint, amountRaw });
     onStep({ step: "sell", text: `sell all for ~${q.solOut.toFixed(4)} SOL via ${q.route}`, quote: q });
     try {
-      sold = await signBuy({ quoteResponse: q.quote }); // direction-agnostic: build+sign+send this quote
+      // direction-agnostic build+sign+send; urgent = veryHigh priority tip —
+      // a Force Sell is racing a dump by definition.
+      sold = await signBuy({ quoteResponse: q.quote, urgent: true });
       break;
     } catch (e) {
       if (e && e.code === "TX_TOO_LARGE" && attempt < 3) { lastTooLarge = e; continue; }
