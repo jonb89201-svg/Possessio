@@ -495,62 +495,80 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   //       so most ARE on the tape; a row with no tick by the window's close is
   //       'untracked' (terminal — ticks are only written live, none will appear
   //       later). The stamp itself is immutable; this only fills momentum/mc3m.
-  const { results: fastMom } = await env.RADAR_DB.prepare(
-    `SELECT f.token_address, f.sighted_ms, f.birth_mc,
-            (SELECT m.mc FROM mc_ticks m
-              WHERE m.token_address=f.token_address
-                AND m.ms BETWEEN f.sighted_ms + ?2 AND f.sighted_ms + ?3
-              ORDER BY ABS(m.ms - (f.sighted_ms + ?4)) LIMIT 1) AS mc3m
-       FROM fastlane f
-      WHERE f.momentum IS NULL AND f.sighted_ms <= ?1
-      LIMIT 200`
-  ).bind(
-    now - FAST_MOMENTUM_AT_MS,
-    FAST_MOMENTUM_AT_MS - FAST_MOMENTUM_TOL_MS,
-    FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS,
-    FAST_MOMENTUM_AT_MS,
-  ).all();
-  for (const f of fastMom as any[]) {
-    const mc3m = numOrNull(f.mc3m);
-    const birthMc = Number(f.birth_mc);
-    if (mc3m !== null && birthMc > 0) {
-      stmts.push(env.RADAR_DB.prepare(
-        `UPDATE fastlane SET mc3m=?2, momentum=?3
-          WHERE token_address=?1 AND momentum IS NULL`
-      ).bind(f.token_address, mc3m, momentumTag(mc3m / birthMc)));
-    } else if (now - Number(f.sighted_ms) > FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS) {
-      // window closed with no tape row — never got on screen, never will tick
-      stmts.push(env.RADAR_DB.prepare(
-        `UPDATE fastlane SET momentum='untracked'
-          WHERE token_address=?1 AND momentum IS NULL`
-      ).bind(f.token_address));
-    } // else: still inside the window, next pass retries
-  }
+  //       PRODUCTION LESSON (2026-08-12, caught by the health verdict's own
+  //       errLatest rule ~2h after deploy): D1's engine REJECTS outer-alias
+  //       arithmetic inside a correlated subquery ("no such column:
+  //       f.sighted_ms") — a dialect limit the offline mocks cannot see, and
+  //       the thrown error killed the WHOLE scan (tape, tracking, everything)
+  //       for two hours. Hence: (a) the tick lookup is a CTE + JOIN, the shape
+  //       D1 accepts; (b) both fastlane passes are fail-soft — an experimental
+  //       lane must never take the ratified tape down with it.
+  try {
+    const { results: fastMom } = await env.RADAR_DB.prepare(
+      `WITH cand AS (
+         SELECT token_address, sighted_ms, birth_mc FROM fastlane
+          WHERE momentum IS NULL AND sighted_ms <= ?1
+          LIMIT 200
+       ), t3 AS (
+         SELECT cand.token_address AS ta, MIN(m.ms) AS ms3
+           FROM cand JOIN mc_ticks m
+             ON m.token_address = cand.token_address
+            AND m.ms BETWEEN cand.sighted_ms + ?2 AND cand.sighted_ms + ?3
+          GROUP BY cand.token_address
+       )
+       SELECT cand.token_address, cand.sighted_ms, cand.birth_mc, mt.mc AS mc3m
+         FROM cand
+         LEFT JOIN t3 ON t3.ta = cand.token_address
+         LEFT JOIN mc_ticks mt ON mt.token_address = cand.token_address AND mt.ms = t3.ms3`
+    ).bind(
+      now - FAST_MOMENTUM_AT_MS,
+      FAST_MOMENTUM_AT_MS - FAST_MOMENTUM_TOL_MS,
+      FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS,
+    ).all();
+    for (const f of fastMom as any[]) {
+      const mc3m = numOrNull(f.mc3m);
+      const birthMc = Number(f.birth_mc);
+      if (mc3m !== null && birthMc > 0) {
+        stmts.push(env.RADAR_DB.prepare(
+          `UPDATE fastlane SET mc3m=?2, momentum=?3
+            WHERE token_address=?1 AND momentum IS NULL`
+        ).bind(f.token_address, mc3m, momentumTag(mc3m / birthMc)));
+      } else if (now - Number(f.sighted_ms) > FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS) {
+        // window closed with no tape row — never got on screen, never will tick
+        stmts.push(env.RADAR_DB.prepare(
+          `UPDATE fastlane SET momentum='untracked'
+            WHERE token_address=?1 AND momentum IS NULL`
+        ).bind(f.token_address));
+      } // else: still inside the window, next pass retries
+    }
+  } catch (e) { console.error("fastlane momentum pass", e); }
 
   // (0.7) FAST LANE grading (the scorekeeper — real trading is the test that
   //       counts; this table just keeps score, per the Architect). Stamps aged
   //       >=6h grade against births.mc_peak_usd — the same peak the research
   //       measured, so forward numbers are directly comparable to F1/F3
   //       (22.4% 2x core band, 26.8% stacked with the hot regime).
-  const { results: fastGrade } = await env.RADAR_DB.prepare(
-    `SELECT f.token_address, f.birth_mc, b.mc_peak_usd
-       FROM fastlane f JOIN births b ON b.token_address=f.token_address
-      WHERE f.outcome IS NULL AND f.sighted_ms <= ?1
-      LIMIT 200`
-  ).bind(now - FAST_GRADE_AFTER_MS).all();
-  for (const f of fastGrade as any[]) {
-    const peak = numOrNull(f.mc_peak_usd);
-    const birthMc = Number(f.birth_mc);
-    const mult = peak !== null && birthMc > 0 ? peak / birthMc : null;
-    const outcome = mult === null ? "untracked"
-      : mult >= 2 ? "2x"
-      : mult >= 1.5 ? "1_5x"
-      : "flat";
-    stmts.push(env.RADAR_DB.prepare(
-      `UPDATE fastlane SET peak_mc=?2, peak_mult=?3, outcome=?4, outcome_ms=?5
-        WHERE token_address=?1 AND outcome IS NULL`
-    ).bind(f.token_address, peak, mult, outcome, now));
-  }
+  try {
+    const { results: fastGrade } = await env.RADAR_DB.prepare(
+      `SELECT f.token_address, f.birth_mc, b.mc_peak_usd
+         FROM fastlane f JOIN births b ON b.token_address=f.token_address
+        WHERE f.outcome IS NULL AND f.sighted_ms <= ?1
+        LIMIT 200`
+    ).bind(now - FAST_GRADE_AFTER_MS).all();
+    for (const f of fastGrade as any[]) {
+      const peak = numOrNull(f.mc_peak_usd);
+      const birthMc = Number(f.birth_mc);
+      const mult = peak !== null && birthMc > 0 ? peak / birthMc : null;
+      const outcome = mult === null ? "untracked"
+        : mult >= 2 ? "2x"
+        : mult >= 1.5 ? "1_5x"
+        : "flat";
+      stmts.push(env.RADAR_DB.prepare(
+        `UPDATE fastlane SET peak_mc=?2, peak_mult=?3, outcome=?4, outcome_ms=?5
+          WHERE token_address=?1 AND outcome IS NULL`
+      ).bind(f.token_address, peak, mult, outcome, now));
+    }
+  } catch (e) { console.error("fastlane grading pass", e); }
 
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.
