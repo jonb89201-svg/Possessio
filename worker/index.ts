@@ -220,6 +220,17 @@ async function computeRadarHealth(db: D1Database): Promise<Record<string, unknow
   // deploy) or read error never blocks the verdict.
   const scans: Record<string, { ok_age_ms: number | null; err_age_ms: number | null; err: string | null; failing: boolean }> = {};
   const failing: string[] = [];
+  // FALSE-GREEN FIX (2026-08-12, RESEARCH_RadarMethod §5): a scan that goes
+  // SILENT records no error — last_err stays old, last_ok just ages — so the
+  // err-newer-than-ok test alone can never see it. The per-trade tape died
+  // exactly this way (PumpPortal key drained; the socket stays up, the
+  // key-gated stream dies quietly) and sat under "healthy" for ~50h while
+  // births and mc_ticks kept flowing. A critical scan past its expected
+  // cadence now counts as failing, with the silence NAMED as the cause.
+  const SCAN_MAX_AGE: Record<string, number> = {
+    birthScan: 5 * 60_000, screenScan: 5 * 60_000, discoveryScan: 5 * 60_000,
+    dexTrackScan: 10 * 60_000, pumptapeTrades: 15 * 60_000,
+  };
   try {
     const fs: any = await db.prepare("SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status").all();
     const nowMs = Date.now();
@@ -227,13 +238,17 @@ async function computeRadarHealth(db: D1Database): Promise<Record<string, unknow
       const okMs = r.last_ok_ms == null ? null : Number(r.last_ok_ms);
       const errMs = r.last_err_ms == null ? null : Number(r.last_err_ms);
       const isFailing = errMs != null && (okMs == null || errMs > okMs);
+      const maxAge = SCAN_MAX_AGE[r.scan];
+      const silent = !isFailing && maxAge != null && (okMs == null || nowMs - okMs > maxAge);
       scans[r.scan] = {
         ok_age_ms: okMs == null ? null : nowMs - okMs,
         err_age_ms: errMs == null ? null : nowMs - errMs,
-        err: isFailing ? (r.last_err ?? null) : null,
-        failing: isFailing,
+        err: isFailing ? (r.last_err ?? null)
+          : silent ? (okMs == null ? "never ran" : "silent " + Math.round((nowMs - okMs) / 60_000) + "m — no heartbeat, no error")
+          : null,
+        failing: isFailing || silent,
       };
-      if (isFailing) failing.push(r.scan);
+      if (isFailing || silent) failing.push(r.scan);
     }
   } catch { /* feed_status not present yet — omit */ }
 
@@ -293,6 +308,20 @@ async function computeRadarHealth(db: D1Database): Promise<Record<string, unknow
     status = "healthy";
     diagnosis = "Feed live — births and tape current.";
     action = null;
+  }
+
+  // GREEN CANNOT COEXIST WITH A DEAD SCAN (the other half of the False-Green
+  // fix): births/tape freshness alone said "healthy" for 50h while the
+  // per-trade tape was down, because that stream feeds neither births nor
+  // mc_ticks. If any tracked scan is failing OR silent, the banner degrades
+  // and names it — a persistent failure can no longer sit under green.
+  if (status === "healthy" && failing.length) {
+    status = "degraded";
+    diagnosis = "Births and tape current, but " + failing.join(", ") + " " +
+      (failing.length > 1 ? "are" : "is") + " down — a feed the verdict depends on is not reporting.";
+    action = failing.includes("pumptapeTrades")
+      ? "Per-trade tape: check the PumpPortal key balance (silent drain <0.02 SOL) and the Railway tape service."
+      : "Check the named scan's last error / heartbeat in feed_status.";
   }
 
   // Name the cause: if a scan is throwing during a stall, append which one and

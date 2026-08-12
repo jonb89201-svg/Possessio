@@ -364,7 +364,7 @@ footer .arch{color:var(--ink-dim);margin-top:6px;font-size:11px;line-height:1.5}
 <div id="mib-debug" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#0f0;font:11px/1.4 monospace;padding:6px 8px;z-index:2147483647;pointer-events:auto;border-top:2px solid #0f0;display:none;"><div style="display:flex;justify-content:space-between;align-items:center;"><strong style="color:#0f0;cursor:pointer;" onclick="var l=document.getElementById('mib-log'),s=l.style.display==='none';l.style.display=s?'block':'none';document.getElementById('mib-exp').textContent=s?'▾':'▸';">MIB DEBUG</strong><span><button id="mib-exp" onclick="var l=document.getElementById('mib-log'),s=l.style.display==='none';l.style.display=s?'block':'none';this.textContent=s?'▾':'▸';" style="background:#333;color:#0f0;border:1px solid #0f0;padding:2px 8px;font:11px monospace;margin-right:4px;">&#9656;</button><button onclick="window.mibFeedHealth&&window.mibFeedHealth();var l=document.getElementById('mib-log');l.style.display='block';document.getElementById('mib-exp').textContent='▾';" style="background:#333;color:#0ff;border:1px solid #0ff;padding:2px 8px;font:11px monospace;margin-right:4px;">feed</button><button onclick="document.getElementById('mib-log').innerHTML='';" style="background:#333;color:#0f0;border:1px solid #0f0;padding:2px 8px;font:11px monospace;">clear</button><button onclick="document.getElementById('mib-debug').style.display='none';" style="background:#333;color:#f55;border:1px solid #f55;padding:2px 8px;font:11px monospace;margin-left:4px;">x</button></span></div><div id="mib-log" style="max-height:36vh;overflow:auto;display:none;margin-top:4px;"></div></div>
 <button onclick="document.getElementById('mib-debug').style.display='block';document.getElementById('mib-log').style.display='none';document.getElementById('mib-exp').textContent='▸';window.mibFeedHealth&&window.mibFeedHealth();" style="position:fixed;bottom:70px;right:8px;z-index:2147483647;background:#0f0;color:#000;border:3px solid #000;border-radius:50%;width:52px;height:52px;font:bold 14px monospace;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,.4);">DBG</button>
 <script>(function(){function mibLog(msg,color){var log=document.getElementById('mib-log'),panel=document.getElementById('mib-debug');if(!log)return;var line=document.createElement('div');line.style.color=color||'#0f0';line.style.borderBottom='1px solid #333';line.style.padding='2px 0';line.textContent=new Date().toLocaleTimeString()+'  '+msg;log.appendChild(line);if(panel)panel.style.display='block';log.scrollTop=log.scrollHeight;}window.addEventListener('error',function(e){mibLog('ERROR: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno,'#f55');});window.addEventListener('unhandledrejection',function(e){mibLog('PROMISE REJECT: '+(e.reason&&e.reason.message?e.reason.message:e.reason),'#fa0');});['log','warn','error'].forEach(function(fn){var orig=console[fn];console[fn]=function(){var a=Array.prototype.slice.call(arguments).map(function(x){try{return typeof x==='object'?JSON.stringify(x):String(x);}catch(_){return String(x);}}).join(' ');mibLog('['+fn+'] '+a,fn==='error'?'#f55':fn==='warn'?'#fa0':'#0f0');orig.apply(console,arguments);};});function fmtAge(ms){if(ms==null)return'n/a';var s=Math.round(ms/1000);if(s<90)return s+'s';var m=Math.floor(s/60);if(m<90)return m+'m';return(Math.round(m/6)/10)+'h';}
-window.mibFeedHealth=function(){mibLog('FEED HEALTH … /api/radar/health','#0ff');fetch('/api/radar/health',{cache:'no-store'}).then(function(r){return r.json();}).then(function(h){var col={healthy:'#0f0',quiet:'#fa0',btc_lagging:'#fa0',market_quiet:'#fa0',ingest_stalled:'#f55',ws_dropped:'#f55',radar_down:'#f55',unknown:'#fa0'}[h.status]||'#0ff';mibLog('FEED: '+String(h.status||'?').toUpperCase().replace(/_/g,' '),col);var s=h.streams||{},b=s.births||{},tp=s.tape||{},bt=s.btc||{};mibLog('  births '+fmtAge(b.age_ms)+'   5m:'+(b.last_5min||0)+'  1h:'+(b.last_1h||0),'#9f9');mibLog('  tape   '+fmtAge(tp.age_ms),'#9f9');mibLog('  btc    '+fmtAge(bt.age_ms)+(bt.usd?'   $'+Math.round(bt.usd):''),'#9f9');var pp=h.pumpfun_program;if(pp&&pp.checked)mibLog('  pump.fun program: '+(pp.alive?('LIVE '+pp.age_s+'s ago'):(pp.age_s==null?'unreachable':'quiet')),pp.alive?'#0f0':'#fa0');var sc=h.scans||{};var fk=Object.keys(sc).filter(function(k){return sc[k]&&sc[k].failing;});if(fk.length)fk.forEach(function(k){var f=sc[k];mibLog('  ⚠ '+k+' failing'+(f.err_age_ms!=null?' '+fmtAge(f.err_age_ms)+' ago':'')+(f.err?': '+f.err:''),'#f55');});if(h.db_mb!=null)mibLog('  db '+h.db_mb+'MB','#888');if(h.diagnosis)mibLog('  → '+h.diagnosis,col);if(h.action)mibLog('  ⇒ '+h.action,'#ff0');}).catch(function(e){mibLog('FEED health error: '+(e&&e.message?e.message:e),'#f55');});};
+window.mibFeedHealth=function(){mibLog('FEED HEALTH … /api/radar/health','#0ff');fetch('/api/radar/health',{cache:'no-store'}).then(function(r){return r.json();}).then(function(h){var col={healthy:'#0f0',quiet:'#fa0',btc_lagging:'#fa0',market_quiet:'#fa0',degraded:'#f55',ingest_stalled:'#f55',ws_dropped:'#f55',radar_down:'#f55',unknown:'#fa0'}[h.status]||'#0ff';mibLog('FEED: '+String(h.status||'?').toUpperCase().replace(/_/g,' '),col);var s=h.streams||{},b=s.births||{},tp=s.tape||{},bt=s.btc||{};mibLog('  births '+fmtAge(b.age_ms)+'   5m:'+(b.last_5min||0)+'  1h:'+(b.last_1h||0),'#9f9');mibLog('  tape   '+fmtAge(tp.age_ms),'#9f9');mibLog('  btc    '+fmtAge(bt.age_ms)+(bt.usd?'   $'+Math.round(bt.usd):''),'#9f9');var pp=h.pumpfun_program;if(pp&&pp.checked)mibLog('  pump.fun program: '+(pp.alive?('LIVE '+pp.age_s+'s ago'):(pp.age_s==null?'unreachable':'quiet')),pp.alive?'#0f0':'#fa0');var sc=h.scans||{};var fk=Object.keys(sc).filter(function(k){return sc[k]&&sc[k].failing;});if(fk.length)fk.forEach(function(k){var f=sc[k];mibLog('  ⚠ '+k+' failing'+(f.err_age_ms!=null?' '+fmtAge(f.err_age_ms)+' ago':'')+(f.err?': '+f.err:''),'#f55');});if(h.db_mb!=null)mibLog('  db '+h.db_mb+'MB','#888');if(h.diagnosis)mibLog('  → '+h.diagnosis,col);if(h.action)mibLog('  ⇒ '+h.action,'#ff0');}).catch(function(e){mibLog('FEED health error: '+(e&&e.message?e.message:e),'#f55');});};
 mibLog('MIB bridge active.','#0ff');})();</script>
 <script>
 /* CLIENT ERROR SINK — the console reports its own failures to a place a seat
@@ -3634,7 +3634,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
   var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[]};
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[],fastRows:[],listRows:[]};
   // POSITIONS SURVIVE THE SESSION (2026-08-10). They lived only in memory, so
   // closing the app forgot every trade — which, combined with a host wallet
   // that filters Token-2022, left a real position with no visible evidence
@@ -3717,6 +3717,24 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       ch:"sol", ico:"🌱", img:c.img||null, entry:mc||1, now:mc||1, peak:mc||1,
       born:ms, read:["go","🌱 just listed"+(c.graduation_dex?(" · "+c.graduation_dex):"")], hot:false,
       addr:c.token_address, dev:(c.creator||""), devN:null, listed:true};
+  }
+  // BORN LOADED fast lane (RESEARCH_RadarMethod, 2026-08-12): coins stamped at
+  // FIRST SIGHTING (<90s old) in the 5-8k birth band — heavy real buying out of
+  // the gate, the doubling not yet spent (measured 22.4% hit 2x vs 4.7% base).
+  // Entry = the stamp price, so the card's % is the true from-entry read. The
+  // momentum tag upgrades the badge once the 3-min tape read lands.
+  function mapFast(c){
+    if(!c.token_address)return null;
+    var entry=Number(c.entry_mc)||0;
+    var now=Number(c.cur_mc!=null?c.cur_mc:(c.mc3m!=null?c.mc3m:entry))||entry;
+    var mom=c.momentum||"";
+    var read=mom==="hot"?["go","⚡ 2x off the line"]
+      :mom==="warm"?["go","⚡ climbing"]
+      :["go","⚡ born loaded"+(Number(c.regime_hot)?" · hot hours":"")];
+    return {id:String(c.token_address), s:String(c.symbol||"?").slice(0,10), n:String(c.name||"").slice(0,24),
+      ch:"sol", ico:"⚡", img:c.img||null, entry:entry||1, now:now||1, peak:Number(c.peak_mc)||now||1,
+      born:Number(c.qualified_ms)||Date.now(), read:read, hot:c.band==="core", addr:c.token_address,
+      dev:(c.creator||""), devN:(c.dev_prior!=null?Number(c.dev_prior):null), fast:true};
   }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
@@ -3895,15 +3913,20 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var pin=S.pinned||[], seenPin={};
     pin.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var noPin=function(c){ return !seenPin[((c&&c.addr)||"").toLowerCase()]; };
-    // Just-listed rows lead the feed after the user's own pins — the DEX-pair
-    // birth is the hunting window, so it outranks the radar's slower screens.
+    // FAST LANE leads everything but the user's own pins: born-loaded stamps
+    // are minutes-old and the whole thesis is the FIRST minutes — by the time
+    // the slower screens would rank them, the window is spent.
+    var fast=(S.fastRows||[]).filter(noPin).slice(0,4);
+    fast.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    // Just-listed rows follow — the DEX-pair birth is the other hunting
+    // window, and it outranks the radar's slower screens.
     var lst=(S.listRows||[]).filter(noPin).slice(0,6);
     lst.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
     if(!sol.length&&!base.length){
-      if(pin.length||lst.length){ S.live=pin.concat(lst); renderList(); return; }
+      if(pin.length||fast.length||lst.length){ S.live=pin.concat(fast).concat(lst); renderList(); return; }
       if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=pin.concat(lst), si=0, bi=0;
+    var out=pin.concat(fast).concat(lst), si=0, bi=0;
     while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
@@ -3985,6 +4008,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // resolved history (old, image already space-cleaned) — last-resort fill only,
         // so the list is never blank in a quiet market.
         S.listRows=((d&&d.listings)||[]).map(mapListing).filter(Boolean);
+        S.fastRows=((d&&d.fastlane)||[]).map(mapFast).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);

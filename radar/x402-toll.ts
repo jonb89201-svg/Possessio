@@ -47,6 +47,7 @@ import { bazaarResourceServerExtension } from "@x402/extensions";
 import { tollRoutes } from "./toll-routes";
 import { FEED_HTML } from "./feed";
 import { sessionGateResponse } from "./sessiongate";
+import { healthVerdict, type FeedStatusRow } from "./health";
 
 export type Env = {
   RADAR_DB: D1Database;
@@ -67,6 +68,7 @@ export type Env = {
   CONSOLE_URL?: string;             // where icon/splash/og assets live (default possessio.io)
   FC_ACCOUNT_ASSOCIATION?: string;  // signed JFS (JSON) proving the domain -> your FID; set via `wrangler secret put`
   NEYNAR_API_KEY?: string;          // Neynar-powered features (notifications/posting); base mini app needs none
+  TAPE_HOST?: string;               // "railway" = per-trade tape lives off-worker; local DO dormant
 };
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -228,9 +230,45 @@ export function buildTolledApp(env: Env) {
   });
   // Bitcoin news strip — cached RSS aggregate (display only, public, free).
   app.get("/radar/news", async (c) => c.json({ items: await getNews() }));
+  // ---- THE HEALTH VERDICT (RESEARCH_RadarMethod §5, the False-Green fix). ----
+  // The tape died silently for ~50h under a green banner because nothing
+  // ESCALATED feed_status staleness. This route IS the escalation: feed_status
+  // → healthVerdict → a loud red naming the dead feed and its age. The console
+  // banner reads this; a dead critical feed is now structurally impossible to
+  // miss. Free + public: it exposes ops liveness, never method params.
+  app.get("/radar/health", async (c) => {
+    const { results } = await c.env.RADAR_DB.prepare(
+      `SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status`
+    ).all();
+    return c.json(healthVerdict(results as unknown as FeedStatusRow[], Date.now(), c.env.TAPE_HOST));
+  });
   // Layer 3 VERIFY-FIRST surface: WS engine state, parse rate, raw samples.
   // Aggregates + public mint data only — nothing here leaks method params.
+  // ZOMBIE FIX (2026-08-12): under TAPE_HOST="railway" the local DO is dormant
+  // BY DESIGN — querying it reported the dead-by-design DO's state as if it
+  // were the tape (a False Green mirror: a green banner over a dormant engine,
+  // or a red one over a healthy Railway tape). The truth for the Railway tape
+  // is its pumptapeTrades heartbeat in feed_status — serve that instead.
   app.get("/radar/ws-status", async (c) => {
+    if (c.env.TAPE_HOST === "railway") {
+      const row = await c.env.RADAR_DB.prepare(
+        `SELECT scan, last_ok_ms, last_err_ms, last_err FROM feed_status
+          WHERE scan='pumptapeTrades'`
+      ).first<any>();
+      const now = Date.now();
+      const okMs = row?.last_ok_ms ?? null;
+      const ageS = okMs != null ? Math.round((now - okMs) / 1000) : null;
+      const alive = ageS != null && ageS <= 15 * 60
+        && !(row?.last_err_ms != null && row.last_err_ms > okMs);
+      return c.json({
+        host: "railway",
+        alive,
+        last_heartbeat_ms: okMs,
+        heartbeat_age_s: ageS,
+        last_err: alive ? null : (row?.last_err ?? (okMs == null ? "never heartbeated" : null)),
+        note: "per-trade tape runs on Railway; this is its D1 heartbeat, the local DO is dormant by design",
+      });
+    }
     const ns = (c.env as any).PUMPTAPE as DurableObjectNamespace | undefined;
     if (!ns) return c.json({ error: "PUMPTAPE_NOT_BOUND" }, 503);
     const stub = ns.get(ns.idFromName("main"));
@@ -352,6 +390,41 @@ export function buildTolledApp(env: Env) {
         WHERE COALESCE(curve_pair_seen_ms, dexscreener_first_seen_ms) >= ?1
         ORDER BY listed_ms DESC LIMIT 12`
     ).bind(Date.now() - 20 * 60_000).all();
+    // BORN LOADED fast lane (RESEARCH_RadarMethod §3): stamps from the last
+    // 90min, ranked by score, momentum-demoted rows ('down') dropped. Aliases
+    // match the candidate card shape (qualified_ms/entry_mc) so the console
+    // renders these with the existing card machinery; cur_mc is the freshest
+    // tape tick for a live +% read. Same ratified public surface: which coins,
+    // never entry/exit prices or size.
+    const fastlane = await db.prepare(
+      `SELECT f.token_address, f.symbol, f.name,
+              f.sighted_ms AS qualified_ms, f.birth_mc AS entry_mc,
+              f.age_at_sight_sec, f.score, f.band, f.regime_hot, f.dev_prior,
+              f.mc3m, f.momentum, f.peak_mc, f.peak_mult, f.outcome,
+              (SELECT m.mc FROM mc_ticks m WHERE m.token_address=f.token_address
+                ORDER BY m.ms DESC LIMIT 1) AS cur_mc,
+              (SELECT m.ms FROM mc_ticks m WHERE m.token_address=f.token_address
+                ORDER BY m.ms DESC LIMIT 1) AS cur_ms,
+              (SELECT CASE WHEN json_valid(b.raw_birth_json)
+                           THEN json_extract(b.raw_birth_json,'$.image_uri') END
+                 FROM births b WHERE b.token_address=f.token_address) AS img,
+              (SELECT creator FROM births b WHERE b.token_address=f.token_address) AS creator
+         FROM fastlane f
+        WHERE f.sighted_ms >= ?1
+          AND COALESCE(f.momentum,'') != 'down'
+        ORDER BY f.score DESC, f.sighted_ms DESC LIMIT 12`
+    ).bind(Date.now() - 90 * 60_000).all();
+    // Fast-lane forward scorecard: graded stamps only (>=6h old). THIS is the
+    // number that ratifies or kills the method — research said 22.4% 2x in the
+    // core band; the forward tally is the test that counts.
+    const fastlaneStats = await db.prepare(
+      `SELECT band, COUNT(*) AS n,
+              SUM(outcome='2x') AS n2x,
+              SUM(outcome IN ('2x','1_5x')) AS n15x,
+              SUM(outcome='untracked') AS untracked
+         FROM fastlane WHERE outcome IS NOT NULL
+        GROUP BY band`
+    ).all();
     // The oscillation tape for everything currently on screen. 25min covers
     // the longest possible early->qualify->track life; closed coins age out.
     const ticksRaw = await db.prepare(
@@ -367,6 +440,8 @@ export function buildTolledApp(env: Env) {
       recent: recent.results,
       early: early.results,
       listings: listings.results,
+      fastlane: fastlane.results,
+      fastlane_stats: fastlaneStats.results,
       earlyPlay: earlyPlay.results,
       scorecard: scorecard.results,
       btc,

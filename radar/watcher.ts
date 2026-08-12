@@ -102,6 +102,45 @@ export function rawBirthJson(it: any): string {
   });
 }
 
+// ─── BORN LOADED fast lane (RESEARCH_RadarMethod_20260812, Architect-greenlit
+// full production 2026-08-12) ───────────────────────────────────────────────
+// The measured signal: an empty curve reads ~$2.1k, so USD mc 3-8k within the
+// first sighting window = real SOL committed out of the gate, before the crowd.
+// Resolved 2-day window, from-entry standard (97% of births sighted <60s):
+//   5-8k -> 22.4% hit 2x / 32.5% hit 1.5x  (junk floor: 4.5% / 7%)
+//   3-5k -> 10.2% / 15.2%
+//   x UTC 00-06 regime -> core cell 26.8% / 37.0% (n=246)
+// The stamp happens AT SIGHTING inside birthScan (no 4-minute wait — the
+// signal IS the first minute). Stamps are immutable; screenScan fills in the
+// 3-min momentum read and grades outcomes against births.mc_peak_usd. Real
+// trading is the test that counts; this table keeps the score.
+export const FAST_BAND_LO = 3_000;
+export const FAST_BAND_CORE = 5_000;
+export const FAST_BAND_HI = 8_000;
+export const FAST_MAX_AGE_SEC = 90; // sighting window: poll cadence is 60s, so ≤90s ≈ first sighting
+
+/// Measured-2x%% estimate for a birth at first sighting. Pure — tested offline.
+/// Returns null when out of band (not a fast-lane coin).
+export function scoreBirth(mcUsd: number | null, ageSec: number, hourUtc: number, devPrior: number | null): { score: number; band: "core" | "lower"; regimeHot: 0 | 1 } | null {
+  if (mcUsd == null || mcUsd < FAST_BAND_LO || mcUsd > FAST_BAND_HI) return null;
+  if (ageSec < 0 || ageSec > FAST_MAX_AGE_SEC) return null;
+  const band = mcUsd >= FAST_BAND_CORE ? "core" : "lower";
+  let score = band === "core" ? 22.4 : 10.2;          // F1, measured
+  const regimeHot: 0 | 1 = hourUtc >= 0 && hourUtc < 6 ? 1 : 0;
+  if (regimeHot) score *= 1.2;                         // F3: 26.8/22.4 stacked lift
+  if (devPrior != null) score *= devPrior <= 3 ? 1.06 : 0.95; // F5, weak but real
+  return { score: Math.round(score * 10) / 10, band, regimeHot };
+}
+
+/// Launcher-tool fingerprint from the birth description ("Deployed using
+/// https://j7tracker.io" et al). Farm-tool coins are a future filter; persist
+/// the host now so the cohort is measurable (F6).
+export function launcherOf(desc: unknown): string | null {
+  if (typeof desc !== "string") return null;
+  const m = desc.match(/https?:\/\/([^\/\s"')]+)/);
+  return m ? m[1].toLowerCase().slice(0, 60) : null;
+}
+
 export async function birthScan(env: WatcherEnv): Promise<void> {
   if (!env.PUMPFUN_FEED_URL) {
     console.warn("PUMPFUN_FEED_URL unset — birthScan idle (VERIFY-FIRST gate)");
@@ -131,6 +170,7 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
   // slice raised to 500, and inserts BATCHED so the extra volume is one D1
   // call rather than N subrequests (avoids the Workers subrequest ceiling).
   const stmts: any[] = [];
+  const hourUtc = new Date(now).getUTCHours();
   for (const it of items.slice(0, 500)) {
     // Shape pinned against the LIVE-VERIFIED frontend-api-v3 /coins response
     // (2026-07-06): `mint`, `created_timestamp` (ms), `usd_market_cap`.
@@ -138,25 +178,70 @@ export async function birthScan(env: WatcherEnv): Promise<void> {
     // read - never raw `market_cap` (SOL-denominated on this feed).
     const addr = it.mint ?? it.address ?? it.tokenAddress;
     if (!addr) continue;
+    const mcUsd = numOrNull(it.usd_market_cap ?? it.marketCapUsd);
+    const createdMs = numOrNull(it.created_timestamp ?? it.createdAt);
     stmts.push(
       env.RADAR_DB.prepare(
         `INSERT INTO births
            (token_address, chain, symbol, name, creator, api_created_ms,
             pumpfun_first_seen_ms, status, last_checked_ms,
-            mc_at_birth_usd, raw_birth_json)
-         VALUES (?1,'solana',?2,?3,?4,?5,?6,'watching',?6,?7,?8)
+            mc_at_birth_usd, raw_birth_json,
+            has_twitter, has_website, live_at_birth, reply_count,
+            real_sol_reserves, launcher)
+         VALUES (?1,'solana',?2,?3,?4,?5,?6,'watching',?6,?7,?8,?9,?10,?11,?12,?13,?14)
          ON CONFLICT(token_address) DO NOTHING`
       ).bind(
         addr,
         it.symbol ?? null,
         it.name ?? null,
         it.creator ?? null,
-        numOrNull(it.created_timestamp ?? it.createdAt),
+        createdMs,
         now,
-        numOrNull(it.usd_market_cap ?? it.marketCapUsd),
-        rawBirthJson(it) // R-1: valid JSON always — full if <=4KB, else the slimmed field subset
+        mcUsd,
+        rawBirthJson(it), // R-1: valid JSON always — full if <=4KB, else the slimmed field subset
+        // F6 (RESEARCH_RadarMethod): the birth-time gold, persisted as columns
+        // because raw_birth_json is pruned at ~RAW_JSON_KEEP_MIN and these are
+        // the industry's strongest-cited signals. Cheap, nullable, forever.
+        it.twitter ? 1 : 0,
+        it.website ? 1 : 0,
+        it.is_currently_live ? 1 : 0,
+        numOrNull(it.reply_count),
+        numOrNull(it.real_sol_reserves) != null ? Number(it.real_sol_reserves) / 1e9 : null,
+        launcherOf(it.description)
       )
     );
+    // BORN LOADED stamp — at sighting, in the same batch (births row lands
+    // first; transaction order is the batch order). ON CONFLICT DO NOTHING
+    // keeps the FIRST stamp immutable if a coin reappears within the window.
+    const ageSec = createdMs != null ? Math.round((now - createdMs) / 1000) : -1;
+    const scored = scoreBirth(mcUsd, ageSec, hourUtc, null);
+    if (scored !== null) {
+      // Dev history for the score's minor term: launches by this creator
+      // strictly before this coin's own birth — point-in-time, no lookahead.
+      // Band coins are ~1-2/minute, so one indexed count each is cheap.
+      let devPrior: number | null = null;
+      if (it.creator != null && createdMs != null) {
+        try {
+          const dp = await env.RADAR_DB.prepare(
+            `SELECT COUNT(*) AS n FROM births WHERE creator=?1 AND pumpfun_first_seen_ms < ?2`
+          ).bind(it.creator, createdMs).first<any>();
+          devPrior = Number(dp?.n ?? 0);
+        } catch { /* fail-soft: score without the minor term */ }
+      }
+      const fin = scoreBirth(mcUsd, ageSec, hourUtc, devPrior)!;
+      stmts.push(
+        env.RADAR_DB.prepare(
+          `INSERT INTO fastlane
+             (token_address, symbol, name, sighted_ms, age_at_sight_sec,
+              birth_mc, score, band, regime_hot, dev_prior)
+           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+           ON CONFLICT(token_address) DO NOTHING`
+        ).bind(
+          addr, it.symbol ?? null, it.name ?? null, now, ageSec,
+          mcUsd, fin.score, fin.band, fin.regimeHot, devPrior
+        )
+      );
+    }
   }
   if (stmts.length > 0) await env.RADAR_DB.batch(stmts);
 }
