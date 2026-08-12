@@ -3718,22 +3718,25 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       born:ms, read:["go","🌱 just listed"+(c.graduation_dex?(" · "+c.graduation_dex):"")], hot:false,
       addr:c.token_address, dev:(c.creator||""), devN:null, listed:true};
   }
-  // BORN LOADED fast lane (RESEARCH_RadarMethod, 2026-08-12): coins stamped at
-  // FIRST SIGHTING (<90s old) in the 5-8k birth band — heavy real buying out of
-  // the gate, the doubling not yet spent (measured 22.4% hit 2x vs 4.7% base).
-  // Entry = the stamp price, so the card's % is the true from-entry read. The
-  // momentum tag upgrades the badge once the 3-min tape read lands.
+  // BORN LOADED fast lane (RESEARCH_RadarMethod + RESEARCH_ExitAlgo, 2026-08-12):
+  // coins stamped at FIRST SIGHTING (<90s old) in the 5-8k birth band. The stamp
+  // is a WATCHLIST sighting, not a buy signal — 60.6% of the band never touches
+  // +10% and losers average a 0.61x peak (ExitAlgo §2). The buy signal is the
+  // 3-MIN WARM READ (1.3-2x birth): 24.6% double from that entry, EV ~1.36.
+  // HOT at minute 3 is the move already SPENT — 0.7% ever reach 3x from there;
+  // the first study ranked hot above warm and forward-honest accounting
+  // inverted it (ExitAlgo §3 F7). The badges say exactly that.
   function mapFast(c){
     if(!c.token_address)return null;
     var entry=Number(c.entry_mc)||0;
     var now=Number(c.cur_mc!=null?c.cur_mc:(c.mc3m!=null?c.mc3m:entry))||entry;
     var mom=c.momentum||"";
-    var read=mom==="hot"?["go","⚡ 2x off the line"]
-      :mom==="warm"?["go","⚡ climbing"]
-      :["go","⚡ born loaded"+(Number(c.regime_hot)?" · hot hours":"")];
+    var read=mom==="hot"?["fast","⚡ already ran — don't chase"]
+      :mom==="warm"?["go","⚡ ENTRY WINDOW"]
+      :["flow","⚡ watch · born loaded"+(Number(c.regime_hot)?" · hot hours":"")];
     return {id:String(c.token_address), s:String(c.symbol||"?").slice(0,10), n:String(c.name||"").slice(0,24),
       ch:"sol", ico:"⚡", img:c.img||null, entry:entry||1, now:now||1, peak:Number(c.peak_mc)||now||1,
-      born:Number(c.qualified_ms)||Date.now(), read:read, hot:c.band==="core", addr:c.token_address,
+      born:Number(c.qualified_ms)||Date.now(), read:read, hot:mom==="warm", addr:c.token_address,
       dev:(c.creator||""), devN:(c.dev_prior!=null?Number(c.dev_prior):null), fast:true};
   }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
