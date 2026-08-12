@@ -3751,7 +3751,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // then clears after 30s.
   function scheduleExitClear(id){ if(id==null)return; var t=setTimeout(function(){ delete S.exits[id]; renderList(); },30000); S.timers.push(t); }
   function flashExit(id,pct){ if(id==null)return; S.exits[id]={pct:pct}; scheduleExitClear(id); renderList(); }
-  var sellArm={id:null,t:0};
+  // The two-tap arm. `until` is the arm window's close: taps arm for 5s; the
+  // RUG ALARM below arms for 30s (the human may be mid-pocket when it fires).
+  var sellArm={id:null,until:0};
   function sell(id){ var c=(S.live.filter(function(x){return x.id===id;})[0])||null;
     var p=DeskMatch.findArmed(S.positions,c,id);
     if(!p)return; // button is disabled without a position; this is the guard
@@ -3763,8 +3765,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       // so one tap is too cheap — but the control must stay on the card, not
       // behind a flow.
       var nw=Date.now();
-      if(sellArm.id!==p.id||nw-sellArm.t>5000){ sellArm={id:p.id,t:nw}; toast("Tap Force Sell again to SELL EVERYTHING at market."); return; }
-      sellArm={id:null,t:0};
+      if(sellArm.id!==p.id||nw>sellArm.until){ sellArm={id:p.id,until:nw+5000}; toast("Tap Force Sell again to SELL EVERYTHING at market."); return; }
+      sellArm={id:null,until:0};
       forceSellSol(p);
       return;
     }
@@ -3779,10 +3781,41 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var p=S.positions.filter(function(x){return x.state==="armed"&&x.selfCustody&&x.mint===mint;})[0];
     if(!p)return;
     var nw=Date.now();
-    if(sellArm.id!==p.id||nw-sellArm.t>5000){ sellArm={id:p.id,t:nw}; toast("Tap Force Sell again to SELL EVERYTHING at market."); renderPos();
+    if(sellArm.id!==p.id||nw>sellArm.until){ sellArm={id:p.id,until:nw+5000}; toast("Tap Force Sell again to SELL EVERYTHING at market."); renderPos();
       S.timers.push(setTimeout(function(){ renderPos(); },5300)); return; } // the ⚠ label reverts when the arm window closes
-    sellArm={id:null,t:0};
+    sellArm={id:null,until:0};
     forceSellSol(p);
+  }
+  // RUG ALARM (2026-08-12 — Gemini's 500ms-monitor idea, rebuilt inside the
+  // law): DETECTION is automated, EXECUTION stays human. No key ever moves on
+  // its own — the alarm collapses the human's reaction path instead: scream,
+  // vibrate, and ARM Force Sell for 30s so the very next tap sells everything.
+  // Trigger: a HELD coin's tape read collapsing >30% between polls (~1min) —
+  // the structural-failure shape; RESEARCH_ExitAlgo §2 measured losers dumping
+  // instantly to an average 0.61x peak. Bound stated: this watches coins ON
+  // the screen feed; a position whose card aged off the 15-row screen is
+  // covered by the keeper's rules, not this alarm. One scream per mint per
+  // 5min — an alarm that cries every poll gets ignored by the human it exists
+  // to move.
+  var rugPrev={}, rugMuted={};
+  function rugWatch(){
+    var nw=Date.now();
+    S.live.forEach(function(c){
+      if(c.ch!=="sol"||!c.addr)return;
+      var prev=rugPrev[c.addr];
+      rugPrev[c.addr]={mc:c.now,ms:nw};
+      if(!hasPos(c))return;                       // only screams for coins you HOLD
+      if(!prev||!(prev.mc>0)||nw-prev.ms>180000)return; // stale basis = no verdict
+      var drop=(prev.mc-c.now)/prev.mc;
+      if(drop<0.30)return;
+      if(rugMuted[c.addr]&&nw-rugMuted[c.addr]<300000)return;
+      rugMuted[c.addr]=nw;
+      var p=DeskMatch.findArmed(S.positions,c,c.id);
+      if(p){ sellArm={id:p.id,until:nw+30000}; }
+      try{ if(navigator.vibrate)navigator.vibrate([200,100,200,100,400]); }catch(e){}
+      toast("🚨 "+c.s+" fell "+Math.round(drop*100)+"% in a tick — Force Sell is ARMED: one tap sells everything.");
+      renderList(); renderPos();
+    });
   }
   // RECONCILE AGAINST THE CHAIN (2026-08-10): a sale made anywhere else — the
   // pump.fun app, another wallet — left the panel claiming "armed" forever,
@@ -4016,6 +4049,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
         S.solRows=rows; S.inWindow=live.length; mergeRender();
+        rugWatch(); // after the merge: reads the fresh S.live prices for held coins
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
@@ -4355,7 +4389,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // Force Sell on the ROW — the durable home for the only downside
         // control. The card copy of this button dies when the coin ages off
         // the screen list; a position outlives its card.
-        var armedTap=sellArm.id===p.id&&(Date.now()-sellArm.t)<=5000;
+        var armedTap=sellArm.id===p.id&&Date.now()<=sellArm.until;
         var fsBtn=armed?('<button class="forcebtn" style="margin-top:4px" onclick="Desk.sellPos(\''+esc(p.mint)+'\')">'+(armedTap?'⚠ Tap again to SELL ALL':'Force Sell')+'</button>'):'';
         var cleanup=(!armed&&p.soldOutside)?' · <a href="javascript:void 0" onclick="Desk.clearRule(\''+esc(p.mint)+'\')" style="color:var(--dblue);font-weight:600">clear rule</a>':'';
         return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag sol" style="vertical-align:1px">SOL</span></div>'+

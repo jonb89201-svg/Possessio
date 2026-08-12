@@ -73,6 +73,11 @@ async function buildUserBuy({ userPublicKey, mint, usdcAmount, slippageBps = 300
     body: JSON.stringify({
       quoteResponse: q, userPublicKey, wrapAndUnwrapSol: true,
       dynamicComputeUnitLimit: true,
+      // Normal-tier tip, hard-capped at 0.001 SOL — a buy can afford to wait
+      // a block; the exits above cannot (see buildDelegatedExit).
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: { maxLamports: 1_000_000, priorityLevel: "high" },
+      },
     }),
   });
   if (!r.ok) throw new Error(`jupiter swap-build ${r.status}`);
@@ -163,6 +168,13 @@ async function buildDelegatedExit({ keeperPublicKey, userPublicKey, mint, amount
       destinationTokenAccount: undefined, // default: the user's USDC ATA
       wrapAndUnwrapSol: false,
       dynamicComputeUnitLimit: true,
+      // PRIORITY FEE (2026-08-12): the keeper's exit fires at targets and
+      // stops — both are races. veryHigh tier, hard-capped at 0.005 SOL,
+      // paid by the keeper (the fee payer per rule 4). An exit that misses
+      // its block during a dump costs the user far more than the tip.
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: { maxLamports: 5_000_000, priorityLevel: "veryHigh" },
+      },
     }),
   });
   if (!r.ok) throw new Error(`jupiter exit-build ${r.status}`);
