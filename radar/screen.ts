@@ -662,7 +662,7 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const stratTargetPct = parseFloat(env.STRAT_TARGET_PCT || "0.50");
   const stratStopPct = parseFloat(env.STRAT_STOP_PCT || "0.40");
   const { results: liveC } = await env.RADAR_DB.prepare(
-    `SELECT c.token_address, c.peak_mc, c.entry_mc, b.status AS bstatus, b.pumpfun_first_seen_ms AS born
+    `SELECT c.token_address, c.peak_mc, c.entry_mc, c.qualified_ms, b.status AS bstatus
        FROM candidates c JOIN births b ON b.token_address=c.token_address
       WHERE c.outcome='live'`
   ).all();
@@ -670,7 +670,17 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   for (const c of liveC as any[]) {
     const addr = c.token_address as string;
     const mc = mcOf(addr);
-    const age = now - Number(c.born);
+    // TIME-STOP FIX (2026-08-14, Tare + Architect — mc_ticks froze at exactly
+    // 10 ticks / ~9min for EVERY token, measured against D1). age used to be
+    // measured from BIRTH (pumpfun_first_seen_ms), but qualifying into
+    // 'candidates' already costs 4-7min (AGE_MIN_MS..AGE_MAX_MS above), so a
+    // coin that qualified at minute 6 hit the birth-anchored 10min stop at
+    // minute 10 regardless — only ~4min of genuine live tracking, and the
+    // mc_ticks tape (screen.ts:354-358) stops the instant outcome leaves
+    // 'live'. §1's "10-minute time-stop" means 10 minutes HELD as a
+    // candidate, not 10 minutes since the coin was born — anchor to
+    // qualified_ms, the moment it actually became a live candidate.
+    const age = now - Number(c.qualified_ms);
     // Entry-relative levels; fall back to the legacy fixed MC if entry is missing.
     const entryMc = Number(c.entry_mc ?? 0);
     const targetMc = entryMc > 0 ? entryMc * (1 + stratTargetPct) : TARGET_MC;
