@@ -229,10 +229,10 @@ test("strat_take=0: momentum out of band (vel < 7) though in MC band", async () 
 // =============================================================================
 // OUTCOME RESOLUTION (P1-b path — entry-relative target/stop/timestop)
 // =============================================================================
-function liveCandidate(mint, { entryMc = 10_000, bornMsAgo = 60_000 } = {}) {
+function liveCandidate(mint, { entryMc = 10_000, qualifiedMsAgo = 60_000 } = {}) {
   return {
     token_address: mint, peak_mc: entryMc, entry_mc: entryMc,
-    bstatus: "watching", born: Date.now() - bornMsAgo,
+    bstatus: "watching", qualified_ms: Date.now() - qualifiedMsAgo,
   };
 }
 const outcomeUpdate = (db) => db.captured.find((c) => c.sql.includes("SET outcome=?2, outcome_ms=?3"));
@@ -259,8 +259,8 @@ test("outcome=stop: entry-relative -40% cross (6000 <= 10000*0.6)", async () => 
 
 test("outcome=timestop: aged past 10min with no target/stop cross", async () => {
   const mint = "TSP";
-  // born 11min ago, MC flat at entry => neither target nor stop => timestop.
-  const db = makeDb({ live: [liveCandidate(mint, { bornMsAgo: 11 * 60_000 })], tape: [{ token_address: mint }] });
+  // qualified 11min ago, MC flat at entry => neither target nor stop => timestop.
+  const db = makeDb({ live: [liveCandidate(mint, { qualifiedMsAgo: 11 * 60_000 })], tape: [{ token_address: mint }] });
   globalThis.fetch = router({ feed: [DONOR], dexPairs: [dexPair(mint, 10_000)] });
   await screenScan(baseEnv(db, globalThis.fetch));
   assert.equal(outcomeUpdate(db).args[1], "timestop", "timestop past 10min");

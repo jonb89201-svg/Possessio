@@ -12,9 +12,27 @@
 //
 // ENV (all optional except where noted):
 //   PUMPPORTAL_WS_URL    default wss://pumpportal.fun/api/data
-//   PUMPPORTAL_API_KEY   optional — presence auto-arms per-coin trade subs
-//                        (subscribeTokenTrade needs the key funded >=0.02 SOL;
-//                        births are free and keyless). NEVER logged.
+//   PUMPPORTAL_API_KEY   optional — lets per-coin trade subs be armed (see
+//                        ACTIVE_MINTS below). Births are free and keyless
+//                        regardless of this key. NEVER logged.
+//   ACTIVE_MINTS         optional, comma-separated mint allowlist. COST GUARD
+//                        (2026-08-14, Tare §8 / Architect: "we can't afford
+//                        $300/day, pure and simple"). subscribeTokenTrade is
+//                        METERED (0.01 SOL / 10,000 events) and this file used
+//                        to arm it for EVERY birth unconditionally — measured
+//                        ~$10/hr against a $230/MONTH total infra budget, and
+//                        the $5 test spend was never even ingested (401, see
+//                        board). Nothing in production reads this trade-level
+//                        data today: the keeper prices positions live via a
+//                        Jupiter quote (keeper/index.js), and the radar's own
+//                        candidate/mc_ticks grading runs on free DexScreener +
+//                        pump.fun curve reads (screen.ts). So the safe default
+//                        is OFF — leave ACTIVE_MINTS unset and this process
+//                        never sends a single metered subscribeTokenTrade,
+//                        even with PUMPPORTAL_API_KEY funded. Set it to a
+//                        short list (open positions only, per Tare's
+//                        recommendation) if trade-level tracking is ever
+//                        actually needed again.
 //   PUMPFUN_FEED_URL     default frontend-api-v3 /coins (solUsd ratio source)
 //   INGEST_URL           default https://possessio-radar.jonb89201.workers.dev/radar/tape-ingest
 //   TAPE_INGEST_TOKEN    bearer for the ingest route. UNSET => DRY TAPE:
@@ -26,6 +44,10 @@ const { TapeEngine } = require("./engine");
 
 const WS_URL = process.env.PUMPPORTAL_WS_URL || "wss://pumpportal.fun/api/data";
 const API_KEY = process.env.PUMPPORTAL_API_KEY || ""; // scrub-allow:named-secret-assignment — an env read by NAME; the value never touches the repo
+const ACTIVE_MINTS = new Set(
+  (process.env.ACTIVE_MINTS || "").split(",").map((s) => s.trim()).filter(Boolean)
+);
+const tradesArmed = () => !!API_KEY && ACTIVE_MINTS.size > 0;
 const FEED_URL = process.env.PUMPFUN_FEED_URL ||
   "https://frontend-api-v3.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=true";
 const INGEST_URL = process.env.INGEST_URL ||
@@ -56,7 +78,9 @@ console.log([
   "possessio tape — PumpPortal subscriber (host: this process, engine: tape/engine.js)",
   `  mode:      ${TOKEN ? "LIVE-INGEST (posts to the radar)" : "DRY TAPE (no token — observe + log only)"}`,
   `  ws:        ${WS_URL}`,
-  `  trades:    ${API_KEY ? "KEYED — per-coin trade subs will arm" : "keyless — births only (subscribeTokenTrade needs a funded key)"}`,
+  `  trades:    ${tradesArmed() ? `KEYED — trade subs armed for ${ACTIVE_MINTS.size} mint(s)`
+    : API_KEY ? "KEYED but ACTIVE_MINTS is empty — trade subs OFF by cost policy (births only)"
+    : "keyless — births only (subscribeTokenTrade needs a funded key)"}`,
   `  ingest:    ${INGEST_URL}`,
   `  solUsd:    ratio read from pump.fun feed every ${SOLUSD_EVERY_MS / 1000}s`,
 ].join("\n"));
@@ -101,11 +125,15 @@ function queue(out) {
     if (pending.length >= BUFFER_CAP) { pending.shift(); stats.dropped++; } // loud, never silent
     pending.push(eff);
   }
-  // per-coin trade subs — only meaningful when the key is present; harmless
-  // no-ops otherwise, so gate them to save the socket the chatter.
-  if (ws && connected && API_KEY) {
-    if (out.subscribe.length) ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: out.subscribe }));
-    if (out.unsubscribe.length) ws.send(JSON.stringify({ method: "unsubscribeTokenTrade", keys: out.unsubscribe }));
+  // per-coin trade subs — METERED (see ACTIVE_MINTS note above). The engine
+  // suggests a subscribe on every birth; the host (here) is what decides
+  // whether that suggestion actually costs money, by intersecting it against
+  // the allowlist. Empty allowlist -> this filters to nothing -> zero spend.
+  if (ws && connected && tradesArmed()) {
+    const sub = out.subscribe.filter((m) => ACTIVE_MINTS.has(m));
+    const unsub = out.unsubscribe.filter((m) => ACTIVE_MINTS.has(m));
+    if (sub.length) ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys: sub }));
+    if (unsub.length) ws.send(JSON.stringify({ method: "unsubscribeTokenTrade", keys: unsub }));
   }
 }
 
@@ -133,7 +161,7 @@ async function pollSolUsd() {
 
 async function flush() {
   if (!pending.length && !TOKEN) return;      // dry tape with nothing to say
-  const health = engine.health(Date.now(), connected, !!API_KEY);
+  const health = engine.health(Date.now(), connected, tradesArmed());
   if (!TOKEN) { pending.length = 0; return; } // dry tape: effects observed, not posted
   // Heartbeat even with zero effects, but at watchdog cadence not flush
   // cadence — handled by the caller passing force=true from the watchdog.
@@ -177,7 +205,7 @@ function watchdog() {
 
 // One status line a minute — greppable, key-free, the whole state.
 function statusLine() {
-  const h = engine.health(Date.now(), connected, !!API_KEY);
+  const h = engine.health(Date.now(), connected, tradesArmed());
   const s = engine.stats;
   console.log(
     `tape status=${h.status} tracked=${h.tracked} births=${s.births} trades=${s.trades} ` +
