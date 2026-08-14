@@ -205,6 +205,22 @@ export class PumpTape {
     // any fallible work, so the worst case is a wasted 30s tick, never silence.
     const cur = await this.state.storage.getAlarm();
     if (cur === null) await this.state.storage.setAlarm(Date.now() + ALARM_EVERY_MS);
+
+    // BAN-RISK GUARD (2026-08-13, Tare §2.3 / Fathom follow-up): this DO's
+    // alarm is self-perpetuating and was NOT gated on TAPE_HOST anywhere in
+    // this file — index.ts stops the CRON from poking /ensure under
+    // TAPE_HOST="railway", but the alarm above re-arms itself regardless and
+    // calls straight back into this function on every tick (see alarm()
+    // below: `if (!this.ws) await this.ensure()`). That means this DO would
+    // keep attempting its own outbound WebSocket to PumpPortal forever,
+    // completely independent of the cron gate, the moment its alarm was ever
+    // armed — a second live connection racing the Railway tape's, which is
+    // exactly PumpPortal's own documented ban condition ("only one websocket
+    // connection at a time... bans expire every hour"). Fail closed: the
+    // watchdog keeps ticking (harmless local bookkeeping above), but this DO
+    // must never open a socket while Railway is the live tape host.
+    if ((this.env as any).TAPE_HOST === "railway") return;
+
     if (this.ws) return;
     // SHAPE PINNED (live samples via /radar/ws-status, 2026-07-11):
     // subscribeNewToken is FREE and answers anonymously; subscribeTokenTrade /
