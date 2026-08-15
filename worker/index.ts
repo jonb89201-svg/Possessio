@@ -738,6 +738,32 @@ export default {
       }
     }
 
+    // Hourly 100k-hit desk-reach measurement (2026-08-15). Same passthrough
+    // shape as /api/radar/candidates just above — this route is free/public/
+    // aggregate-only on the radar worker (radar/x402-toll.ts), so no auth
+    // concern, just the same cross-origin + timeout guard. Cached longer
+    // (60s, not 5s) since it changes on the order of an hour, not a poll tick,
+    // and the overnight measurement trigger calls it once an hour by design.
+    if (pathname === "/api/radar/hourly-100k") {
+      const RADAR = "https://possessio-radar.jonb89201.workers.dev/radar/hourly-100k";
+      try {
+        const r = await fetch(RADAR, {
+          cf: { cacheTtl: 60, cacheEverything: true },
+          signal: AbortSignal.timeout(5_000),
+        } as any);
+        const body = await r.text();
+        return new Response(body, {
+          status: r.status,
+          headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+      } catch {
+        return new Response(JSON.stringify({ error: "RADAR_UNREACHABLE" }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+
     // Radar feed HEALTH — the console's self-diagnosis, the "mobile F12 for the
     // feed". Reads the same radar D1 the feed writes to and returns, in plain
     // language, WHAT is wrong when births go quiet — encoding the split that
