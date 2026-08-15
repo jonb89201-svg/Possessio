@@ -256,6 +256,87 @@ test("strat_take=0: momentum out of band (vel < 7) though in MC band", async () 
 });
 
 // =============================================================================
+// DECOUPLED FAST LANE (2026-08-15, Architect: "decouple the fast lane from
+// status='watching'"). Overnight /radar/hourly-100k measurement found 3 of 7
+// genuine $100k+ hits graduated off the curve in 60s-8min and were structurally
+// unqualifiable: both §0 and §1 required births.status='watching', and pump.fun
+// graduation itself only fires around ~$69k — already past ENTRY_HIGH (13k) by
+// construction. These tests pin the decoupled behavior.
+// =============================================================================
+function graduatedBirthRow(mint, { bornMsAgo = AGE_MS, mcAtDiscovery = 250_000, mcPeak = 300_000 } = {}) {
+  return {
+    token_address: mint, symbol: "SYM", name: "Name", creator: "creatorX",
+    pumpfun_first_seen_ms: Date.now() - bornMsAgo,
+    raw_birth_json: JSON.stringify({ associated_bonding_curve: CURVE_ACCT }),
+    mc_at_birth_usd: 2_000, status: "discovered",
+    mc_at_discovery_usd: mcAtDiscovery, mc_peak_usd: mcPeak,
+  };
+}
+
+test("graduated fast (status='discovered') qualifies via mc_at_discovery_usd, bypassing the 8-13k band", async () => {
+  const mint = "TGRAD";
+  const db = makeDb({ young: [graduatedBirthRow(mint)] });
+  // Graduated — off the curve entirely, so it's absent from the pump.fun feed.
+  globalThis.fetch = router({ feed: [DONOR], rpc: rpcAccounts(HOLDERS_PASS) });
+  await screenScan(baseEnv(db, globalThis.fetch, { SOLANA_RPC_URL: "https://sol.rpc" }));
+  const ins = candidateInsert(db);
+  assert.ok(ins, "graduated coin must still become a candidate — pre-fix, status='watching' excluded it outright");
+  assert.ok(Math.abs(ins.args[A.ENTRY_MC] - 250_000) < 1,
+    `entry_mc must be mc_at_discovery_usd (250000), got ${ins.args[A.ENTRY_MC]} — the old 8-13k band would have rejected this`);
+});
+
+test("graduated-but-not-yet-discovered-priced falls back to mc_peak_usd", async () => {
+  const mint = "TGRADPEAK";
+  const row = graduatedBirthRow(mint, { mcAtDiscovery: null, mcPeak: 180_000 });
+  const db = makeDb({ young: [row] });
+  globalThis.fetch = router({ feed: [DONOR], rpc: rpcAccounts(HOLDERS_PASS) });
+  await screenScan(baseEnv(db, globalThis.fetch, { SOLANA_RPC_URL: "https://sol.rpc" }));
+  const ins = candidateInsert(db);
+  assert.ok(ins, "candidate inserted from the peak fallback");
+  assert.ok(Math.abs(ins.args[A.ENTRY_MC] - 180_000) < 1, `entry_mc must fall back to mc_peak_usd, got ${ins.args[A.ENTRY_MC]}`);
+});
+
+test("still-watching coins keep the original 8-13k band gate (no regression)", async () => {
+  const mint = "TWATCH";
+  const db = makeDb({ young: [birthRow(mint)] }); // status not 'discovered'
+  globalThis.fetch = router({ feed: [DONOR, coinForMc(mint, 30_000)], rpc: rpcAccounts(HOLDERS_PASS) });
+  await screenScan(baseEnv(db, globalThis.fetch, { SOLANA_RPC_URL: "https://sol.rpc" }));
+  assert.equal(candidateInsert(db), undefined, "a still-watching coin at $30k is still out-of-band and must not qualify");
+});
+
+test("a fast-lane candidate (entry already >> ENTRY_HIGH at qualify) does NOT edge-loss on its next tick", async () => {
+  // Pre-fix, EVERY graduated candidate hit `bstatus==='discovered'` on the very
+  // next live-tracking pass and was force-closed as "graduated" instantly —
+  // qualifying it at all would have been pointless. The guard must key off
+  // entry_mc being inside the old curve band, not merely off bstatus.
+  const mint = "TFASTLIVE";
+  const db = makeDb({
+    live: [{ token_address: mint, peak_mc: 250_000, entry_mc: 250_000, bstatus: "discovered", qualified_ms: Date.now() - 60_000 }],
+    tape: [{ token_address: mint }],
+  });
+  globalThis.fetch = router({ feed: [DONOR], dexPairs: [dexPair(mint, 255_000)] });
+  await screenScan(baseEnv(db, globalThis.fetch));
+  const u = outcomeUpdate(db);
+  assert.equal(u, undefined, "a fast-lane candidate must not instantly close as 'graduated' — that was its entry condition, not a state change");
+});
+
+test("a PRE-GRAD candidate that later graduates mid-track still edge-losses (regression guard)", async () => {
+  // entry_mc inside the original 8-13k band, THEN bstatus flips to discovered
+  // while live — this is the genuine mid-track state change the original
+  // #3 edge-loss branch existed for, and it must still fire.
+  const mint = "TMIDGRAD";
+  const db = makeDb({
+    live: [{ token_address: mint, peak_mc: 10_000, entry_mc: 10_000, bstatus: "discovered", qualified_ms: Date.now() - 60_000 }],
+    tape: [{ token_address: mint }],
+  });
+  globalThis.fetch = router({ feed: [DONOR], dexPairs: [dexPair(mint, 11_000)] });
+  await screenScan(baseEnv(db, globalThis.fetch));
+  const u = outcomeUpdate(db);
+  assert.ok(u, "mid-track graduation must still close the candidate");
+  assert.equal(u.args[1], "graduated", "outcome must be 'graduated', preserving pre-decoupling behavior");
+});
+
+// =============================================================================
 // OUTCOME RESOLUTION (P1-b path — entry-relative target/stop/timestop)
 // =============================================================================
 function liveCandidate(mint, { entryMc = 10_000, qualifiedMsAgo = 60_000 } = {}) {
