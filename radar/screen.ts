@@ -323,17 +323,29 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   //     crossed $4k. First crossing wins (INSERT ... DO NOTHING keeps the
   //     original hit time/MC). This list is display + tape-start only — it
   //     gates nothing; §1 qualification below is untouched.
+  // DECOUPLED (2026-08-15, Architect: "decouple the fast lane from
+  // status='watching'"). A coin that graduates off the curve inside its
+  // first ~90s never crosses EARLY_MC on the curve feed (mcNow) at all — it
+  // just vanishes from births.status='watching' before this screen ever
+  // gets a tick against it. Measured overnight via /radar/hourly-100k: 3 of
+  // 7 genuine $100k+ hits (CHARLIE 60s, anymore 3min, UL 8min to graduate)
+  // were invisible to both §0 and §1 for exactly this reason. Also admit
+  // 'discovered' births; fall back to their DexScreener-sourced discovery/
+  // peak MC when the curve feed never had them.
   const { results: newborns } = await env.RADAR_DB.prepare(
-    `SELECT token_address, symbol, name, pumpfun_first_seen_ms
+    `SELECT token_address, symbol, name, pumpfun_first_seen_ms,
+            mc_at_discovery_usd, mc_peak_usd
        FROM births
-      WHERE status='watching'
+      WHERE status IN ('watching','discovered')
         AND pumpfun_first_seen_ms > ?1
         AND token_address NOT IN (SELECT token_address FROM earlies)`
   ).bind(now - EARLY_MAX_AGE).all();
 
   for (const r of newborns as any[]) {
-    const mc = mcNow.get(r.token_address as string);
-    if (mc === undefined || mc < EARLY_MC) continue;
+    const mc = mcNow.get(r.token_address as string)
+      ?? numOrNull(r.mc_at_discovery_usd)
+      ?? numOrNull(r.mc_peak_usd);
+    if (mc === null || mc < EARLY_MC) continue;
     const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
     stmts.push(env.RADAR_DB.prepare(
       `INSERT INTO earlies
@@ -592,10 +604,19 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
 
   // (1) QUALIFY: 'watching' tokens aged 4-7 min, current curve MC in-band, not
   //     already tracked. Pre-DEX is implied by status='watching'.
+  // DECOUPLED (2026-08-15, Architect: "decouple the fast lane from
+  // status='watching'"). Pump.fun graduation itself only fires around ~$69k
+  // MC — well above ENTRY_HIGH — so a coin that's already 'discovered' by
+  // the time this tick sees it is, by construction, a fast mover the 8-13k
+  // curve band was never going to catch. Previously excluded outright by
+  // status='watching'; now admitted on a separate no-band path below (they
+  // already proved themselves by graduating this fast — the band's job was
+  // only ever to gate the ones still ON the curve).
   const { results: young } = await env.RADAR_DB.prepare(
-    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms, raw_birth_json, mc_at_birth_usd
+    `SELECT token_address, symbol, name, creator, pumpfun_first_seen_ms, raw_birth_json,
+            mc_at_birth_usd, status, mc_at_discovery_usd, mc_peak_usd
        FROM births
-      WHERE status='watching'
+      WHERE status IN ('watching','discovered')
         AND pumpfun_first_seen_ms <= ?1
         AND pumpfun_first_seen_ms >= ?2
         AND token_address NOT IN (SELECT token_address FROM candidates)`
@@ -624,8 +645,14 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     // computing and trusting everywhere else. mcOf() is provably safe here —
     // it falls back to mcNow for anything DexScreener hasn't indexed, so this
     // is strictly an upgrade, never a regression.
-    const mc = mcOf(r.token_address as string);
-    if (mc === null || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
+    const graduated = r.status === "discovered";
+    const mc = graduated
+      ? (numOrNull(r.mc_at_discovery_usd) ?? numOrNull(r.mc_peak_usd) ?? mcOf(r.token_address as string))
+      : mcOf(r.token_address as string);
+    if (mc === null) continue;
+    // pre-grad candidates still gate on the curve band; graduated ones already
+    // blew past it by definition — see the DECOUPLED note above the query.
+    if (!graduated && (mc < ENTRY_LOW || mc > ENTRY_HIGH)) continue;
     const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
     // Point-in-time creator history: the same wallet's launches STRICTLY BEFORE
     // this coin was born (< its own birth ms) — no lookahead. Few coins qualify
@@ -721,7 +748,13 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     const targetMc = entryMc > 0 ? entryMc * (1 + stratTargetPct) : TARGET_MC;
     const stopMc = entryMc > 0 ? entryMc * (1 - stratStopPct) : STOP_MC;
 
-    if (c.bstatus === "discovered") {               // #3 edge-loss: graduated
+    // #3 edge-loss: graduated MID-TRACK, i.e. it qualified on the curve
+    // (entry inside the 8-13k band) and has since left it. DECOUPLED
+    // (2026-08-15): a fast-lane entry that was ALREADY 'discovered' at
+    // qualify time (entry_mc >> ENTRY_HIGH — graduation itself starts around
+    // ~$69k) isn't a state change to react to; it's the entry condition. Without
+    // this guard every fast-lane candidate would edge-loss on its very next tick.
+    if (c.bstatus === "discovered" && entryMc > 0 && entryMc <= ENTRY_HIGH) {
       stmts.push(setOutcome(env, addr, "graduated", now, mc));
     } else if (mc !== null && mc >= targetMc) {     // #1 take-profit (+STRAT_TARGET_PCT)
       stmts.push(setOutcome(env, addr, "target", now, mc));
