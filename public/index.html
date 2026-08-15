@@ -3739,6 +3739,23 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       born:Number(c.qualified_ms)||Date.now(), read:read, hot:mom==="warm", addr:c.token_address,
       dev:(c.creator||""), devN:(c.dev_prior!=null?Number(c.dev_prior):null), fast:true};
   }
+  // NOTABLE — proof, not a pick (2026-08-15, /radar/candidates `notable`).
+  // Coins the §1 gate never promoted to a candidate that hit a real peak
+  // anyway — surfaced from births.mc_peak_usd (kept accurate by discoveryScan
+  // independent of earlies/candidates status entirely), because the earlies/
+  // candidates queries this desk otherwise reads from drop a timed-out
+  // 'missed' row permanently, even when the tape recorded its whole real
+  // move. This is explicitly RETROSPECTIVE — the entry window for a coin
+  // already at its peak is gone — never a buy signal, never styled "go".
+  function mapNotable(c){
+    if(!c.token_address)return null;
+    var entry=Number(c.entry_mc)||0, peak=Number(c.peak_mc)||entry;
+    return {id:String(c.token_address), s:String(c.symbol||"?").slice(0,10), n:String(c.name||"").slice(0,24),
+      ch:"sol", ico:"👁", img:c.img||null, entry:entry||1, now:peak||1, peak:peak||1,
+      born:Number(c.qualified_ms)||Date.now(),
+      read:["fast","👁 gate missed it — real peak, not a pick"], hot:false, addr:c.token_address,
+      dev:(c.creator||""), devN:null, notable:true};
+  }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
@@ -3958,11 +3975,17 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     // window, and it outranks the radar's slower screens.
     var lst=(S.listRows||[]).filter(noPin).slice(0,6);
     lst.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    // NOTABLE, capped at 2 — deliberately small. This exists so a real
+    // missed winner is provably visible somewhere, not to compete for the
+    // list's real estate; fast+lst already learned that lesson once
+    // (2026-08-15, the 90min fastlane window that squatted all 12 slots).
+    var notable=(S.notableRows||[]).filter(noPin).slice(0,2);
+    notable.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
     if(!sol.length&&!base.length){
-      if(pin.length||fast.length||lst.length){ S.live=pin.concat(fast).concat(lst); renderList(); return; }
+      if(pin.length||fast.length||lst.length||notable.length){ S.live=pin.concat(fast).concat(lst).concat(notable); renderList(); return; }
       if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=pin.concat(fast).concat(lst), si=0, bi=0;
+    var out=pin.concat(fast).concat(lst).concat(notable), si=0, bi=0;
     while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
@@ -4045,6 +4068,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         // so the list is never blank in a quiet market.
         S.listRows=((d&&d.listings)||[]).map(mapListing).filter(Boolean);
         S.fastRows=((d&&d.fastlane)||[]).map(mapFast).filter(Boolean);
+        S.notableRows=((d&&d.notable)||[]).map(mapNotable).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
