@@ -269,6 +269,15 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   // "steady volume increase" signal, and it lives in the newborn window
   // (age 0-5min) where this feed demonstrably works.
   const solNow = new Map<string, number>();
+  // REPLY-COUNT resample (migration 0031). births.reply_count is a birth-time
+  // snapshot, almost always <1s old — structurally too early for a reply to
+  // exist, which is why it reads 0 for nearly every row ever captured. This
+  // map is the SAME live feed pull's CURRENT reply_count per token, read
+  // fresh every screenScan tick, so a token can be re-checked once it's old
+  // enough for chatter/external calls to actually show up. Mirrors mcNow: no
+  // new fetch, best-effort, only as fresh as the last tick this token was
+  // still on the feed's newest-~1000 page.
+  const replyNow = new Map<string, number>();
   // SOL/USD is a market-wide constant, so derive it ONCE from any coin's
   // usd_market_cap / market_cap ratio. The ratio cancels the (possibly stale)
   // curve term and leaves pure SOL price — verified ~$77.08, identical across
@@ -297,6 +306,8 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
     if (mc !== null) mcNow.set(addr, mc);
     const sol = numOrNull(it.real_sol_reserves);
     if (sol !== null) solNow.set(addr, sol / 1e9); // lamports -> SOL
+    const rc = numOrNull(it.reply_count);
+    if (rc !== null) replyNow.set(addr, rc);
   }
   if (solUsd !== null && env.PUMPTAPE) {
     // keep the (dormant) Layer 3 engine priced too
@@ -495,6 +506,14 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   //       so most ARE on the tape; a row with no tick by the window's close is
   //       'untracked' (terminal — ticks are only written live, none will appear
   //       later). The stamp itself is immutable; this only fills momentum/mc3m.
+  //       REPLY-COUNT RESAMPLE (migration 0031, 2026-08-15, Architect request):
+  //       piggybacks on this exact same tick — the moment mc3m resolves for a
+  //       stamp is also the moment to read that token's CURRENT reply_count
+  //       off the live feed pull (replyNow), fixing births.reply_count's
+  //       structural always-0 problem (captured <1s old, before any reply
+  //       could exist). Best-effort like mc3m: no feed-page hit this tick
+  //       means no value, same as an untracked mc3m — never retried once
+  //       momentum resolves, since the row leaves the WHERE clause.
   //       PRODUCTION LESSON (2026-08-12, caught by the health verdict's own
   //       errLatest rule ~2h after deploy): D1's engine REJECTS outer-alias
   //       arithmetic inside a correlated subquery ("no such column:
@@ -529,10 +548,11 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
       const mc3m = numOrNull(f.mc3m);
       const birthMc = Number(f.birth_mc);
       if (mc3m !== null && birthMc > 0) {
+        const rc3m = replyNow.get(f.token_address as string) ?? null;
         stmts.push(env.RADAR_DB.prepare(
-          `UPDATE fastlane SET mc3m=?2, momentum=?3
+          `UPDATE fastlane SET mc3m=?2, momentum=?3, reply_count_3m=?4
             WHERE token_address=?1 AND momentum IS NULL`
-        ).bind(f.token_address, mc3m, momentumTag(mc3m / birthMc)));
+        ).bind(f.token_address, mc3m, momentumTag(mc3m / birthMc), rc3m));
       } else if (now - Number(f.sighted_ms) > FAST_MOMENTUM_AT_MS + FAST_MOMENTUM_TOL_MS) {
         // window closed with no tape row — never got on screen, never will tick
         stmts.push(env.RADAR_DB.prepare(

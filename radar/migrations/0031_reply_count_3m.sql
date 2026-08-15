@@ -1,0 +1,18 @@
+-- 0031: fast lane reply-count resample (2026-08-15, Architect request).
+--
+-- WHY: births.reply_count is captured ONCE, at first sighting — almost always
+-- <1s old. It reads as 0 for essentially every row (measured: avg(reply_count)
+-- = 0 across 79,306 births with the column populated) not because nothing
+-- happens, but because it is structurally too early for a reply to exist yet.
+-- That makes it useless as a signal for the thing it was added to detect:
+-- external coordination/hype (e.g. a Twitter callout) driving buys AFTER
+-- launch. mc3m (migration 0030) already solves the identical problem for
+-- price by re-reading at the ~3min mark instead of trusting the birth-time
+-- snapshot; this does the same for reply_count.
+--
+-- Lives on `fastlane`, not `births`: it is captured by the SAME screenScan
+-- pass that already resamples mc3m for fastlane stamps (§3.3/F4), from the
+-- SAME live pump.fun feed pull that pass already makes — no new fetch, no new
+-- table, best-effort exactly like mc3m (a stamp past the window with no
+-- feed-page hit simply never gets one, same as an untracked mc3m).
+ALTER TABLE fastlane ADD COLUMN reply_count_3m INTEGER;
