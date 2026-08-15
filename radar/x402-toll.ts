@@ -390,15 +390,34 @@ export function buildTolledApp(env: Env) {
         WHERE COALESCE(curve_pair_seen_ms, dexscreener_first_seen_ms) >= ?1
         ORDER BY listed_ms DESC LIMIT 12`
     ).bind(Date.now() - 20 * 60_000).all();
-    // BORN LOADED fast lane (RESEARCH_RadarMethod §3 + RESEARCH_ExitAlgo F7):
-    // stamps from the last 90min. WARM leads — the measured entry window
-    // (24.6% forward-2x from the 3-min price) — then fresh un-read stamps
-    // (the watchlist), then hot (informational: the move already ran, 0.7%
-    // reach 3x from there). down/flat are dropped (EV 0.82/1.01 — noise).
+    // BORN LOADED fast lane (RESEARCH_RadarMethod §3 + RESEARCH_ExitAlgo F7).
+    // WARM leads — the measured entry window (24.6% forward-2x from the
+    // 3-min price) — then fresh un-read stamps (the watchlist), then hot
+    // (informational: the move already ran, 0.7% reach 3x from there).
+    // down/flat are dropped (EV 0.82/1.01 — noise).
     // Aliases match the candidate card shape (qualified_ms/entry_mc) so the
     // console renders these with the existing card machinery; cur_mc is the
     // freshest tape tick for a live +% read. Same ratified public surface:
     // which coins, never entry/exit prices or size.
+    //
+    // WINDOW FIX (2026-08-15, measured live against D1): this used to be a
+    // 90min window, and momentum sorts warm picks ABOVE age entirely — a
+    // token tagged warm at minute 3 outranks everything for the rest of the
+    // 90 minutes regardless of how stale it gets. Measured: with the 90min
+    // window, ALL 12 slots this endpoint returns were warm picks 8-84
+    // minutes old — the desk's top-priority render slot (mergeRender() puts
+    // this array first, ahead of candidates) was permanently squatted by
+    // hour-old cards. Worse: mc_ticks correctly STOPS once a token's
+    // candidate lifecycle resolves (target/stop/timestop) — measured on one
+    // of those stale picks, its tape's last tick was 54min old, matching its
+    // resolution almost exactly — so the displayed cur_mc was frozen too,
+    // for the honest reason that tracking had genuinely ended, not a bug in
+    // the tape itself. The desk kept showing it as a live pick regardless.
+    // 12 minutes keeps a warm tag visible for a real observing window past
+    // its ~3-4.5min resolution point (FAST_MOMENTUM_AT_MS+TOL, screen.ts)
+    // without ever showing something whose tracking has already ended.
+    // Verified live: the 90min window returned 12/12 warm, 8-84min old; the
+    // 12min window returns 1 warm (8min) + 11 genuinely fresh (<5min) picks.
     const fastlane = await db.prepare(
       `SELECT f.token_address, f.symbol, f.name,
               f.sighted_ms AS qualified_ms, f.birth_mc AS entry_mc,
@@ -419,7 +438,7 @@ export function buildTolledApp(env: Env) {
                       WHEN f.momentum IS NULL THEN 1
                       ELSE 2 END,
                  f.score DESC, f.sighted_ms DESC LIMIT 12`
-    ).bind(Date.now() - 90 * 60_000).all();
+    ).bind(Date.now() - 12 * 60_000).all();
     // Fast-lane forward scorecard: graded stamps only (>=6h old). THIS is the
     // number that ratifies or kills the method — research said 22.4% 2x in the
     // core band; the forward tally is the test that counts.
