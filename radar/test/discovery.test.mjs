@@ -95,6 +95,41 @@ test("no pairs at all -> only last_checked bump", async () => {
   assert.ok(db.batched[0].sql.includes("SET last_checked_ms"));
 });
 
+// PAID-PROFILE SIGNAL (2026-08-15, Architect: shown live DexScreener listings
+// where a huge headline MC sat on near-zero liquidity — creators paying for a
+// token-info profile or an active boost). Read off the SAME pairs response
+// already fetched for graduation/peak — no new request.
+test("a pair with info.socials sets dex_paid_profile=1", async () => {
+  const db = mockDb([{ token_address: "SOC", pumpfun_first_seen_ms: NOW_FRESH }]);
+  await discoveryScan(env(db, async () => pairsResponse([
+    { dexId: "pumpfun", baseToken: { address: "SOC" }, marketCap: 5000,
+      info: { socials: [{ type: "twitter", url: "https://x.com/soc" }], websites: [] } },
+  ])));
+  const profile = db.batched.find((s) => s.sql.includes("dex_paid_profile"));
+  assert.ok(profile, "paid-profile UPDATE emitted");
+  assert.equal(profile.args[0], "SOC");
+  assert.equal(profile.args[1], 1, "socials present -> paid profile flag = 1");
+});
+
+test("a pair with an active boost sets dex_boost_active to the boost count", async () => {
+  const db = mockDb([{ token_address: "BST", pumpfun_first_seen_ms: NOW_FRESH }]);
+  await discoveryScan(env(db, async () => pairsResponse([
+    { dexId: "pumpfun", baseToken: { address: "BST" }, marketCap: 5000, boosts: { active: 60 } },
+  ])));
+  const profile = db.batched.find((s) => s.sql.includes("dex_paid_profile"));
+  assert.ok(profile, "boost UPDATE emitted even with no socials/websites");
+  assert.equal(profile.args[2], 60, "dex_boost_active = the boosts.active count");
+});
+
+test("a plain pair with neither info nor boosts emits no paid-profile write", async () => {
+  const db = mockDb([{ token_address: "PLAIN", pumpfun_first_seen_ms: NOW_FRESH }]);
+  await discoveryScan(env(db, async () => pairsResponse([
+    { dexId: "pumpfun", baseToken: { address: "PLAIN" }, marketCap: 5000 },
+  ])));
+  assert.ok(!db.batched.some((s) => s.sql.includes("dex_paid_profile")),
+    "no false-positive write when the pair carries no paid signal");
+});
+
 test("R-5: aged-out tokens expire via ONE bulk write, never polled", async () => {
   // young-select returns only fresh rows; the bulk expiry is a separate .run().
   let fetches = 0;

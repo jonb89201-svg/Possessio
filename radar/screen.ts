@@ -856,6 +856,20 @@ export async function dexTrackScan(env: WatcherEnv): Promise<void> {
             WHERE token_address = ?1`
         ).bind(addr, now, mc, liq, vol));
       }
+      // PAID-PROFILE SIGNAL, refreshed during the 1h post-grad window (a
+      // profile or boost bought a few minutes after graduation, not at the
+      // exact instant discoveryScan caught it, still counts). Same response,
+      // no extra request — see watcher.ts's discoveryScan for the rationale.
+      const paidProfile = (p?.info?.socials?.length ?? 0) > 0 || (p?.info?.websites?.length ?? 0) > 0;
+      const boostActive = numOrNull(p?.boosts?.active);
+      if (paidProfile || boostActive !== null) {
+        stmts.push(env.RADAR_DB.prepare(
+          `UPDATE births SET
+              dex_paid_profile = MAX(COALESCE(dex_paid_profile,0), ?2),
+              dex_boost_active = COALESCE(?3, dex_boost_active)
+            WHERE token_address = ?1`
+        ).bind(addr, paidProfile ? 1 : 0, boostActive));
+      }
     }
   }
   if (stmts.length) await env.RADAR_DB.batch(stmts);

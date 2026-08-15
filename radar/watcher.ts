@@ -382,6 +382,32 @@ export async function discoveryScan(env: WatcherEnv): Promise<void> {
         );
       }
 
+      // PAID-PROFILE SIGNAL (2026-08-15, Architect: shown live DexScreener
+      // listings — creators can pay DexScreener for a token-info profile
+      // (socials/image/website) and/or an active boost slot; both are a
+      // visible marketing-spend signal distinct from the radar's own
+      // curve-band qualify. Read off the SAME pairs response already
+      // fetched above — zero extra requests. Write-once-true for the
+      // profile flag (never un-flag once seen); boost count is a last-read
+      // snapshot since a boost genuinely expires.
+      const paidProfile = pairs.some((p: any) =>
+        (p?.info?.socials?.length ?? 0) > 0 || (p?.info?.websites?.length ?? 0) > 0);
+      let maxBoost: number | null = null;
+      for (const p of pairs as any[]) {
+        const b = numOrNull(p?.boosts?.active);
+        if (b !== null && (maxBoost === null || b > maxBoost)) maxBoost = b;
+      }
+      if (paidProfile || maxBoost !== null) {
+        stmts.push(
+          env.RADAR_DB.prepare(
+            `UPDATE births SET
+                dex_paid_profile = MAX(COALESCE(dex_paid_profile,0), ?2),
+                dex_boost_active = COALESCE(?3, dex_boost_active)
+              WHERE token_address = ?1`
+          ).bind(addr, paidProfile ? 1 : 0, maxBoost)
+        );
+      }
+
       if (gradPairs.length > 0) {
         // THE event: graduation surface reached. gap_ms = birth -> graduation.
         // graduation_dex (0004) segments true grads (pumpswap/raydium) from

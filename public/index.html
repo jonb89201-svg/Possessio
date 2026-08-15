@@ -3641,6 +3641,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   // anywhere. The ledger of record is the chain + desk_rules; this is the
   // card's memory of ids, receipts and entries, capped and best-effort.
   var POS_KEY="dk_positions_v1";
+  // A closed position (hit/stopped/soldOutside) stays useful as a receipt for
+  // a few minutes, then it's just clutter — the panel was showing every sale
+  // ever made, forever (Architect, 2026-08-15: "the sold coin section needs
+  // to drop off... we don't need to display the sold positions after a few
+  // minutes"). Display-only cutoff: the underlying S.positions record (and
+  // its receipts) is untouched, just not rendered past this age.
+  var POS_CLOSED_DISPLAY_MS=5*60000;
   function savePos(){ try{ localStorage.setItem(POS_KEY, JSON.stringify(S.positions.slice(0,50))); }catch(e){} }
   function loadPos(){ try{ var raw=localStorage.getItem(POS_KEY); if(!raw)return;
     var arr=JSON.parse(raw); if(Array.isArray(arr)) S.positions=arr.filter(function(p){return p&&typeof p==="object"&&typeof p.s==="string";}).slice(0,50);
@@ -3756,6 +3763,22 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       read:["fast","👁 gate missed it — real peak, not a pick"], hot:false, addr:c.token_address,
       dev:(c.creator||""), devN:null, notable:true};
   }
+  // DEX GRADUATES — on a real DEX pool, paid-profile/boost signal, last hour
+  // (2026-08-15, Architect: shown live DexScreener/pump.fun screenshots —
+  // "we need a section... coins that have made it to the dex... new pairs
+  // in the last hour with a paid dexscreener profile"). Distinct from
+  // notable: this isn't "hit a real peak," it's "someone spent real money
+  // making this look legitimate" — visibility, explicitly not a buy signal.
+  function mapGraduate(c){
+    if(!c.token_address)return null;
+    var entry=Number(c.entry_mc)||0, peak=Number(c.peak_mc)||entry;
+    var boost=Number(c.dex_boost_active)||0;
+    return {id:String(c.token_address), s:String(c.symbol||"?").slice(0,10), n:String(c.name||"").slice(0,24),
+      ch:"sol", ico:"💵", img:c.img||null, entry:entry||1, now:peak||1, peak:peak||1,
+      born:Number(c.qualified_ms)||Date.now(),
+      read:["fast","💵 on "+(c.graduation_dex||"dex")+" · paid profile"+(boost?(" · "+boost+" boost"):"")+" — not a pick"],
+      hot:false, addr:c.token_address, dev:(c.creator||""), devN:null, graduate:true};
+  }
   function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
@@ -3788,7 +3811,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       return;
     }
     if(p.live){ toast("Force-close routes through the rail's exit hatch — rail + keeper are the next build."); return; }
-    p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
+    p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); p.closedMs=Date.now();
     savePos(); renderPos(); flashExit(p.id!=null?p.id:id, p.exitPnl); toast("✕ "+p.s+" sold at "+fmt(p.now)+" ("+(p.exitPnl>=0?"+":"")+p.exitPnl+"%)"); }
   // Force Sell FROM THE POSITIONS PANEL (2026-08-10, same-day finding): the
   // coin card ages off the 15-row screen in minutes, taking the only Force
@@ -3850,7 +3873,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     for(var i=0;i<armedSol.length;i++){ var p=armedSol[i];
       try{
         var d=await M.readDelegate({mint:p.mint});
-        if(d&&d.balance==="0"){ p.state="stopped"; p.soldOutside=true; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); changed=true; }
+        if(d&&d.balance==="0"){ p.state="stopped"; p.soldOutside=true; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); p.closedMs=Date.now(); changed=true; }
       }catch(e){}
     }
     reconBusy=false;
@@ -3874,7 +3897,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     try{
       var res=await M.sellNow({ mint:p.mint, ruleId:p.ruleId||null,
         onStep:function(s){ if(s&&s.text) toast(s.text); } });
-      p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100);
+      p.state=(p.now>=p.entry)?"hit":"stopped"; p.exitPnl=Math.round((p.now-p.entry)/p.entry*100); p.closedMs=Date.now();
       if(res.sold){ p.sellSig=res.signature;
         toast("✕ SOLD "+p.s+" for ~"+(res.solOutEst!=null?res.solOutEst.toFixed(4):"?")+" SOL"+
           (res.cancel&&res.cancel.ok===false?" · rule cancel failed (keeper just sees it empty)":""));
@@ -3981,11 +4004,16 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     // (2026-08-15, the 90min fastlane window that squatted all 12 slots).
     var notable=(S.notableRows||[]).filter(noPin).slice(0,2);
     notable.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    // DEX GRADUATES, capped at 2 — same "don't crowd the list" lesson as
+    // notable. A separate signal (paid profile/boost, not peak MC), so it
+    // gets its own small slice rather than being folded into notable's.
+    var grad=(S.graduateRows||[]).filter(noPin).slice(0,2);
+    grad.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
     var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
     if(!sol.length&&!base.length){
-      if(pin.length||fast.length||lst.length||notable.length){ S.live=pin.concat(fast).concat(lst).concat(notable); renderList(); return; }
+      if(pin.length||fast.length||lst.length||notable.length||grad.length){ S.live=pin.concat(fast).concat(lst).concat(notable).concat(grad); renderList(); return; }
       if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=pin.concat(fast).concat(lst).concat(notable), si=0, bi=0;
+    var out=pin.concat(fast).concat(lst).concat(notable).concat(grad), si=0, bi=0;
     while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
@@ -4069,6 +4097,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         S.listRows=((d&&d.listings)||[]).map(mapListing).filter(Boolean);
         S.fastRows=((d&&d.fastlane)||[]).map(mapFast).filter(Boolean);
         S.notableRows=((d&&d.notable)||[]).map(mapNotable).filter(Boolean);
+        S.graduateRows=((d&&d.dexGraduates)||[]).map(mapGraduate).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
@@ -4423,19 +4452,23 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       // false claim as the copy — just harder to notice because it LOOKS like
       // evidence. A losing preview position now simply keeps losing until the
       // user force-sells it, because that is what actually happens.
-      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — desk sold at your target"); } });
+      if(p.now>=p.target){ p.now=p.target; p.state="hit"; p.exitPnl=p.bps/100; p.closedMs=Date.now(); S.exits[p.id]={pct:p.exitPnl}; scheduleExitClear(p.id); toast("✓ "+p.s+" hit +"+(p.bps/100)+"% — desk sold at your target"); } });
     if(any){ renderPos(); renderList(); } }
   function renderPos(){ var el=$("#dk-pos");
-    if(!S.positions.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
+    // A closed position ages off the panel POS_CLOSED_DISPLAY_MS after it
+    // closed (armed ones and anything without a closedMs stamp always show).
+    var view=S.positions.filter(function(p){
+      return p.state==="armed"||!p.closedMs||(Date.now()-p.closedMs)<=POS_CLOSED_DISPLAY_MS; });
+    if(!view.length){ el.innerHTML='<div class="pos-empty">No open trades yet. Connect your trader, pick a coin, tap a target.</div>'; $("#dk-posnote").textContent=""; return; }
     // Self-custody positions are NOT "at rail" — that label described the Base
     // vault flow and miscounted every SOL position (measured on the phone,
     // 2026-08-10: "3 at rail · exit pending" over three keeper-watched coins).
-    var selfN=S.positions.filter(function(p){return p.live&&p.selfCustody&&p.state==="armed";}).length;
-    var liveN=S.positions.filter(function(p){return p.live&&!p.selfCustody&&p.state==="armed";}).length;
-    var armedN=S.positions.filter(function(p){return !p.live&&p.state==="armed";}).length;
+    var selfN=view.filter(function(p){return p.live&&p.selfCustody&&p.state==="armed";}).length;
+    var liveN=view.filter(function(p){return p.live&&!p.selfCustody&&p.state==="armed";}).length;
+    var armedN=view.filter(function(p){return !p.live&&p.state==="armed";}).length;
     $("#dk-posnote").textContent=selfN?(selfN+" armed · keeper watching"+(liveN?(" · "+liveN+" at rail"):"")):
-      (liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":S.positions.length+" closed"));
-    el.innerHTML=S.positions.map(function(p){ var armed=p.state==="armed";
+      (liveN?(liveN+" at rail · exit pending"):(armedN?armedN+" live · keeper watching":view.length+" closed"));
+    el.innerHTML=view.map(function(p){ var armed=p.state==="armed";
       if(p.live&&p.selfCustody){
         // SOL SELF-CUSTODY — until 2026-08-10 these fell into the Base branch
         // below and rendered as "BASE · at rail · drawn $NaN": the panel lying
@@ -4567,7 +4600,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     catch(e){ return false; }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000),setInterval(pollPositionPrices,15000));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000),setInterval(pollPositionPrices,15000),setInterval(renderPos,30000));
     pollPositionPrices();
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
