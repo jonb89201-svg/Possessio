@@ -275,6 +275,43 @@ export function buildTolledApp(env: Env) {
     const r = await stub.fetch("https://pumptape/status");
     return new Response(r.body, { headers: { "content-type": "application/json" } });
   });
+  // HOURLY DESK-REACH CHECK (2026-08-15, Architect: "which coins hit 100k
+  // every hour and if they got to the desk, not just tape"). Free + public,
+  // same class as /radar/health — an ops/measurement aggregate, not a method
+  // param. Built so the overnight measurement trigger needs a plain curl,
+  // no D1 connector (this org's routine sessions can't carry one at all —
+  // measured directly, create_trigger's connectors param is unavailable here).
+  // Same genuine-vs-artifact split established this session: mc_at_birth_usd
+  // < 20000 is a real bonding-curve launch price; >= 20000 is the separate,
+  // still-undiagnosed "already worth millions the first time we ever saw it"
+  // cohort, reported but not analyzed here.
+  app.get("/radar/hourly-100k", async (c) => {
+    const db = c.env.RADAR_DB;
+    const since = Date.now() - 3600_000;
+    const { results } = await db.prepare(
+      `SELECT token_address, symbol, mc_at_birth_usd, mc_peak_usd, pumpfun_first_seen_ms,
+              (SELECT COUNT(*) FROM candidates cd WHERE cd.token_address = b.token_address) AS reached_desk,
+              (SELECT outcome FROM candidates cd WHERE cd.token_address = b.token_address) AS desk_outcome
+         FROM births b
+        WHERE pumpfun_first_seen_ms >= ?1 AND mc_peak_usd >= 100000
+        ORDER BY mc_peak_usd DESC`
+    ).bind(since).all();
+    const rows = results as any[];
+    const genuine = rows.filter((r) => Number(r.mc_at_birth_usd) < 20000);
+    const artifact = rows.filter((r) => Number(r.mc_at_birth_usd) >= 20000);
+    const reached = genuine.filter((r) => Number(r.reached_desk) > 0);
+    const missed = genuine.filter((r) => Number(r.reached_desk) === 0)
+      .map((r) => ({ symbol: r.symbol, token_address: r.token_address, peak_mc: r.mc_peak_usd }));
+    return c.json({
+      window_ms: 3600_000,
+      since,
+      genuine_100k_hits: genuine.length,
+      reached_desk: reached.length,
+      missed,
+      artifact_cohort_count: artifact.length,
+      artifact_top: artifact[0] ? { symbol: artifact[0].symbol, peak_mc: artifact[0].mc_peak_usd } : null,
+    });
+  });
   app.get("/radar/candidates", async (c) => {
     const db = c.env.RADAR_DB;
     const dexCols = `graduated_ms, dex_price_usd, dex_mc, dex_peak_mc, dex_liq_usd,
