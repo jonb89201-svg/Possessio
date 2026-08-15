@@ -4350,6 +4350,47 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   }
   // Simulated keeper drives PREVIEW positions only. Live (real-draw) positions
   // are never fake-resolved — their exit is the real keeper (not yet built).
+  // REAL live price for held self-custody positions (2026-08-15, Architect:
+  // "so far nothing we have ever done has made that mc move on screen ever").
+  // Root cause, read directly out of this file: driftPositions() below only
+  // ever updates p.now via Math.random() simulation, and explicitly skips
+  // every real position with `if(p.live)return` — correctly, since fabricating
+  // a price for real money would be dishonest. But nothing ever filled the gap
+  // that guard left: reconcilePositions() only checks the on-chain delegate
+  // balance (did the keeper already sell it?), never the price, and
+  // renderPos()'s self-custody branch never rendered a live price field at
+  // all. A real position's card was structurally guaranteed to stay static
+  // forever — not a flaky bug, a missing code path.
+  //
+  // This is display-only, on purpose: it updates p.now for the UI and touches
+  // NOTHING about p.state. State transitions (armed -> stopped) stay owned
+  // entirely by reconcilePositions()'s on-chain read, which is the honest
+  // source of truth — the keeper is what actually sells, this only shows the
+  // number the user is watching. Same DexScreener token endpoint findMint()
+  // already uses (CORS-open, no key), batched comma-joined per the pattern
+  // the radar's own fetchDexMc uses server-side.
+  async function pollPositionPrices(){
+    var held=(S.positions||[]).filter(function(p){return p.state==="armed"&&p.live&&p.selfCustody&&p.mint;});
+    if(!held.length)return;
+    var mints=held.map(function(p){return p.mint;});
+    try{
+      var r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+mints.join(","),{cache:"no-store"});
+      if(!r.ok)return;
+      var d=await r.json();
+      var byAddr={};
+      // deepest-liquidity pair per mint — the same selection findMint() trusts
+      mints.forEach(function(addr){
+        var best=bestPairFor(addr,(d&&d.pairs)||[]);
+        if(best){ var mc=Number(best.marketCap!=null?best.marketCap:best.fdv); if(mc>0) byAddr[addr.toLowerCase()]=mc; }
+      });
+      var moved=false;
+      held.forEach(function(p){
+        var mc=byAddr[p.mint.toLowerCase()];
+        if(mc!=null&&mc!==p.now){ p.now=mc; moved=true; }
+      });
+      if(moved) renderPos();
+    }catch(e){ window.deskReport&&window.deskReport("position-price-poll",(e&&e.message)||String(e),null); }
+  }
   function driftPositions(){ var any=false;
     S.positions.forEach(function(p){ if(p.state!=="armed"||p.live)return; any=true; var mv=(Math.random()-0.44)*p.now*0.05; p.now=Math.max(p.now+mv,p.entry*0.05);
       // The gain target is the ONLY thing the desk fires automatically. The
@@ -4392,11 +4433,20 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         var armedTap=sellArm.id===p.id&&Date.now()<=sellArm.until;
         var fsBtn=armed?('<button class="forcebtn" style="margin-top:4px" onclick="Desk.sellPos(\''+esc(p.mint)+'\')">'+(armedTap?'⚠ Tap again to SELL ALL':'Force Sell')+'</button>'):'';
         var cleanup=(!armed&&p.soldOutside)?' · <a href="javascript:void 0" onclick="Desk.clearRule(\''+esc(p.mint)+'\')" style="color:var(--dblue);font-weight:600">clear rule</a>':'';
+        // THE LIVE PRICE LINE — the whole point of pollPositionPrices() above.
+        // Only shown once p.now differs from p.entry (a live poll has actually
+        // landed) so the panel never implies a false "flat" from the pre-poll
+        // placeholder; before that it stays entry-only, honestly.
+        var livePx=(armed&&typeof p.now==="number"&&p.now!==p.entry)
+          ? (function(){ var pnl=(p.now-p.entry)/p.entry*100, pnlStr=(pnl>=0?"+":"")+pnl.toFixed(1)+"%";
+              return '<span class="dk-mono" style="font-size:11px">now $'+p.now.toPrecision(3)+'</span> '+
+                '<span class="pct '+(pnl>=0?"up":"down")+'" style="font-size:11px">'+pnlStr+'</span><br>'; })()
+          : '';
         return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag sol" style="vertical-align:1px">SOL</span></div>'+
           '<div class="pmeta">yours, in your wallet · target +'+(p.bps/100)+'% · no stop · '+(armed?'keeper watching':(p.soldOutside?'sold outside the desk':'closed'))+cleanup+
           (mintLine?'<br>'+mintLine:'')+
           (receipts?'<br>'+receipts:'')+'</div></div>'+
-          '<div class="ptarget"><span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span>'+fsBtn+'</div>'+
+          '<div class="ptarget">'+livePx+'<span class="dk-mono" style="font-size:11px">in $'+(typeof p.entry==="number"?p.entry.toPrecision(3):"?")+'</span>'+fsBtn+'</div>'+
           '<div class="pstate '+sCls+'">'+sTxt+'</div></div>'; }
       if(p.live){ return '<div class="prow"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">BASE</span></div>'+
         '<div class="pmeta">drawn '+usd(p.units)+' · target +'+(p.bps/100)+'% · no stop · exit pending (keeper)</div></div>'+
@@ -4493,7 +4543,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     catch(e){ return false; }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000),setInterval(pollPositionPrices,15000));
+    pollPositionPrices();
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 

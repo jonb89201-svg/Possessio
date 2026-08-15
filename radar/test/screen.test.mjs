@@ -58,7 +58,7 @@ const HOLDERS_FAIL = [
 
 // ---- mock D1 -----------------------------------------------------------------
 // Routes .all()/.first() by SQL substring; captures every batched/run stmt.
-function makeDb({ young = [], live = [], tape = [], devPrior = 0 } = {}) {
+function makeDb({ young = [], live = [], tape = [], devPrior = 0, fastMom = [] } = {}) {
   const captured = [];
   const match = (sql) => {
     // §1 qualify: young watching births in the age window
@@ -69,6 +69,8 @@ function makeDb({ young = [], live = [], tape = [], devPrior = 0 } = {}) {
       return { results: live };
     // the tape set (earlies UNION live candidates)
     if (sql.includes("FROM earlies") && sql.includes("UNION")) return { results: tape };
+    // (0.6) fast lane momentum resample: the combined cand/t3/mc_ticks CTE
+    if (sql.includes("mt.mc AS mc3m")) return { results: fastMom };
     // everything else that .all()s (newborns, unstamped, plays, dexTrack) => empty
     return { results: [] };
   };
@@ -291,4 +293,43 @@ test("outcome=timestop: aged past 10min with no target/stop cross", async () => 
   globalThis.fetch = router({ feed: [DONOR], dexPairs: [dexPair(mint, 10_000)] });
   await screenScan(baseEnv(db, globalThis.fetch));
   assert.equal(outcomeUpdate(db).args[1], "timestop", "timestop past 10min");
+});
+
+// =============================================================================
+// FAST LANE — reply_count_3m resample (migration 0031, Architect request).
+// births.reply_count is a birth-time snapshot (<1s old) and reads 0 for
+// nearly everything ever captured — structurally too early for a reply to
+// exist. This piggybacks on the existing mc3m resample (F4) to re-read
+// reply_count off the SAME live feed pull at the SAME tick mc3m resolves.
+// =============================================================================
+const fastlaneUpdate = (db) => db.captured.find((c) => c.sql.includes("SET mc3m=?2, momentum=?3, reply_count_3m=?4"));
+
+test("reply_count_3m: captured from the live feed at the same tick mc3m resolves", async () => {
+  const mint = "RC3M";
+  const sighted = Date.now() - 180_000; // exactly at the 3-min mark
+  const db = makeDb({
+    fastMom: [{ token_address: mint, sighted_ms: sighted, birth_mc: 4_000, mc3m: 8_000 }],
+  });
+  globalThis.fetch = router({ feed: [DONOR, coinForMc(mint, 8_000, { reply_count: 42 })] });
+  await screenScan(baseEnv(db, globalThis.fetch));
+  const u = fastlaneUpdate(db);
+  assert.ok(u, "fastlane momentum+reply update emitted");
+  assert.equal(u.args[0], mint);
+  assert.equal(u.args[3], 42, "reply_count_3m must be the live feed's reply_count at this exact tick");
+});
+
+test("reply_count_3m: null (not 0, not skipped) when the token isn't on this tick's feed page", async () => {
+  const mint = "RC3MMISS";
+  const sighted = Date.now() - 180_000;
+  const db = makeDb({
+    fastMom: [{ token_address: mint, sighted_ms: sighted, birth_mc: 4_000, mc3m: 8_000 }],
+  });
+  // No entry for this mint on the feed at all this tick — best-effort miss,
+  // same as an untracked mc3m would be. Momentum still resolves from the
+  // (mocked) tape read; only the reply resample comes up empty.
+  globalThis.fetch = router({ feed: [DONOR] });
+  await screenScan(baseEnv(db, globalThis.fetch));
+  const u = fastlaneUpdate(db);
+  assert.ok(u, "momentum still resolves even without a reply-count hit");
+  assert.equal(u.args[3], null, "reply_count_3m stays explicitly null, never a false 0");
 });
