@@ -526,6 +526,30 @@ export function buildTolledApp(env: Env) {
           AND token_address NOT IN (SELECT token_address FROM candidates)
         ORDER BY mc_peak_usd DESC LIMIT 10`
     ).bind(Date.now() - 45 * 60_000).all();
+    // DEX GRADUATES — coins that made it onto a real DEX pool in the last
+    // hour AND the creator paid DexScreener for a token-info profile
+    // (socials/image/website) or an active boost (2026-08-15, Architect,
+    // walked through live DexScreener/pump.fun screenshots: "we need a
+    // section of the desk to display coins that have made it to the dex...
+    // new pairs in the last hour with a paid dexscreener profile"). This is
+    // a DIFFERENT signal than notable/candidates — not "did it hit a real
+    // peak," but "did someone spend real money making it look legitimate."
+    // dex_paid_profile/dex_boost_active are captured for free off the same
+    // DexScreener response discoveryScan/dexTrackScan already fetch (see
+    // watcher.ts). No qualify gate, no mc floor — visibility-parity only.
+    const dexGraduates = await db.prepare(
+      `SELECT token_address, symbol, name, mc_at_discovery_usd AS entry_mc,
+              mc_peak_usd AS peak_mc, dexscreener_first_seen_ms AS qualified_ms,
+              graduation_dex, dex_boost_active,
+              CASE WHEN json_valid(raw_birth_json)
+                   THEN json_extract(raw_birth_json,'$.image_uri') END AS img,
+              creator
+         FROM births
+        WHERE status='discovered'
+          AND dexscreener_first_seen_ms >= ?1
+          AND dex_paid_profile=1
+        ORDER BY dexscreener_first_seen_ms DESC LIMIT 10`
+    ).bind(Date.now() - 60 * 60_000).all();
     return c.json({
       live: live.results,
       recent: recent.results,
@@ -534,6 +558,7 @@ export function buildTolledApp(env: Env) {
       fastlane: fastlane.results,
       fastlane_stats: fastlaneStats.results,
       notable: notable.results,
+      dexGraduates: dexGraduates.results,
       earlyPlay: earlyPlay.results,
       scorecard: scorecard.results,
       btc,
