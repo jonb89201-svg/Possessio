@@ -167,6 +167,33 @@ test("out-of-band (too high) coin does NOT qualify", async () => {
   assert.equal(candidateInsert(db), undefined, "no candidate for a $30k coin (> ENTRY_HIGH)");
 });
 
+test("qualify reads mcOf() (DexScreener-preferred), not raw mcNow — the production bug", async () => {
+  // MEASURED 2026-08-15: candidates.outcome='live' was found empty in
+  // production for the last ~16h+ (desk showed the same frozen 'recent' row
+  // on every poll — never a live price move). Traced to this exact call
+  // site reading raw mcNow (pump.fun curve only) while every other MC read
+  // in screen.ts already preferred DexScreener via mcOf() — the documented
+  // "TRACKING SOURCE OF RECORD". Direct D1 measurement: 20+ tokens sat
+  // inside the 8-13k band for 3 straight in-window ticks via mcOf() in one
+  // 6h window, and none became a candidate.
+  //
+  // Pinned the opposite way from the two tests above: mcNow says $20,000
+  // (out of ENTRY_HIGH, would have been REJECTED pre-fix), DexScreener says
+  // $10,000 (in band) — the coin must qualify, and entry_mc must be the
+  // DexScreener value, proving mcOf() — not mcNow — is the live source.
+  const mint = "TDEX";
+  const db = makeDb({ young: [birthRow(mint)], tape: [{ token_address: mint }] });
+  globalThis.fetch = router({
+    feed: [DONOR, coinForMc(mint, 20_000)],
+    dexPairs: [{ baseToken: { address: mint }, dexId: "pumpfun", marketCap: 10_000, volume: { m5: 0 } }],
+    rpc: rpcAccounts(HOLDERS_PASS),
+  });
+  await screenScan(baseEnv(db, globalThis.fetch, { SOLANA_RPC_URL: "https://sol.rpc" }));
+  const ins = candidateInsert(db);
+  assert.ok(ins, "candidate inserted — DexScreener's in-band price must win over the out-of-band curve price");
+  assert.ok(Math.abs(ins.args[A.ENTRY_MC] - 10_000) < 1, `entry_mc must be the DexScreener value, got ${ins.args[A.ENTRY_MC]}`);
+});
+
 test("entry_vel = (entry_mc - mc_at_birth)/ageSec, hand-computed = 15", async () => {
   // entry 10000, birth 4000, age 400s => (6000)/400 = 15.
   const mint = "TVEL";

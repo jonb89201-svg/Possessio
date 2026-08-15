@@ -589,8 +589,23 @@ export async function screenScan(env: WatcherEnv): Promise<void> {
   const stratVelLo = parseFloat(env.STRAT_VEL_LO || "7");
   const stratVelHi = parseFloat(env.STRAT_VEL_HI || "20");
   for (const r of young as any[]) {
-    const mc = mcNow.get(r.token_address as string);
-    if (mc === undefined || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
+    // SOURCE FIX (2026-08-15, measured): this read was raw mcNow (pump.fun
+    // curve only), while mcOf() — the documented "TRACKING SOURCE OF RECORD"
+    // at line ~360 — prefers DexScreener and has covered every other MC read
+    // in this file (mc_ticks writes, conviction stamp, outcome resolution)
+    // since that comment was written. Only THIS call site was left on the
+    // curve-only fallback. Measured against D1: in a single 6h window, 20+
+    // tokens sat inside the 8-13k band for 3 straight in-window ticks via
+    // mcOf() (i.e. genuinely qualifying by the tracked, authoritative price)
+    // and NONE became a candidate — mcNow disagreed or was undefined for
+    // every one of them at the exact ticks that mattered. This is why
+    // candidates.outcome='live' was found empty in production: the screen
+    // was gating entry on a less-accurate price than the one it was already
+    // computing and trusting everywhere else. mcOf() is provably safe here —
+    // it falls back to mcNow for anything DexScreener hasn't indexed, so this
+    // is strictly an upgrade, never a regression.
+    const mc = mcOf(r.token_address as string);
+    if (mc === null || mc < ENTRY_LOW || mc > ENTRY_HIGH) continue;
     const ageSec = Math.round((now - Number(r.pumpfun_first_seen_ms)) / 1000);
     // Point-in-time creator history: the same wallet's launches STRICTLY BEFORE
     // this coin was born (< its own birth ms) — no lookahead. Few coins qualify
