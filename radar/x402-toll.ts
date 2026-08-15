@@ -460,6 +460,35 @@ export function buildTolledApp(env: Env) {
     for (const t of ticksRaw.results as any[]) {
       (ticks[t.token_address] ??= []).push({ ms: t.ms, mc: t.mc, sol: t.sol_reserves, v5: t.vol_m5 });
     }
+    // NOTABLE — coins the §1 gate never promoted, that hit a real peak anyway
+    // (2026-08-15, Architect: "tape watching and it making it to the whole 15
+    // coins... is the whole point"). live/early/recent above ALL read from
+    // earlies/candidates — an earlies row that times out to status='missed'
+    // (7min, unconditional) drops out of `early` (status!='watching') and was
+    // never a candidate, so it can never reach `recent` either. It vanishes
+    // from every query this route runs, permanently, the instant it times
+    // out — even though the tape kept recording its real price the whole
+    // time and discoveryScan (watcher.ts) keeps births.mc_peak_usd accurate
+    // independent of earlies/candidates status entirely. This route was the
+    // gap, not the tracking. Sourced from births directly for that reason —
+    // the one place a real peak survives regardless of what the gate decided.
+    // mc_at_birth_usd < 20000 excludes the separate, unresolved "already
+    // worth millions the FIRST time we ever saw it" cohort (a birthScan
+    // discovery-lag question, not a genuine organic pump) — kept out here
+    // rather than shown as a false "win," pending its own investigation.
+    const notable = await db.prepare(
+      `SELECT token_address, symbol, name, mc_at_birth_usd AS entry_mc, mc_peak_usd AS peak_mc,
+              pumpfun_first_seen_ms AS qualified_ms,
+              CASE WHEN json_valid(raw_birth_json)
+                   THEN json_extract(raw_birth_json,'$.image_uri') END AS img,
+              creator
+         FROM births
+        WHERE pumpfun_first_seen_ms >= ?1
+          AND mc_at_birth_usd < 20000
+          AND mc_peak_usd >= 50000
+          AND token_address NOT IN (SELECT token_address FROM candidates)
+        ORDER BY mc_peak_usd DESC LIMIT 10`
+    ).bind(Date.now() - 45 * 60_000).all();
     return c.json({
       live: live.results,
       recent: recent.results,
@@ -467,6 +496,7 @@ export function buildTolledApp(env: Env) {
       listings: listings.results,
       fastlane: fastlane.results,
       fastlane_stats: fastlaneStats.results,
+      notable: notable.results,
       earlyPlay: earlyPlay.results,
       scorecard: scorecard.results,
       btc,
