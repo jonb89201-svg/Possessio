@@ -4572,6 +4572,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
 
+  // Backgrounded webviews throttle setInterval; force a catch-up fetch on foreground return.
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden) return;
+    var v=$("#desk-view"); if(!v||v.hidden) return;
+    pollFeed(); pollBase(); pollPositionPrices(); reconcilePositions();
+  });
+
   window.Desk={
     open:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=false; document.body.style.overflow="hidden";
       S.reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
