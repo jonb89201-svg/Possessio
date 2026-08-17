@@ -36,7 +36,9 @@ so there is nothing to poll and no window where stale authority can move a token
 `Registry { owner, bump, router_bump, rules: Vec<Rule> }` — one per owner, PDA
 `["registry", owner]`, created/owned/closed by the owner.
 
-`Rule { id, kind, mint, dest_mint, amount_cap, expires_ts (0=never), active, venue_program }`
+`Rule { id, kind, mint, dest_mint, amount_cap, expires_ts (0=never), active, venue_program, min_out_floor }`
+— `min_out_floor` (V1.1, audit F2): owner-authored proceeds floor in dest-mint units,
+required > 0 for exit rules; the cranker's `min_out` may tighten it, never undercut it.
 — V1 `kind` = 0 (EXIT) only. Payroll / merchant settlement are future kinds against this
 same registry (the payments-rail seam). V1 exit rules are **one-shot**: a fired exit
 deactivates the rule, matching desk semantics (target hit → position closed).
@@ -49,7 +51,7 @@ deactivates the rule, matching desk semantics (target hit → position closed).
 | `set_rule(...)` | owner | validated upsert (`rules::check_rule_params`) |
 | `revoke_rule(id)` | owner | `active=false`, effective immediately |
 | `execute_exit(id, amount, min_out, venue_data)` | any cranker | see below |
-| `close_registry` | owner | rent back; refuses while any rule active |
+| `close_registry` | owner | rent back; refuses while any rule active — a set-but-never-fired rule must be revoked first (audit F4: deliberate, the refusal is the safe branch) |
 
 ### execute_exit, precisely
 

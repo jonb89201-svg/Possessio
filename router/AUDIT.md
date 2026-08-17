@@ -70,6 +70,29 @@ Per Core Principle 7 (Ratification by Bounds), a pass is only as good as its sta
 
 Any claim beyond the executed bounds is unproven and should be treated as such.
 
+## V1.1 remediation (audit: Caliper 2026-08-16 · innovation pass: Gemini · implemented: Fathom)
+
+| Finding | Disposition | Where |
+|---|---|---|
+| F1 — dest mint not re-verified at delta site (medium) | **FIXED**: `check_deltas` takes the post-reload dest mint and re-asserts vs the rule (`DeltaMintMismatch`) | `rules.rs::check_deltas`; test `f1_delta_site_reasserts_dest_mint` |
+| F2 — min_out entirely cranker-supplied; whole-position exit at min_out=1 passed (medium, load-bearing pre-deploy) | **FIXED**: `Rule.min_out_floor` (owner-authored at `set_rule`, entry-basis, must be > 0) + `min_out ≥ floor` in `check_exit` (`MinOutBelowFloor`); Gemini's `min_exit_ratio_bps` converged on the same hole independently | `rules.rs`; tests `f2_regression_cranker_cannot_undercut_the_owner_floor`, `rule_params_validation` |
+| F3 — writable-meta question on `remaining_accounts` (low/info) | **OPEN — integration-gated**: only bank tests close it. Named as the gate below. | AUDIT §Bounds ladder step 2 |
+| F4 — unfired rules block `close_registry` (cosmetic) | **DOCUMENTED** in SPEC (revoke-then-close is the intended path; refusal is the safe branch) | SPEC.md §Instructions |
+
+**Refused, with reasons (recorded per council discipline):** Ed25519 backend-keypair gate
+on `execute_exit` — recreates keeper-key custody risk and kills permissionless cranking;
+the untrusted-cranker property is the product. (Ed25519 introspection for gasless
+owner-signed `set_rule`/`revoke` is good and **deferred**, not refused.)
+
+**Deferred lane:** `sequence_nonce` (multi-shot kinds only; one-shot V1 replay dies with
+the serialize-before-CPI gate), sliding-window caps (unix-window clock, not
+`clock.epoch`), pro-rata floors for multi-shot rules.
+
+**THE BANK-TEST GATE, named:** "reentrancy cleared" and the F3 writable-meta question
+remain *argued from source*, not executed, until ladder step 2 runs
+(`solana-program-test`/litesvm — measured feasible in these containers by Caliper,
+2026-08-16). Division per house rule: Fathom writes the bank tests, Caliper attacks them.
+
 ## For Gemini's innovation pass — the open questions
 
 1. Attack delta-judgment: any sequence where a venue satisfies both deltas yet harms

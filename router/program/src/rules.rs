@@ -36,6 +36,13 @@ pub fn check_exit(rule: &Rule, i: &ExitInputs) -> Result<()> {
     require!(i.amount > 0, RouterError::AmountZero);
     // A zero floor would let a hostile venue return dust "successfully".
     require!(i.min_out > 0, RouterError::MinOutZero);
+    // V1.1 (audit F2, Caliper 2026-08-16; Gemini concurring independently):
+    // min_out alone was entirely cranker-supplied — a whole-position exit
+    // with min_out=1 passed both check_exit and check_deltas, demonstrated
+    // with a passing test. The floor is now OWNER-AUTHORED in the rule at
+    // set_rule (entry-basis, computed by the owner's client) and the
+    // cranker's min_out may tighten it but never undercut it.
+    require!(i.min_out >= rule.min_out_floor, RouterError::MinOutBelowFloor);
     require!(i.amount <= rule.amount_cap, RouterError::CapExceeded);
     require_keys_eq!(i.src_mint, rule.mint, RouterError::MintMismatch);
     require_keys_eq!(i.dest_mint, rule.dest_mint, RouterError::MintMismatch);
@@ -74,7 +81,15 @@ pub fn check_deltas(
     dest_after: u64,
     amount: u64,
     min_out: u64,
+    rule_dest_mint: Pubkey,
+    dest_mint_at_delta: Pubkey,
 ) -> Result<()> {
+    // V1.1 (audit F1): re-assert the destination mint AT THE DELTA SITE, on
+    // the post-CPI reloaded account — the judged balance must be a balance of
+    // the rule's dest mint, not merely of an account that once matched.
+    // Token-account mints are immutable today; this is defense in depth
+    // priced at one comparison.
+    require_keys_eq!(dest_mint_at_delta, rule_dest_mint, RouterError::DeltaMintMismatch);
     let spent = src_before
         .checked_sub(src_after)
         .ok_or(RouterError::SrcOverdraw)?; // balance UP is as wrong as overdrawn
@@ -98,6 +113,9 @@ pub fn check_rule_params(rule: &Rule, self_program: Pubkey) -> Result<()> {
     require!(rule.expires_ts >= 0, RouterError::BadRuleParams);
     require!(rule.venue_program != Pubkey::default(), RouterError::BadRuleParams);
     require!(rule.venue_program != self_program, RouterError::SelfCpiForbidden);
+    // V1.1 (audit F2): an exit rule with no owner-authored floor is the F2
+    // hole by construction — refuse it at write time, not fire time.
+    require!(rule.min_out_floor > 0, RouterError::BadRuleParams);
     Ok(())
 }
 
@@ -115,7 +133,15 @@ mod tests {
             expires_ts: 0,
             active: true,
             venue_program: Pubkey::new_unique(),
+            min_out_floor: 1,
         }
+    }
+
+    fn deltas(
+        src_b: u64, src_a: u64, dest_b: u64, dest_a: u64, amount: u64, min_out: u64,
+    ) -> Result<()> {
+        let m = Pubkey::new_unique();
+        check_deltas(src_b, src_a, dest_b, dest_a, amount, min_out, m, m)
     }
 
     fn inputs(r: &Rule, router: Pubkey) -> ExitInputs {
@@ -253,21 +279,21 @@ mod tests {
 
     #[test]
     fn deltas_happy_path() {
-        assert!(check_deltas(1_000, 500, 0, 750, 500, 750).is_ok());
+        assert!(deltas(1_000, 500, 0, 750, 500, 750).is_ok());
         // spending LESS than authorised is fine; receiving MORE is fine
-        assert!(check_deltas(1_000, 600, 0, 900, 500, 750).is_ok());
+        assert!(deltas(1_000, 600, 0, 900, 500, 750).is_ok());
     }
 
     #[test]
     fn deltas_refuse_overdraw_even_when_venue_lies() {
         // venue pulled 501 via the delegate though the rule said 500
         assert_eq!(
-            err_of(check_deltas(1_000, 499, 0, 9_999, 500, 1)),
+            err_of(deltas(1_000, 499, 0, 9_999, 500, 1)),
             code(RouterError::SrcOverdraw)
         );
         // src balance went UP — nonsense state, refuse
         assert_eq!(
-            err_of(check_deltas(1_000, 1_001, 0, 9_999, 500, 1)),
+            err_of(deltas(1_000, 1_001, 0, 9_999, 500, 1)),
             code(RouterError::SrcOverdraw)
         );
     }
@@ -275,12 +301,12 @@ mod tests {
     #[test]
     fn deltas_refuse_short_proceeds() {
         assert_eq!(
-            err_of(check_deltas(1_000, 500, 0, 749, 500, 750)),
+            err_of(deltas(1_000, 500, 0, 749, 500, 750)),
             code(RouterError::MinOutNotMet)
         );
         // dest balance FELL — venue stole from the destination: refuse
         assert_eq!(
-            err_of(check_deltas(1_000, 500, 100, 99, 500, 1)),
+            err_of(deltas(1_000, 500, 100, 99, 500, 1)),
             code(RouterError::MinOutNotMet)
         );
     }
@@ -302,5 +328,40 @@ mod tests {
         let mut r = rule();
         r.venue_program = me; // self as venue
         assert_eq!(err_of(check_rule_params(&r, me)), code(RouterError::SelfCpiForbidden));
+        // V1.1 / F2: a floorless exit rule is refused at WRITE time.
+        let mut r = rule();
+        r.min_out_floor = 0;
+        assert_eq!(err_of(check_rule_params(&r, me)), code(RouterError::BadRuleParams));
+    }
+
+    // ── V1.1 remediation (audit F1 + F2, Caliper 2026-08-16) ────────────────
+
+    #[test]
+    fn f2_regression_cranker_cannot_undercut_the_owner_floor() {
+        // Caliper's demonstrated hole, pinned as a permanent red line: a
+        // whole-position exit with min_out=1 used to pass check_exit outright.
+        let mut r = rule();
+        r.min_out_floor = 750; // owner authored at set_rule, entry-basis
+        let router = Pubkey::new_unique();
+        let mut i = inputs(&r, router);
+        i.min_out = 1; // the F2 attack
+        assert_eq!(err_of(check_exit(&r, &i)), code(RouterError::MinOutBelowFloor));
+        i.min_out = 749; // just under still refuses
+        assert_eq!(err_of(check_exit(&r, &i)), code(RouterError::MinOutBelowFloor));
+        i.min_out = 750; // at the floor passes
+        assert!(check_exit(&r, &i).is_ok());
+        i.min_out = 800; // tightening beyond the floor is always allowed
+        assert!(check_exit(&r, &i).is_ok());
+    }
+
+    #[test]
+    fn f1_delta_site_reasserts_dest_mint() {
+        let want = Pubkey::new_unique();
+        let got = Pubkey::new_unique();
+        assert_eq!(
+            err_of(check_deltas(1_000, 500, 0, 750, 500, 750, want, got)),
+            code(RouterError::DeltaMintMismatch)
+        );
+        assert!(check_deltas(1_000, 500, 0, 750, 500, 750, want, want).is_ok());
     }
 }

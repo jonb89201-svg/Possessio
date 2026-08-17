@@ -76,8 +76,9 @@ pub mod possessio_router {
         amount_cap: u64,
         expires_ts: i64,
         venue_program: Pubkey,
+        min_out_floor: u64,
     ) -> Result<()> {
-        let rule = Rule { id, kind, mint, dest_mint, amount_cap, expires_ts, active: true, venue_program };
+        let rule = Rule { id, kind, mint, dest_mint, amount_cap, expires_ts, active: true, venue_program, min_out_floor };
         check_rule_params(&rule, crate::ID)?;
         let reg = &mut ctx.accounts.registry;
         if let Some(slot) = reg.rules.iter_mut().find(|r| r.id == id) {
@@ -188,6 +189,8 @@ pub mod possessio_router {
             ctx.accounts.dest_ata.amount,
             amount,
             min_out,
+            rule.dest_mint,
+            ctx.accounts.dest_ata.mint, // post-reload — the F1 delta-site assert
         )?;
 
         emit!(ExitExecuted {
@@ -232,6 +235,10 @@ pub struct Rule {
     pub expires_ts: i64, // 0 = never
     pub active: bool,
     pub venue_program: Pubkey, // owner-ratified swap venue for THIS rule
+    /// V1.1 (audit F2): OWNER-authored proceeds floor in dest-mint units,
+    /// written at set_rule (entry-basis, owner's client computes it). The
+    /// cranker's per-execution min_out may tighten this, never undercut it.
+    pub min_out_floor: u64,
 }
 
 /* ─────────────────────────────── accounts ─────────────────────────────── */
@@ -384,4 +391,8 @@ pub enum RouterError {
     DestOwnerMismatch,
     #[msg("rules still active")]
     RulesStillActive,
+    #[msg("min_out below the owner-authored rule floor")]
+    MinOutBelowFloor,
+    #[msg("destination mint mismatch at delta site")]
+    DeltaMintMismatch,
 }
