@@ -1,0 +1,18 @@
+[package]
+name = "possessio-router"
+version = "0.1.0"
+edition = "2021"
+description = "POSSESSIO Router — one SPL delegate, N ratified rules. V1: exit module."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+no-entrypoint = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
