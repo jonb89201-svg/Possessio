@@ -108,7 +108,7 @@ measured-bands work), but price-watching is DexScreener/Jupiter reads, not per-p
 
 ## Verification bounds (Ratification by Bounds)
 
-See AUDIT.md §Bounds. Summary: `cargo check` clean and 14/14 unit tests executed green
+See AUDIT.md §Bounds. Summary: `cargo check` clean and 16/16 unit tests executed green (V1.1)
 in this environment; **not** built for SBF, **not** run against a validator or
 program-test bank, **not** deployed anywhere. Those are the audit's outstanding steps,
 in that order.
