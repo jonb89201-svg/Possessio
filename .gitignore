@@ -58,6 +58,7 @@ Thumbs.db
 compile.txt
 report.txt
 grep_v4api.txt
+reports/
 
 # =========================
 # Python (your models/)

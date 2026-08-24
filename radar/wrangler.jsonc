@@ -27,7 +27,13 @@
   "main": "index.ts",
   "compatibility_date": "2026-07-04",
   "compatibility_flags": ["nodejs_compat"], // @x402/extensions imports node:url
-  "triggers": { "crons": ["* * * * *"] }, // every minute; both watcher jobs run per tick
+  // PAUSED 2026-08-23 (overage stop): the per-minute cron drove BOTH cost
+  // lines — D1 read-scans (Cloudflare rows-read) and the rug-gate
+  // getTokenLargestAccounts RPC (QuickNode), all inside scheduled(). Emptying
+  // the cron stops scheduled() from firing; the fetch handler (toll routes,
+  // /api/radar feed, health, tape-ingest) stays live, so this is a pause, not
+  // a teardown. RESUME: restore ["* * * * *"] and redeploy.
+  "triggers": { "crons": [] }, // was ["* * * * *"] every minute — paused to stop overage
 
   // Layer 3: the real-time engine (pumptape.ts). SQLite-backed DO class.
   "durable_objects": {

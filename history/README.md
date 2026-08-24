@@ -19,11 +19,14 @@ reach it, cross-checked where the records overlap.
 | 3 | `SESSION_ARCHIVE_03_merchant_turn.md` | 2026-06-01 → 06-30 | chat | Tare |
 | 4 | `SESSION_ARCHIVE_04_constellation.md` | 2026-07-04 → 08-09 | chat | Tare |
 | 5 | `SESSION_ARCHIVE_05_code_era.md` | 2026-03-22 → 08-09 | git + board | Code seat |
+| 6 | `SESSION_ARCHIVE_06_verification_ladder.md` | ~2026-03 → 08-24 | terminal | Code seat (u2gvnq) |
 
 Parts 1–4 were compiled at the chat seat 2026-08-09 from stored session summaries and
 delivered by the Architect; they are carried here **verbatim**. Part 5 was compiled at a
 Code seat 2026-08-10 from the full git history and the complete board, and fills the
-2026-07-04 → 08-03 gap Part 4 declares dark.
+2026-07-04 → 08-03 gap Part 4 declares dark. Part 6 was compiled at a Code seat 2026-08-24
+from the operator's retained `forge` tee reports plus one live re-certification run; its raw
+terminal capture is carried alongside as `SESSION_ARCHIVE_06_recert_20260824.txt`.
 
 ## Provenance rules for this directory
 
