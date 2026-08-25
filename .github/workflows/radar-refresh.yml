@@ -11,8 +11,13 @@ name: radar-refresh
 # dev branch here was silently reverting every later merge to main.
 
 on:
-  schedule:
-    - cron: "0 */3 * * *"   # every 3 hours
+  # Scheduled auto-redeploy DISABLED 2026-08-25 (cost freeze until customers).
+  # The radar's own cron is already empty (radar/wrangler.jsonc: crons: []), so
+  # the worker is dormant; there is nothing to keep redeploying every 3h, and
+  # the scheduled run burned CI minutes for no benefit. RESTORE by uncommenting
+  # the schedule block below.
+  # schedule:
+  #   - cron: "0 */3 * * *"   # every 3 hours
   workflow_dispatch: {}
 
 jobs:
