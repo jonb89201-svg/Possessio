@@ -136,3 +136,26 @@ Since the last retained tee report the corpus grew **+13 suites / +126 tests** a
 - The closing run is MEASURED and stored verbatim alongside this file. Amend additively; never
   rewrite a part in place. This directory is history, not status — for current truth, run the
   suite.
+
+---
+
+## AMENDMENT — SECRET-SCAN PASS (2026-08-25, council note)
+
+A council critique flagged that a red run can print a credential — an env spill, an RPC URL with
+an embedded key, an internal path — and that Part 6 makes the retained tee-reports a permanent,
+grant-facing reference. A scan was run over the committed re-cert capture and the full retained
+reel with that specific eye.
+
+**Result — no credentials.** MEASURED: zero private keys (bare 64-hex), zero RPC provider URLs
+with embedded keys (the fork reds printed only the `429 over rate limit` JSON body, never the
+keyed URL), zero API keys / env dumps / bearer tokens. The only `SECRET` matches are the test
+name `test_XLink_SecretClearedOnDispatchRevert()`. `SESSION_ARCHIVE_06_recert_20260824.txt`
+(committed here) is clean. The raw reds are **not** in this repo — they live only in the
+operator's retained uploads; Part 6 references them, it does not embed them.
+
+**Before any public/grant excerpt of the raw reports, strip three non-credential items** (identity
+/ account, not secrets): the Cloudflare account id `53a864a8…` (in a `wrangler` error URL), the
+operator handle `jonb89201` (in the radar `*.workers.dev` URL + a deploy binding dump), and the
+Cloudflare NEL beacon URLs `a.nel.cloudflare.com/report/v4?s=<token>` (opaque telemetry, low-risk
+noise). Scan covered the known dangerous patterns; a bespoke secret format could still evade — re-run
+the pass if new reds are added to the reel.
