@@ -3410,7 +3410,6 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     <p class="sub">Pick a network - opens DexScreener in a new tab.</p>
     <a class="mkts-choice base" href="https://dexscreener.com/base" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Base</span><span class="arw">DexScreener &#8599;</span></a>
     <a class="mkts-choice sol" href="https://dexscreener.com/solana" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Solana</span><span class="arw">DexScreener &#8599;</span></a>
-    <button class="mkts-choice" id="mkts-desk" type="button" style="cursor:pointer"><span class="net"><span class="nd" style="background:#3ddc84"></span>AI Assisted Trading</span><span class="arw">Trading desk &#8594;</span></button>
     <button class="mkts-cancel" id="mkts-cancel" type="button">Cancel</button>
   </div>
 </div>
@@ -3427,8 +3426,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   if(cancel)cancel.addEventListener("click",hide);
   modal.addEventListener("click",function(e){if(e.target===modal)hide();});
   Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
-  var deskBtn=document.getElementById("mkts-desk");
-  if(deskBtn)deskBtn.addEventListener("click",function(){hide();if(window.Desk)window.Desk.open();});
+  // AI Assisted Trading entry removed 2026-08-25 — the in-console desk is being
+  // spun out into its own standalone app. The #desk-view markup/JS below is left
+  // dormant (no entry point) pending extraction. To restore in-console: re-add
+  // the #mkts-desk button in the markets sheet and this listener.
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
 })();
 </script>
