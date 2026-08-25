@@ -28,7 +28,22 @@ const env = (k, d) => (process.env[k] == null || process.env[k] === "" ? d : pro
 const RPC = env("SOLANA_RPC_URL");
 const KEEPER_KEY = env("SOLANA_KEEPER_KEY", "");
 const DRY_RUN = env("DRY_RUN", "1") !== "0";
-const POLL_MS = Number(env("POLL_MS", "5000"));
+// POLL CADENCE — and why the default is a DAY, not five seconds.
+//
+// The loop re-reads the on-chain delegate for every ruled position every tick
+// (rule 1: a revoke must be seen immediately). At the old 5s default that is
+// ~17,280 cycles/day, and with no live delegate armed it was ~245M getAccountInfo
+// credits in three weeks (measured 2026-08-25) — the entire RPC bill, spent
+// re-confirming "nothing to do". An execution seat has NO PERCEPTION OF COST
+// (see positions.js tokenProgramInfo), so nothing in the loop flagged it.
+//
+// A once-a-day poll makes the standing cost negligible while no position is
+// armed. It also means the stop-loss reacts at most once a day: acceptable ONLY
+// while there are no live delegates / DRY_RUN. Before going live with armed
+// positions, restore fast reaction the cheap way — a WSS accountSubscribe push
+// on the delegate account — instead of lowering POLL_MS back into a poll storm.
+// Override POLL_MS per-deployment when a tighter cadence is genuinely paid for.
+const POLL_MS = Number(env("POLL_MS", "86400000"));
 const SLIPPAGE_BPS = Number(env("SLIPPAGE_BPS", "300"));
 const SOURCE_KIND = env("POSITION_SOURCE", "desk");   // "desk" | "onchain" | "ledger"
 const LEDGER_FILE = env("LEDGER_FILE", "./keeper/positions.json");
