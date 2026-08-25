@@ -21,7 +21,7 @@ Updated as things get named or done. Last updated: 2026-07-10._
 
 ## Base / grants
 
-- [ ] Finish **Builder Code** setup on dashboard.base.org — paste the locked description (below).
+- [x] **Builder Code (ERC-8021) — registered + wired.** Code `bc_p422ohhb` registered on base.dev; the fixed data suffix is wired into `public/index.html` (`const BUILDER`, appended via `BUILDER.attach()` at all 3 signer sources — covers raw sends + Contract.method(), no contract changes). Suffix verified byte-for-byte vs `ox/erc8021` (`node script/builder-code/gen-suffix.mjs`). **Remaining (base.dev dashboard, Jon):** (1) set payout address = treasury Safe `0x188bE439…`; (2) paste offchain description/site; (3) redeploy the `possessio` worker so attribution goes live. Verify via [builder-code-checker](https://builder-code-checker.vercel.app/) after the first attributed tx.
 - [ ] Nominate POSSESSIO for a **Base Builder Grant** — grants.base.eth form (retroactive, shipped-work; you qualify on live contracts).
 - [ ] Apply to the **CDP AI Builder Program** (~$15K) — best-fit angle for the AI-council build.
 
