@@ -1337,6 +1337,47 @@ const state = {
   connections: {},
 };
 
+// ─── Base Builder Code (ERC-8021) attribution ────────────────────────────────
+// Appends the fixed ERC-8021 data suffix for builder code "bc_p422ohhb" to the
+// calldata of every write tx, so Base attributes POSSESSIO's onchain activity
+// (rewards → treasury payout address; analytics; discovery surfaces). No contract
+// changes: the suffix is trailing calldata that ABI-decoding contracts ignore.
+// SUFFIX is verified byte-for-byte against ox/erc8021 — regenerate/verify with
+// `node script/builder-code/gen-suffix.mjs`. Base (8453) is where it's indexed;
+// on other chains it's harmless extra calldata.
+const BUILDER = {
+  CODE: "bc_p422ohhb",
+  // "bc_p422ohhb"(0x62635f703432326f686862) + len(0x0b) + 0x00 + 8021×8
+  SUFFIX: "0x62635f703432326f6868620b0080218021802180218021802180218021",
+  // Wrap an ethers signer so every sendTransaction carries the suffix. Covers
+  // both raw signer.sendTransaction({data}) and Contract.method() (which calls
+  // signer.sendTransaction under the hood). Attribution never blocks a tx.
+  attach(signer) {
+    if (!signer || !BUILDER.SUFFIX || BUILDER.SUFFIX.length <= 2) return signer;
+    const tail = BUILDER.SUFFIX.slice(2).toLowerCase();
+    return new Proxy(signer, {
+      get(target, prop, recv) {
+        if (prop === "sendTransaction") {
+          return async (tx) => {
+            try {
+              const t = Object.assign({}, tx);
+              const cur = (t.data && t.data !== "0x") ? String(t.data) : "0x";
+              if (!cur.toLowerCase().endsWith(tail)) {
+                t.data = (cur === "0x" ? "0x" : cur) + tail;
+              }
+              return target.sendTransaction(t);
+            } catch (_) {
+              return target.sendTransaction(tx); // never block a tx on attribution
+            }
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return (typeof v === "function") ? v.bind(target) : v;
+      },
+    });
+  },
+};
+
 // Tab order: PAY (live on Base mainnet) leads; HOOK (V3, fork-proven) follows.
 const TAB_ORDER = ["PAY", "HOOK", "X402", "VAULT", "AUTOTARGET", "RAIL"];
 
@@ -2156,7 +2197,7 @@ async function connectWallet() {
     const accounts = await state.provider.send("eth_requestAccounts", []);
     state.walletAddr = accounts[0];
     window.PossessioEvm.address = accounts[0];
-    state.signer = await state.provider.getSigner();
+    state.signer = BUILDER.attach(await state.provider.getSigner());
     const net = await state.provider.getNetwork();
     state.walletChainId = Number(net.chainId);
     updateWalletUI();
@@ -3062,7 +3103,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
     try {
       const provider = await _provider();
-      const signer = await provider.getSigner();
+      const signer = BUILDER.attach(await provider.getSigner());
       const net = await provider.getNetwork();
       const chainId = Number(net.chainId);
       const buyer = await signer.getAddress();
@@ -4385,7 +4426,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     if(!__sig){ toast("No wallet to sign with."); return; }
     var btn=document.querySelector("#dk-sheet .b-pri"); if(btn){ btn.disabled=true; btn.textContent="Confirm in wallet…"; }
     try{
-      var bp=new ethers.BrowserProvider(__sig); var signer=await bp.getSigner();
+      var bp=new ethers.BrowserProvider(__sig); var signer=BUILDER.attach(await bp.getSigner());
       var vc=new ethers.Contract(v.addr,VAULT_ABI,signer);
       var rb=new Uint8Array(32); crypto.getRandomValues(rb); var intentId=ethers.toBigInt(ethers.hexlify(rb));
       var tx=await vc.drawForTrade(intentId,units); toast("Drawing "+usd(units)+" · "+esc(c.s)+"…");
