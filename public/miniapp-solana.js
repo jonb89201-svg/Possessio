@@ -69,7 +69,11 @@ export async function initMiniApp(rpcUrl) {
     // once (measured 2026-08-05: 0.1.10 here, 0.3.0 there). Both expose
     // getSolanaProvider, so the pin was not the Solana failure — but two
     // versions of the same SDK in one page is a defect waiting for its turn.
-    const mod = await import("https://esm.sh/@farcaster/miniapp-sdk");
+    // Pinned (W-1): exact version, not floating `latest`. Keeps every esm.sh
+    // import of this SDK on ONE build (the 2026-08-05 two-versions-in-one-page
+    // defect above) and closes the silent-supply-chain-bump vector. Bump
+    // deliberately, in lockstep across public/index.html + radar/feed.ts.
+    const mod = await import("https://esm.sh/@farcaster/miniapp-sdk@0.3.0");
     sdk = mod.sdk;
     const inHost = await sdk.isInMiniApp?.().catch(() => false);
     if (!inHost) { sdk = null; return { miniApp: false, reason: "not in a Farcaster host" }; }

@@ -1,9 +1,11 @@
 # Cloudflare Pages response headers for possessio.io (build output dir = public).
-# ACTIVE below: safe, non-breaking headers.
-# The CSP and frame policy are left COMMENTED on purpose - both can break the
-# site if wrong, and neither can be verified from CI. Enable + test on device
-# (wallet connect, cdnjs ethers, Google Fonts, DexScreener feed + token images)
-# before trusting them live. Codebyte Law: do not ship what you cannot verify.
+# ACTIVE below: safe, non-breaking headers + a REPORT-ONLY CSP (monitors, never
+# blocks — see W-2 block). ENFORCING CSP and the frame policy stay COMMENTED on
+# purpose: an enforcing CSP can break the site if wrong and cannot be verified
+# from CI, so it flips on only after an on-device pass (wallet connect, cdnjs
+# ethers, Google Fonts, DexScreener/GeckoTerminal feeds + token images, the
+# miniapp SDK) shows the Report-Only console clean. Codebyte Law: do not ENFORCE
+# what you cannot verify — monitoring first is the verification step.
 
 /*
   X-Content-Type-Options: nosniff
@@ -11,15 +13,30 @@
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
 
-# --- Content-Security-Policy (VERIFY on device, then uncomment) ---
-# Hosts the console actually uses:
+# --- Content-Security-Policy (W-2) ---
+# SHIPPED IN REPORT-ONLY MODE below: the browser evaluates the policy and logs
+# any violation to the console (visible in MIB DEBUG on device) but BLOCKS
+# NOTHING. That is deliberate and Codebyte-Law-clean: a CSP cannot be verified
+# from CI and a wrong one breaks wallet-connect, so we monitor first, enforce
+# after the on-device report comes back empty. Flip Report-Only -> enforcing by
+# uncommenting the second line (and only then).
+#
+# Allowlist is GROUNDED in what the code actually loads (grep of public/, 2026-08-26):
 #   script  : self + inline (console is inline-heavy) + cdnjs (ethers 6.13.4)
+#             + esm.sh (the pinned @farcaster/miniapp-sdk@0.3.0 dynamic import)
 #   style   : self + inline + fonts.googleapis.com
 #   font    : fonts.gstatic.com
-#   connect : self + api.dexscreener.com (markets feed; wallet RPC is via the
-#             injected provider, not page fetch, so not listed here)
-#   img     : self + data: + https: (DexScreener token logos, drawn to canvas)
-# Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.dexscreener.com; img-src 'self' data: https:; base-uri 'self'; form-action 'self'
+#   connect : self + api.dexscreener.com + api.geckoterminal.com (coin feeds)
+#             + the Base READ RPCs hit directly by the JsonRpcProvider ladder
+#               (mainnet.base.org, base-rpc.publicnode.com, 1rpc.io) + eth.llamarpc.com
+#               (L1 read) + esm.sh (module fetch). NOTE: the earlier draft omitted
+#               these RPCs on the assumption all wallet RPC is via the injected
+#               provider — true for WRITES, but the read path is a page-origin fetch,
+#               so enforcing without them would break every on-chain read.
+#   img     : self + data: + https: (DexScreener/GeckoTerminal token logos, canvas-drawn)
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.dexscreener.com https://api.geckoterminal.com https://mainnet.base.org https://base-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://esm.sh; img-src 'self' data: https:; base-uri 'self'; form-action 'self'; object-src 'none'
+# ENFORCE (uncomment ONLY after a device pass shows the Report-Only console clean):
+# Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://esm.sh; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.dexscreener.com https://api.geckoterminal.com https://mainnet.base.org https://base-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://esm.sh; img-src 'self' data: https:; base-uri 'self'; form-action 'self'; object-src 'none'
 
 # --- Framing policy (DECISION for the Architect) ---
 # Standalone security wants DENY. But if the console is ever embedded as a

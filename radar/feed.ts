@@ -483,7 +483,7 @@ export const FEED_HTML = `<!doctype html>
 <!-- Farcaster Mini App: signal ready to dismiss the splash once loaded. No-op
      outside a Farcaster client (guarded). Keeps the page a normal web page too. -->
 <script type="module">
-  try{ var m = await import("https://esm.sh/@farcaster/miniapp-sdk");
+  try{ var m = await import("https://esm.sh/@farcaster/miniapp-sdk@0.3.0"); // W-1: pinned, not floating latest
     if(m && m.sdk && m.sdk.actions && m.sdk.actions.ready) await m.sdk.actions.ready();
   }catch(e){ /* not in a Mini App host — normal browser, ignore */ }
 </script>
