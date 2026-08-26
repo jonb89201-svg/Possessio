@@ -42,11 +42,15 @@ contract DeployFactoryCreate3 is Script {
     address  constant PAY_TOKEN = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // USDC on Base
 
     // ---- PINNED from deploy/anchor.json (phrase TREGUNA_..._DEE). MUST match. ----
+    // RESTAGED 2026-08-26: fresh salts for the fixed-source redeploy (dry-run-
+    // proven in test/StageRedeployDryRun.t.sol). TEMPLATE_CODEHASH stays env-
+    // driven — REGENERATE it from the FIXED PossessioPayments with the production
+    // toolchain (solc 0.8.35) before running; do not reuse a value from another compiler.
     address constant ANCHOR_EOA        = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
-    bytes32 constant FACTORY_SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec008c46fdc1e030e05940087c;
-    address constant PREDICTED_FACTORY = 0x0DD06656cb9a38730a7177792C357E48cEdb49Bd;
-    address constant SALT_POOL         = 0x7181a6Dac7582f4544c5dFC5e1C512258F4A61B6; // predicted (factory arg)
-    address constant POOL              = 0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce; // predicted (feeSink = A)
+    bytes32 constant FACTORY_SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec003b32c63f7efcd69736d863;
+    address constant PREDICTED_FACTORY = 0x5509BA759ce6CdC4Fc719E38436bA33b734BF155;
+    address constant SALT_POOL         = 0xb61f5200Dd46d4D6d6399aCf12c8E9bFF549a5d9; // predicted (factory arg)
+    address constant POOL              = 0xD064Bb5C00798d8A523089B750a6c3350eC86797; // predicted (feeSink = A)
 
     error WrongChain(uint256 got);
     error KeyIsNotAnchorEOA(address got);
