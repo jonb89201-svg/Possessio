@@ -33,6 +33,7 @@ The audited subsystem is **sound**, with **two MEASURED Mediums**: P-1 (Payments
 | `LSTExchangeRate` | 167 | sound; two-source (Chainlink + Aerodrome TWAP) halt-on-divergence, fail-closed; tick→rate math MEASURED-correct offline; TWAP manipulation halts (never mis-prices) |
 | `SymmetryGuardCore` | 304 | sound; `totalFeeBps` clamped [200,500], signal non-injectable (per-(sender,pool), deterministic on-chain only), register single-use + caller-bound; 20 tests green. Fully grounds the x402Core dependency |
 | `HandshakeLib` | 62 | sound; sorted-pair sha256 merkle with double-hashed leaves (domain separation vs nodes); leaf derived from caller, not supplied; 13 tests green |
+| `PossessioCouncilToken` | 129 | sound; minimal OZ ERC20+Permit, fixed supply, guarded genesis, holder-burn only, **no owner/minter/pauser/fee/hook** (clean pairing denominator); 14 tests green |
 
 ---
 
@@ -90,6 +91,17 @@ The audited subsystem is **sound**, with **two MEASURED Mediums**: P-1 (Payments
 - **Diff:** Payments reverts `LeakageDetected` unless `(usdcBefore − usdcAfter) == morphoAlloc` (v2.4.1 Plate finding). L1Anchor performs the share-delta check (`sharesAfter <= sharesBefore → revert`) but **not** the USDC-consumption equality check.
 - **Not exploitable:** `USDC.forceApprove(vault, amount)` bounds the vault's `transferFrom` at exactly `amount`, and the allowance is reset to 0 immediately after the deposit — the vault cannot pull more than `amount`, and no allowance dangles. The only behaviour the missing check permits is *under*-consumption, which leaves harmless leftover USDC in the merchant's own contract (re-routable, never lost). **Info-level defense-in-depth parity gap; no fund risk.** Provenance: DERIVED (two code sites compared).
 - **Verdict on the header's warning:** the Payments header flagged that Morpho-leg parity gaps "may exist in L1Anchor." Confirmed — this is the gap, and it is benign. The MAVAN leg (`routeToMavan`) is analogous and equally benign (approval-bounded, share-delta-checked).
+
+### PossessioCouncilToken (129 LOC) — SOUND (DERIVED + suite MEASURED green, 14 tests)
+
+The settlement asset every V3 launch is paired against (immutable `COUNCIL_TOKEN` in `PossessioLaunchFactory`) and the SAV-allocation token. A minimal OpenZeppelin `ERC20 + ERC20Permit`, and deliberately nothing more.
+
+- **Fixed supply, minted once.** The constructor mints a genesis distribution with full guards: non-empty, length-matched arrays, no zero recipient, no zero amount, no duplicates (O(n²), deploy-time only — a duplicate is a drafting error that must fail the deploy). Total supply is the exact sum (checked math; overflow reverts the deploy). `testFuzz_genesis_supplyIsExactSum` confirms.
+- **No privileged surface.** No owner, minter, pauser, blacklist, upgrade path, or transfer hook. After construction the only authorities are holders over their own balances (`transfer`/`approve`/`permit`/`burn`). `test_noAuthority_strangerCannotMoveFunds` confirms.
+- **Clean denominator (load-bearing for the LaunchFactory pairing).** No fee-on-transfer, no rebasing, no reflection — `testFuzz_transfer_conservesSupply` + `test_transfer_noFee_exactAmounts` confirm. A fee/rebasing pairing token would corrupt the v4 pool math the LaunchFactory builds against; this token is inert exactly where it must be.
+- **Supply only falls.** `burn` reduces only the caller's own balance (OZ `_burn`, reverts on insufficient); no post-construction mint. EIP-2612 permit is standard OZ (nonce + chainid-rebuilt domain separator), adds no authority beyond a holder's own signature.
+
+No finding. This is the minimal-surface settlement asset the spec intends.
 
 ### SymmetryGuardCore (304) + HandshakeLib (62) — SOUND (DERIVED + suite MEASURED green, 33 tests)
 
@@ -190,7 +202,7 @@ The x402 settlement core is sound. Heavily pre-audited (multiple council seats +
 ## Non-Proven Scope (Codebyte Results Statement)
 
 - **The V3 launch template is NOT in this repository (scope boundary, MEASURED):** `script/DeployLaunchFactory.s.sol` pins `templateCodehash` from the env var `TEMPLATE_CODEHASH` at deploy time, and no `src/` contract has the `constructor(address, bytes)` factory-template shape except `PossessioPayments` (the payments-tier template). The launch tests use placeholder templates (`MockLaunchTemplate` / `ForkLaunchTemplate`) that explicitly *implement no hook functions*. So the production launch template — the owner's 2% fee engine and the intended home of L-1's `beforeInitialize` gate — is supplied out-of-repo and **cannot be audited here**. **Implication for L-1:** its fix (BEFORE_INITIALIZE flag + gated `beforeInitialize`) is blocked on that template being written; and a template deployed from an unaudited, env-supplied codehash is itself a deploy-time trust dependency the Architect should pin to a reviewed contract.
-- **Not yet read this pass (follow-on):** `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `PossessioCouncilToken`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~4,900 LOC.
+- **Not yet read this pass (follow-on):** `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~4,750 LOC.
 - **Assumptions:** STEEL/PLATE and USDC are standard ERC-20 (no fee-on-transfer / rebasing) — asserted from `STEEL` source (clean ERC20, no custom transfer). External venues (Aerodrome, Uniswap v4 PoolManager, Chainlink feeds, EIP-3009 USDC) behave to interface. The v4 hook fee-delta algebra is read-correct but is best proven by the repo's own differential/fork suites, not re-derived here.
 - **MEASURED vs DERIVED:** verdicts are DERIVED (full source reads) except the `forge build` clean and the two prior fixes' presence, which are MEASURED from HEAD. F-1 is DERIVED and can be promoted to MEASURED with a red→green test on request.
 
