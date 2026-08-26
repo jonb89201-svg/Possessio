@@ -79,6 +79,13 @@ contract PossessioSaltPool {
     error KeeperIntegrityViolation();
     error UnauthorizedCall();
     error PoolEmpty();
+    /// @notice G-1 (cold-seat audit): a refilled salt's leading 20 bytes are not
+    ///         the factory address. CreateX makes a salt sender-permissioned only
+    ///         when its prefix equals the deployer; a non-prefixed salt is
+    ///         permissionless and its CREATE3 address is front-runnable. Enforce
+    ///         the prefix on-chain so a keeper mistake can never seed a
+    ///         front-runnable salt.
+    error SaltNotFactoryPermissioned(bytes32 salt);
 
     /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -177,6 +184,14 @@ contract PossessioSaltPool {
 
         uint256 len = newSalts.length;
         for (uint256 i = 0; i < len; ) {
+            // G-1: the salt MUST be sender-permissioned to the factory, i.e. its
+            // leading 20 bytes equal the factory address (CreateX's msg.sender
+            // permission scheme). This is what makes the CREATE3 launch address
+            // depend on the factory as deployer and NOT reproducible by an
+            // attacker replaying the salt. Reject any other prefix.
+            if (address(bytes20(newSalts[i])) != factory) {
+                revert SaltNotFactoryPermissioned(newSalts[i]);
+            }
             saltQueue.push(newSalts[i]);
             unchecked { ++i; }
         }

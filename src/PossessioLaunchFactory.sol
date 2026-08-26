@@ -136,6 +136,13 @@ contract PossessioLaunchFactory is ReentrancyGuard {
     error ZeroInitialPrice();
     error BadPoolFee();
     error BadTickSpacing();
+    /// @notice L-1 (cold-seat audit): the pulled salt produced a launch address
+    ///         that does NOT carry the v4 BEFORE_INITIALIZE hook flag. Without
+    ///         that flag, an attacker can front-run the pairing by initializing
+    ///         the pool at the (still-codeless) predicted launch address before
+    ///         deployLaunch runs, permanently DoSing the launch. Refuse to
+    ///         proceed so every launch is init-gated by its own hook.
+    error LaunchHookNotInitGated(address launch);
 
     /*//////////////////////////////////////////////////////////////
                         FEE AUTHORIZATION (EIP-3009)
@@ -167,6 +174,19 @@ contract PossessioLaunchFactory is ReentrancyGuard {
     /// @dev v4 fee is parts-per-million; the dynamic-fee flag and anything
     ///      >= 100% are rejected. LP fee ceiling per v4-core is 1_000_000.
     uint24 private constant MAX_POOL_FEE = 1_000_000;
+
+    /// @dev L-1 fix: v4 Hooks.BEFORE_INITIALIZE_FLAG (bit 13). The launch's
+    ///      CREATE3 address MUST carry this flag so that v4's `initialize`
+    ///      invokes `launch.beforeInitialize` on ANY pool-init attempt. Because
+    ///      an attacker's front-run init targets the launch address BEFORE the
+    ///      launch is deployed (no code yet), that hook call reverts
+    ///      (InvalidHookResponse in v4) and the pre-init is impossible. The
+    ///      factory's own init succeeds only after the launch is deployed and
+    ///      its `beforeInitialize` returns the expected selector (a requirement
+    ///      the launch template MUST satisfy; see deployLaunch step 8). The
+    ///      keeper mines salts so the address carries this flag in addition to
+    ///      the swap-side flags (e.g. 0x8C8 | 0x2000).
+    uint160 private constant BEFORE_INITIALIZE_FLAG = uint160(1) << 13;
 
     /// @notice This tier's fixed launch price, in USDC (6 decimals). No setter.
     uint256 public immutable DEPLOYMENT_FEE;
@@ -350,6 +370,20 @@ contract PossessioLaunchFactory is ReentrancyGuard {
         //    the v4 hook permission flags (that is what the mined salt is for).
         launch = CREATEX.deployCreate3(salt, creationCode);
         if (launch == address(0)) revert DeployFailed();
+
+        // 7a. L-1 fix (cold-seat audit): the launch address MUST carry the v4
+        //     BEFORE_INITIALIZE hook flag. This is what makes step 8 safe from a
+        //     pool-init front-run: v4 `initialize` calls `launch.beforeInitialize`
+        //     for any init of this key, so an attacker who tries to pre-initialize
+        //     the pool at the predicted launch address (before it has code) hits a
+        //     hook call to a code-less address and reverts. The factory's own init
+        //     below runs AFTER the launch is deployed, so its beforeInitialize
+        //     returns the expected selector and init proceeds. A mis-mined salt
+        //     (no flag) is a keeper error; fail closed rather than mint an
+        //     un-gated, front-runnable pool. Atomic: this revert unwinds the fee.
+        if (uint160(launch) & BEFORE_INITIALIZE_FLAG == 0) {
+            revert LaunchHookNotInitGated(launch);
+        }
 
         // 8. THE PAIRING (spec §4) - same transaction, no post-deploy setup,
         //    no way to launch around it. The factory constructs the key itself

@@ -6,48 +6,47 @@ import {PossessioLaunchFactory, IPoolManagerMinimal} from "../src/PossessioLaunc
 import {PossessioSaltPool} from "../src/PossessioSaltPool.sol";
 
 // ============================================================================
-// L-1 — LAUNCH POOL-INIT FRONT-RUN DoS (cold-seat audit, 2026-08-26)
+// L-1 — LAUNCH POOL-INIT FRONT-RUN DoS  (cold-seat audit, 2026-08-26)  +  FIX
 //
-// THE CHARGE THE DoD SUITE NEVER FILED
-// ------------------------------------
-// PossessioLaunchFactory.deployLaunch ends by calling, in the same tx,
-//   poolManager.initialize({sorted(COUNCIL_TOKEN, launch), POOL_FEE,
-//                            TICK_SPACING, hooks: launch}, sqrtPriceX96)
-// with NO try/catch. Uniswap v4 `initialize` is PERMISSIONLESS and reverts
-// PoolAlreadyInitialized if that exact pool key already has a price.
+// FINDING: PossessioLaunchFactory.deployLaunch ends by calling, in the same tx,
+//   poolManager.initialize({sorted(COUNCIL_TOKEN, launch), fee, spacing,
+//                            hooks: launch}, sqrtPriceX96).
+// The launch address is CREATE3-deterministic and publicly predictable (the
+// pre-mined salt sits in PossessioSaltPool storage, prefix = factory). If the
+// launch address does NOT carry the v4 BEFORE_INITIALIZE flag, an attacker can
+// call poolManager.initialize on that key FIRST (the launch has no code yet),
+// permanently occupying the pool so the victim's deployLaunch reverts. DoS.
 //
-// The launch address is CREATE3-deterministic and PUBLICLY PREDICTABLE: the
-// pre-mined salt sits in PossessioSaltPool storage (readable), its prefix is
-// the factory address, so guardedSalt = keccak256(factory, salt) and
-// launch = CreateX.computeCreate3Address(guardedSalt). The launch's hook
-// flags are 0x8C8 (BEFORE_ADD_LIQUIDITY | BEFORE_SWAP | AFTER_SWAP |
-// BEFORE_SWAP_RETURNS_DELTA) — crucially NOT BEFORE_INITIALIZE — so v4 can
-// initialize a pool whose `hooks` address has NO CODE YET.
+// FIX (this PR): deployLaunch now requires the launch address to carry the v4
+// BEFORE_INITIALIZE flag (bit 13). With the flag set, v4's `initialize` invokes
+// `launch.beforeInitialize` on EVERY init of the key — so an attacker's pre-init
+// against the still-code-less launch address reverts (hook call to a code-less
+// address), and only the factory's own init (AFTER the launch is deployed and
+// its beforeInitialize returns the expected selector) succeeds.
 //
-// => An attacker reads the next salt, computes the launch address, and calls
-//    poolManager.initialize on that key FIRST (at any price). When the victim's
-//    deployLaunch runs, its own initialize reverts, unwinding the WHOLE deploy
-//    (fee refunded — no theft). The poisoned launch address's pool is now
-//    permanently occupied, and LIFO salt ordering re-serves the same poisoned
-//    salt, so the launch rail is held down. DoS-not-drain, but persistent and
-//    cheap, on the public launch product.
+// This suite models v4 faithfully (a PoolManager that calls beforeInitialize on
+// flagged hooks and reverts if that call fails or the pool is already init'd)
+// and proves:
+//   * test_L1fix_AttackerCannotPreInit_LegitStillWorks — the attacker's pre-init
+//     reverts (code-less flagged hook), and the honest deploy then succeeds.
+//   * test_L1fix_factoryRejectsUnflaggedSalt — a salt whose launch address lacks
+//     the flag is refused (LaunchHookNotInitGated) — the guard is enforced.
 //
-// WHY THE EXISTING SUITE CANNOT SEE IT: test/PossessioLaunchFactory.t.sol's
-// MockPoolManager.initialize does NOT model v4's per-key already-initialized
-// revert — it re-initializes any key happily and only reverts when globally
-// armed. This file supplies a v4-FAITHFUL PoolManager (per-key revert, exactly
-// PoolAlreadyInitialized semantics) and files the missing charge.
-//
-// RED/GREEN (terminal is judge):
-//   * test_L1_control_NoPreInit_Succeeds       -> honest deploy works.
-//   * test_L1_finding_AttackerPreInit_DoSs     -> identical deploy, but an
-//     attacker pre-initialized the predicted pool: deployLaunch REVERTS,
-//     fee refunded, salt unconsumed. That revert IS the DoS.
+// RED (pre-fix) would be: the attacker's pre-init SUCCEEDS (no flag ⇒ v4 never
+// calls the hook), then deployLaunch reverts PoolAlreadyInitialized — the DoS.
 // ============================================================================
 
 interface ICreateX {
     function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address);
     function computeCreate3Address(bytes32 salt) external view returns (address);
+}
+
+/// The init-gate hook interface the launch template must implement (the L-1 fix
+/// requirement). v4 calls this when the hooks address carries BEFORE_INITIALIZE.
+interface IInitHook {
+    function beforeInitialize(address sender, IPoolManagerMinimal.PoolKey calldata key, uint160 sqrtPriceX96)
+        external
+        returns (bytes4);
 }
 
 contract MockUSDC_L1 {
@@ -82,17 +81,30 @@ contract MockCouncilToken_L1 {
     string public constant name = "POSSESSIO Council Token";
 }
 
+/// Launch template that satisfies the L-1 fix contract: it implements
+/// beforeInitialize returning the expected selector, so the factory's own init
+/// succeeds. (An attacker init runs before this has code, so the call reverts.)
 contract MockLaunchTemplate_L1 {
     address public owner;
     bytes public initData;
     constructor(address _owner, bytes memory _initArgs) { owner = _owner; initData = _initArgs; }
+    function beforeInitialize(address, IPoolManagerMinimal.PoolKey calldata, uint160)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IInitHook.beforeInitialize.selector;
+    }
 }
 
-/// v4-FAITHFUL PoolManager: initialize reverts PoolAlreadyInitialized when the
-/// exact pool key already has a price — the real Uniswap v4 semantics the
-/// repo's recording mock omits.
+/// v4-FAITHFUL PoolManager: reverts if the pool key is already initialized, and
+/// — when the hooks address carries BEFORE_INITIALIZE — invokes the hook's
+/// beforeInitialize and requires the expected selector, exactly as v4 does. A
+/// call to a code-less hook (the attacker's pre-init) reverts.
 contract FaithfulPoolManager {
     error PoolAlreadyInitialized();
+    error HookRejectedInit();
+    uint160 constant BEFORE_INITIALIZE_FLAG = uint160(1) << 13;
     mapping(bytes32 => bool) public initialized;
     uint256 public initCount;
 
@@ -100,12 +112,26 @@ contract FaithfulPoolManager {
         return keccak256(abi.encode(k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks));
     }
 
-    function initialize(IPoolManagerMinimal.PoolKey memory key, uint160 /*sqrtPriceX96*/)
+    function initialize(IPoolManagerMinimal.PoolKey memory key, uint160 sqrtPriceX96)
         external
         returns (int24)
     {
         bytes32 id = _id(key);
-        if (initialized[id]) revert PoolAlreadyInitialized(); // the real v4 guard
+        if (initialized[id]) revert PoolAlreadyInitialized();
+
+        // v4: if the hook opts into BEFORE_INITIALIZE, it is consulted on init
+        // via a LOW-LEVEL call (as v4's Hooks.callHook does). A code-less hook
+        // (the attacker's pre-init, before the launch exists) returns empty data
+        // ⇒ InvalidHookResponse. A live hook must return its selector.
+        if (uint160(key.hooks) & BEFORE_INITIALIZE_FLAG != 0) {
+            (bool ok, bytes memory ret) = key.hooks.call(
+                abi.encodeWithSelector(IInitHook.beforeInitialize.selector, msg.sender, key, sqrtPriceX96)
+            );
+            if (!ok || ret.length < 32 || abi.decode(ret, (bytes4)) != IInitHook.beforeInitialize.selector) {
+                revert HookRejectedInit();
+            }
+        }
+
         initialized[id] = true;
         initCount += 1;
         return 42;
@@ -117,6 +143,7 @@ contract PossessioLaunchFactoryL1Test is Test {
     ICreateX internal constant CREATEX = ICreateX(CREATEX_ADDR);
     bytes32 constant CANONICAL_RUNTIME_CODEHASH =
         0xbd8a7ea8cfca7b4e5f5041d7d4b17bc317c5ce42cfbc42066a00cf26b43eb53f;
+    uint160 constant BEFORE_INITIALIZE_FLAG = uint160(1) << 13;
 
     uint256 constant FEE = 50_000_000;
     uint24 constant POOL_FEE = 3000;
@@ -162,21 +189,32 @@ contract PossessioLaunchFactoryL1Test is Test {
         usdc.mint(buyer, 10 * FEE);
     }
 
-    function _refillSalt(uint88 entropy) internal returns (bytes32 salt) {
-        salt = bytes32(bytes20(address(factory))) | bytes32(uint256(entropy));
+    function _guarded(address sender, bytes32 salt) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes32(uint256(uint160(sender))), salt));
+    }
+
+    /// Mine a factory-prefixed salt whose CREATE3 launch address DOES (want=true)
+    /// or does NOT (want=false) carry the BEFORE_INITIALIZE flag.
+    function _mineSalt(uint88 seed, bool want) internal view returns (bytes32 salt, address predicted) {
+        uint256 e = seed;
+        while (true) {
+            salt = bytes32(bytes20(address(factory))) | bytes32(e);
+            predicted = CREATEX.computeCreate3Address(_guarded(address(factory), salt));
+            bool flagged = uint160(predicted) & BEFORE_INITIALIZE_FLAG != 0;
+            if (flagged == want) return (salt, predicted);
+            e++;
+        }
+    }
+
+    function _refill(bytes32 salt) internal {
         bytes32[] memory b = new bytes32[](1);
         b[0] = salt;
         vm.prank(keeper);
         pool.refillSalts(b);
     }
 
-    function _guarded(address sender, bytes32 salt) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(bytes32(uint256(uint160(sender))), salt));
-    }
-
     function _auth() internal pure returns (PossessioLaunchFactory.FeeAuth memory a) { a; }
 
-    /// Rebuild the exact key the factory will construct for a predicted launch.
     function _keyFor(address launch) internal view returns (IPoolManagerMinimal.PoolKey memory key) {
         (address c0, address c1) = address(council) < launch
             ? (address(council), launch)
@@ -186,51 +224,66 @@ contract PossessioLaunchFactoryL1Test is Test {
         });
     }
 
-    // ---- CONTROL: honest deploy against the faithful PM succeeds ----
-    function test_L1_control_NoPreInit_Succeeds() public {
-        _refillSalt(0x1111);
+    // ---- THE FIX: attacker can no longer pre-init; honest deploy still works ----
+    function test_L1fix_AttackerCannotPreInit_LegitStillWorks() public {
+        (bytes32 salt, address predictedLaunch) = _mineSalt(0x3000, true);
+        _refill(salt);
+
+        // Launch address carries BEFORE_INITIALIZE and has no code yet.
+        assertTrue(uint160(predictedLaunch) & BEFORE_INITIALIZE_FLAG != 0, "flagged address");
+        assertEq(predictedLaunch.code.length, 0, "launch not deployed yet");
+
+        // Attacker tries to occupy the pool first -> v4 calls beforeInitialize on
+        // the code-less launch -> reverts. The front-run is dead.
+        IPoolManagerMinimal.PoolKey memory key = _keyFor(predictedLaunch);
+        vm.prank(attacker);
+        vm.expectRevert(FaithfulPoolManager.HookRejectedInit.selector);
+        pm.initialize(key, uint160(PRICE) + 1);
+        assertEq(pm.initCount(), 0, "attacker could not initialize");
+
+        // Honest deploy now succeeds: the launch is deployed (implements
+        // beforeInitialize), the factory's flag check passes, init returns.
         vm.prank(buyer);
         (address launch,) = factory.deployLaunch(
             custody, abi.encode("v3"), type(MockLaunchTemplate_L1).creationCode, PRICE, _auth()
         );
-        assertEq(pm.initCount(), 1, "pool initialized once");
+        assertEq(launch, predictedLaunch, "deployed == predicted");
+        assertEq(pm.initCount(), 1, "pool initialized by the factory");
         assertTrue(factory.isLaunchOfFactory(launch), "launch registered");
     }
 
-    // ---- FINDING: attacker pre-initializes the predicted pool -> DoS ----
-    function test_L1_finding_AttackerPreInit_DoSs() public {
-        bytes32 salt = _refillSalt(0x2222);
+    // ---- WHY the flag matters: an UNFLAGGED launch address IS front-runnable ----
+    // (the pre-fix world). v4 never calls the hook, so the attacker's pre-init on
+    // the code-less predicted address succeeds — the DoS the fix's guard prevents
+    // by refusing to deploy any launch whose address lacks the flag.
+    function test_L1_unflaggedAddress_wouldBeFrontRunnable() public {
+        (, address predictedLaunch) = _mineSalt(0x7000, false);
+        assertEq(uint160(predictedLaunch) & BEFORE_INITIALIZE_FLAG, 0, "unflagged address");
+        assertEq(predictedLaunch.code.length, 0, "code-less");
 
-        // Anyone can read the pending salt from PossessioSaltPool storage and
-        // compute the CREATE3 launch address the factory WILL deploy to.
-        address predictedLaunch = CREATEX.computeCreate3Address(_guarded(address(factory), salt));
-
-        // The launch has NO code yet; its hook flags (0x8C8) exclude
-        // BEFORE_INITIALIZE, so v4 initialize does not call the hook and
-        // succeeds against the codeless address.
-        assertEq(predictedLaunch.code.length, 0, "launch not deployed yet");
         IPoolManagerMinimal.PoolKey memory key = _keyFor(predictedLaunch);
-
-        // Attacker front-runs: initialize the launch's pool first, any price.
         vm.prank(attacker);
-        pm.initialize(key, uint160(PRICE) + 1);
-        assertEq(pm.initCount(), 1, "attacker occupied the pool");
+        pm.initialize(key, uint160(PRICE) + 1); // succeeds — no flag ⇒ no hook gate
+        assertEq(pm.initCount(), 1, "attacker occupied an unflagged pool (front-run)");
+        // The factory's LaunchHookNotInitGated guard is what stops this address
+        // from ever being minted — proven in test_L1fix_factoryRejectsUnflaggedSalt.
+    }
 
-        // Victim's honest deploy now reverts at the pairing step: the whole tx
-        // unwinds (CREATE3 deploy included), fee refunded, salt unconsumed.
-        uint256 balBefore = usdc.balanceOf(buyer);
-        uint256 depthBefore = pool.depth();
+    // ---- The guard is enforced: an unflagged launch address is refused ----
+    function test_L1fix_factoryRejectsUnflaggedSalt() public {
+        (bytes32 salt, address predictedLaunch) = _mineSalt(0x5000, false);
+        _refill(salt);
+        assertEq(uint160(predictedLaunch) & BEFORE_INITIALIZE_FLAG, 0, "unflagged address");
 
         vm.prank(buyer);
-        vm.expectRevert(FaithfulPoolManager.PoolAlreadyInitialized.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(PossessioLaunchFactory.LaunchHookNotInitGated.selector, predictedLaunch)
+        );
         factory.deployLaunch(
             custody, abi.encode("v3"), type(MockLaunchTemplate_L1).creationCode, PRICE, _auth()
         );
-
-        assertEq(usdc.balanceOf(buyer), balBefore, "fee refunded (no theft) ...");
-        assertEq(heart.received(), 0, "... no Heart credit ...");
-        assertEq(pool.depth(), depthBefore, "... salt not consumed (LIFO re-serves the poisoned salt)");
-        assertEq(predictedLaunch.code.length, 0, "launch never deployed - DoS");
-        assertFalse(factory.isLaunchOfFactory(predictedLaunch), "no launch registered - DoS");
+        // Fee refunded, salt unconsumed (atomic revert).
+        assertEq(usdc.balanceOf(buyer), 10 * FEE, "fee refunded");
+        assertEq(pool.depth(), 1, "salt unconsumed");
     }
 }
