@@ -31,6 +31,8 @@ The audited subsystem is **sound**, with **two MEASURED Mediums**: P-1 (Payments
 | `PossessioPool` | 473 | sound; faithful generalization of x402Core's audited pool machinery (1 source → valve-checked immutable set); floored draw un-drainable, held==poolBalance, floor not externally manipulable; 32 non-vacuous tests green |
 | `PossessioLaunchFactory` | 410 | PossessioFactory pattern + v4 pairing; owner un-spoofable, atomic, codehash-pinned — **but L-1 (MEASURED Medium): pool-init front-run DoS** on the added pairing step |
 | `LSTExchangeRate` | 167 | sound; two-source (Chainlink + Aerodrome TWAP) halt-on-divergence, fail-closed; tick→rate math MEASURED-correct offline; TWAP manipulation halts (never mis-prices) |
+| `SymmetryGuardCore` | 304 | sound; `totalFeeBps` clamped [200,500], signal non-injectable (per-(sender,pool), deterministic on-chain only), register single-use + caller-bound; 20 tests green. Fully grounds the x402Core dependency |
+| `HandshakeLib` | 62 | sound; sorted-pair sha256 merkle with double-hashed leaves (domain separation vs nodes); leaf derived from caller, not supplied; 13 tests green |
 
 ---
 
@@ -88,6 +90,18 @@ The audited subsystem is **sound**, with **two MEASURED Mediums**: P-1 (Payments
 - **Diff:** Payments reverts `LeakageDetected` unless `(usdcBefore − usdcAfter) == morphoAlloc` (v2.4.1 Plate finding). L1Anchor performs the share-delta check (`sharesAfter <= sharesBefore → revert`) but **not** the USDC-consumption equality check.
 - **Not exploitable:** `USDC.forceApprove(vault, amount)` bounds the vault's `transferFrom` at exactly `amount`, and the allowance is reset to 0 immediately after the deposit — the vault cannot pull more than `amount`, and no allowance dangles. The only behaviour the missing check permits is *under*-consumption, which leaves harmless leftover USDC in the merchant's own contract (re-routable, never lost). **Info-level defense-in-depth parity gap; no fund risk.** Provenance: DERIVED (two code sites compared).
 - **Verdict on the header's warning:** the Payments header flagged that Morpho-leg parity gaps "may exist in L1Anchor." Confirmed — this is the gap, and it is benign. The MAVAN leg (`routeToMavan`) is analogous and equally benign (approval-bounded, share-delta-checked).
+
+### SymmetryGuardCore (304) + HandshakeLib (62) — SOUND (DERIVED + suite MEASURED green, 33 tests)
+
+The behavioral-fee base under `PossessioX402Core` (its `totalFeeBps` / `_observe`) — previously trusted at the interface level, now read in full. No fund custody; it computes a toll bps and a per-(sender,pool) behavioral signal.
+
+- **The load-bearing invariant holds: `totalFeeBps ∈ [200, 500]`.** `_assess` = `BASE_FEE_BPS(200) + roundTripPenalty + dustPenalty`, each penalty individually capped at `HEADROOM(300)` and the sum clamped to `MAX_TOTAL_FEE_BPS(500)`; floor is always the base. This is exactly the bound x402Core's `expectedValue = basePrice·(1 + tollBps/1e4)` relies on — a toll shift can only move the price into `[+2%, +5%]` and only ever cause a `settleCall` **revert** (liveness), never a mis-settle.
+- **Signal is non-injectable (DECISION B).** `_guard[keccak(sender,poolId)]` is written **only** by `_observe`, from on-chain facts (sender/pool/direction/size/block); no owner or human path. Keyed per (sender,pool), so an attacker cannot bump a victim's fee — `test_attacker_flood_cannot_inflate_victim` confirms. In x402Core, `_observe(caller,…)` runs only inside `settleCall`, which needs the buyer's own signature, so a victim's guard state can't be moved by anyone else.
+- **Register (handshake) is caller-bound + single-use.** The leaf is reconstructed from `msg.sender` (never accepted from calldata — the comment explicitly forbids that refactor, which would reopen the copy-and-race front-run), the nullifier `consumed[leaf]` prevents replay, and the merkle proof is checked against the immutable `HANDSHAKE_ROOT` (proof length bounded [1,64]).
+- **HandshakeLib** is a sorted-pair **sha256** merkle verify with **double-hashed leaves**: the leaf's outer preimage is 32 bytes vs a node's 64 bytes → domain separation closes the classic node-as-leaf second-preimage attack; and since `register` derives the leaf, an attacker can't supply a crafted one anyway. sha256 (not keccak) is a deliberate choice to moot the mempool-exposed-leaf terminal attack.
+- **Punishment is bounded + self-curing** via read-time decay (`_decayedShapeHits` / `_decayedDustHits`) — every flag/penalty read decays first, so a stale-high stored counter can't over-charge.
+
+**Observation (non-finding, deliberate):** the DustSpam constants (`DUST_SPAM_*`) are flagged **PROVISIONAL** in-code — a false-positive on honest high-frequency small traders would charge up to 5% instead of 2% (bounded, self-curing, fee-only, no fund risk). Explicitly calibration-gated before the mainnet freeze; Architect's to tune. Not a finding.
 
 ### LSTExchangeRate (167 LOC) — SOUND (DERIVED + math MEASURED offline)
 
@@ -176,7 +190,7 @@ The x402 settlement core is sound. Heavily pre-audited (multiple council seats +
 ## Non-Proven Scope (Codebyte Results Statement)
 
 - **The V3 launch template is NOT in this repository (scope boundary, MEASURED):** `script/DeployLaunchFactory.s.sol` pins `templateCodehash` from the env var `TEMPLATE_CODEHASH` at deploy time, and no `src/` contract has the `constructor(address, bytes)` factory-template shape except `PossessioPayments` (the payments-tier template). The launch tests use placeholder templates (`MockLaunchTemplate` / `ForkLaunchTemplate`) that explicitly *implement no hook functions*. So the production launch template — the owner's 2% fee engine and the intended home of L-1's `beforeInitialize` gate — is supplied out-of-repo and **cannot be audited here**. **Implication for L-1:** its fix (BEFORE_INITIALIZE flag + gated `beforeInitialize`) is blocked on that template being written; and a template deployed from an unaudited, env-supplied codehash is itself a deploy-time trust dependency the Architect should pin to a reviewed contract.
-- **Not yet read this pass (follow-on):** `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `SymmetryGuardCore` (base of x402Core — its DustSpam/RoundTrip guard read at the interface level via `totalFeeBps`/`_observe`, not yet fully audited), `PossessioCouncilToken`, `HandshakeLib`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~5,250 LOC.
+- **Not yet read this pass (follow-on):** `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `PossessioCouncilToken`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~4,900 LOC.
 - **Assumptions:** STEEL/PLATE and USDC are standard ERC-20 (no fee-on-transfer / rebasing) — asserted from `STEEL` source (clean ERC20, no custom transfer). External venues (Aerodrome, Uniswap v4 PoolManager, Chainlink feeds, EIP-3009 USDC) behave to interface. The v4 hook fee-delta algebra is read-correct but is best proven by the repo's own differential/fork suites, not re-derived here.
 - **MEASURED vs DERIVED:** verdicts are DERIVED (full source reads) except the `forge build` clean and the two prior fixes' presence, which are MEASURED from HEAD. F-1 is DERIVED and can be promoted to MEASURED with a red→green test on request.
 
