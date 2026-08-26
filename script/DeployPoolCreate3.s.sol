@@ -32,12 +32,16 @@ contract DeployPoolCreate3 is Script {
     address  constant PAY_TOKEN = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // USDC on Base
 
     // ---- deploy/anchor.json (phrase TREGUNA_..._DEE) ----
+    // RESTAGED 2026-08-26: fresh CREATE3 salts for the FIXED-source redeploy
+    // (P-1 / L-1 / G-1). Dry-run-proven end-to-end on a Base fork in
+    // test/StageRedeployDryRun.t.sol. The month-old set is occupied and superseded.
     address constant ANCHOR_EOA = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
-    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec0008105d4bea8a7e08ed2743;
-    address constant PREDICTED = 0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce;
-    // the two authorized sources — verify-before-wire (must already be live).
-    address constant FACTORY   = 0x0DD06656cb9a38730a7177792C357E48cEdb49Bd;
-    address constant X402CORE  = 0x60d867AfA7c6f4b0822413fA51D0EE9edE786c05;
+    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00f954711b220e94230e12f1;
+    address constant PREDICTED = 0xD064Bb5C00798d8A523089B750a6c3350eC86797;
+    // the two authorized sources — baked as their PREDICTED CREATE3 addresses
+    // (Pool deploys first; sources are runtime callers verified when they call).
+    address constant FACTORY   = 0x5509BA759ce6CdC4Fc719E38436bA33b734BF155;
+    address constant X402CORE  = 0xFba54FF0260ED18e2a48884C4FE8650D4416e022;
 
     error WrongChain(uint256 got);
     error KeyIsNotAnchorEOA(address got);

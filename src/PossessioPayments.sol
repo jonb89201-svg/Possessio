@@ -985,6 +985,19 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
             // oracle ETH-equivalent of the USDC going in; 90% of that is the
             // floor. Effective min = max(callerMin, floor).
             uint256 wethFloor = (_usdcToEth(cbEthAlloc) * SWEEP_SLIPPAGE_BPS) / SWEEP_SLIPPAGE_DENOM;
+
+            // P-1 (audit 2026-08-26) — FAIL-CLOSED the WETH-leg floor.
+            //   _usdcToEth returns 0 on a stale/invalid USDC/USD or ETH/USD feed
+            //   (fail-open). Left unguarded, wethFloor collapses to 0 and — with
+            //   the automation default sweepSlippageMinWeth == 0 — the USDC→WETH
+            //   swap would run with amountOutMinimum == 0, reintroducing the H-1
+            //   sandwich exposure through a feed the cbETH gate does not cover.
+            //   The cbETH/ETH gate (_validateOracle) already reverts on its own
+            //   staleness; this makes the composite USDC/ETH feed symmetric —
+            //   a stale WETH-floor oracle blocks the sweep instead of silently
+            //   dropping the leg's slippage protection. (cbEthAlloc > 0 here.)
+            if (wethFloor == 0) revert OracleStale();
+
             uint256 wethMin   = minWethOut > wethFloor ? minWethOut : wethFloor;
 
             wethOut = ROUTER.exactInputSingle(

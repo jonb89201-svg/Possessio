@@ -72,15 +72,27 @@ contract ForkCouncilToken {
     string public constant name = "POSSESSIO Council Token (fork)";
 }
 
-/// Launch template (ratified constructor shape). Implements NO hook
-/// functions - valid only at an address whose sole flag is BEFORE_SWAP
-/// (bit 7), which initialize() never calls.
+/// Launch template (ratified constructor shape). After the L-1 fix the launch
+/// address carries BEFORE_INITIALIZE, so the LIVE v4 PoolManager invokes
+/// beforeInitialize on init — the template MUST implement it and return the
+/// expected selector, or the honest init reverts. (The BEFORE_SWAP flag models
+/// the owner's 2% fee engine; the real template implements that too.)
 contract ForkLaunchTemplate {
     address public owner;
     bytes public initData;
     constructor(address _owner, bytes memory _initArgs) {
         owner = _owner;
         initData = _initArgs;
+    }
+    /// v4 calls this because the address carries BEFORE_INITIALIZE. Returning
+    /// the selector authorizes the init (the factory's own, atomic, post-deploy
+    /// call). An attacker's pre-init hits this on a code-less address ⇒ revert.
+    function beforeInitialize(address, IPoolManagerMinimal.PoolKey calldata, uint160)
+        external
+        pure
+        returns (bytes4)
+    {
+        return this.beforeInitialize.selector;
     }
 }
 
@@ -93,9 +105,14 @@ contract PossessioLaunchFactoryForkTest is Test {
     bytes32 internal constant PROXY_INITCODE_HASH =
         0x21c35dbe1b344a2488cf3321d6ce542f8e9f305544ff09e4993a62319a497c1f;
 
-    /// v4 Hooks: low 14 bits are permission flags. BEFORE_SWAP = 1 << 7.
+    /// v4 Hooks: low 14 bits are permission flags. BEFORE_SWAP = 1 << 7,
+    /// BEFORE_INITIALIZE = 1 << 13 (the L-1 gate). A launch address must carry
+    /// BOTH: BEFORE_SWAP for the fee engine, BEFORE_INITIALIZE so v4 gates the
+    /// pool init against the launch's own hook (front-run defense).
     uint160 internal constant ALL_HOOK_MASK = (1 << 14) - 1;
     uint160 internal constant BEFORE_SWAP_FLAG = 1 << 7;
+    uint160 internal constant BEFORE_INITIALIZE_FLAG = 1 << 13;
+    uint160 internal constant REQUIRED_FLAGS = BEFORE_SWAP_FLAG | BEFORE_INITIALIZE_FLAG;
 
     uint256 constant FEE = 50_000_000;
     uint24 constant POOL_FEE = 3000;
@@ -171,13 +188,14 @@ contract PossessioLaunchFactoryForkTest is Test {
         );
     }
 
-    /// Mine a factory-locked salt whose CREATE3 address carries EXACTLY the
-    /// BEFORE_SWAP flag (valid v4 hook address; initialize calls nothing).
+    /// Mine a factory-locked salt whose CREATE3 address carries EXACTLY
+    /// BEFORE_SWAP | BEFORE_INITIALIZE (a valid v4 hook address that v4 gates on
+    /// init — the L-1 fix requirement).
     function _mineHookSalt(address f) internal pure returns (bytes32 salt) {
-        for (uint256 entropy = 1; entropy < 300_000; entropy++) {
+        for (uint256 entropy = 1; entropy < 3_000_000; entropy++) {
             bytes32 candidate = bytes32(bytes20(f)) | bytes32(entropy);
             address a = _create3Address(_guarded(f, candidate));
-            if ((uint160(a) & ALL_HOOK_MASK) == BEFORE_SWAP_FLAG) return candidate;
+            if ((uint160(a) & ALL_HOOK_MASK) == REQUIRED_FLAGS) return candidate;
         }
         revert("no hook salt found in budget");
     }
@@ -221,7 +239,7 @@ contract PossessioLaunchFactoryForkTest is Test {
         );
 
         assertEq(launch, predicted, "predicted == deployed on fork");
-        assertEq(uint160(launch) & ALL_HOOK_MASK, BEFORE_SWAP_FLAG, "hook flags in address");
+        assertEq(uint160(launch) & ALL_HOOK_MASK, REQUIRED_FLAGS, "BEFORE_SWAP | BEFORE_INITIALIZE in address");
         assertTrue(
             key.currency0 == address(council) || key.currency1 == address(council),
             "live pair contains COUNCIL_TOKEN"
@@ -233,9 +251,11 @@ contract PossessioLaunchFactoryForkTest is Test {
         // key shape, fee, and tickSpacing were all validated by real v4 code.
     }
 
-    /// The constraint is real: a launch address WITHOUT valid hook bits is
-    /// rejected by the live PoolManager - fee refunded, salt unconsumed,
-    /// nothing deployed. This is WHY the salt pool must hold mined salts.
+    /// The constraint is real: a launch address WITHOUT the BEFORE_INITIALIZE
+    /// flag is rejected — after the L-1 fix, by the factory's own guard
+    /// (LaunchHookNotInitGated), before the PoolManager is even reached — with
+    /// fee refunded, salt unconsumed, nothing deployed. This is WHY the salt
+    /// pool must hold correctly hook-flag-mined salts.
     function test_fork_flaglessLaunchAddress_reverts_atomically() public {
         if (!forked) { vm.skip(true); }
         bytes32 salt = _mineFlaglessSalt(address(factory));
@@ -255,6 +275,44 @@ contract PossessioLaunchFactoryForkTest is Test {
         assertEq(factory.totalLaunches(), 0, "no registry row");
     }
 
+    /// L-1 FIX, proven on LIVE v4: an attacker who tries to pre-initialize the
+    /// pool at the predicted (still-code-less) launch address is rejected by the
+    /// real Base PoolManager — v4 invokes beforeInitialize on the code-less hook
+    /// and reverts. The front-run is impossible on-chain, and the honest deploy
+    /// then still initializes the pool.
+    function test_fork_attackerPreInit_blockedByLiveV4() public {
+        if (!forked) { vm.skip(true); }
+        bytes32 salt = _mineHookSalt(address(factory));
+        address predicted = _create3Address(_guarded(address(factory), salt));
+        _refill(salt);
+
+        assertEq(uint160(predicted) & ALL_HOOK_MASK, REQUIRED_FLAGS, "flagged");
+        assertEq(predicted.code.length, 0, "launch not deployed yet");
+
+        (address c0, address c1) = address(council) < predicted
+            ? (address(council), predicted)
+            : (predicted, address(council));
+        IPoolManagerMinimal.PoolKey memory key = IPoolManagerMinimal.PoolKey({
+            currency0: c0, currency1: c1, fee: POOL_FEE, tickSpacing: TICK_SPACING, hooks: predicted
+        });
+
+        // Attacker front-runs the pairing on the LIVE PoolManager -> reverts,
+        // because v4 calls beforeInitialize on the code-less predicted launch.
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert();
+        IPoolManagerMinimal(POOL_MANAGER).initialize(key, PRICE);
+
+        // The honest deploy still works: the launch is deployed (implements
+        // beforeInitialize) and the factory initializes the pool.
+        vm.prank(buyer);
+        (address launch,) = factory.deployLaunch(
+            custody, abi.encode("fork"), type(ForkLaunchTemplate).creationCode, PRICE, _auth()
+        );
+        assertEq(launch, predicted, "honest deploy == predicted");
+        assertTrue(factory.isLaunchOfFactory(launch), "registry row");
+    }
+
     /// Two launches, two live pools, one denominator (spec §7: one
     /// denominator = one many-outcome market).
     function test_fork_secondLaunch_secondLivePair() public {
@@ -270,10 +328,10 @@ contract PossessioLaunchFactoryForkTest is Test {
         bytes32 s2;
         {
             uint256 start = uint256(uint88(uint256(s1))) + 1;
-            for (uint256 entropy = start; entropy < start + 300_000; entropy++) {
+            for (uint256 entropy = start; entropy < start + 3_000_000; entropy++) {
                 bytes32 candidate = bytes32(bytes20(address(factory))) | bytes32(entropy);
                 address a = _create3Address(_guarded(address(factory), candidate));
-                if ((uint160(a) & ALL_HOOK_MASK) == BEFORE_SWAP_FLAG) { s2 = candidate; break; }
+                if ((uint160(a) & ALL_HOOK_MASK) == REQUIRED_FLAGS) { s2 = candidate; break; }
             }
             require(s2 != bytes32(0), "no second salt in budget");
         }

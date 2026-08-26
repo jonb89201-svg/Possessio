@@ -35,12 +35,14 @@ contract DeployX402CoreCreate3 is Script {
     address  constant PAY_TOKEN = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // USDC on Base
 
     // ---- deploy/anchor.json (phrase TREGUNA_..._DEE) ----
+    // RESTAGED 2026-08-26: fresh salts for the fixed-source redeploy (dry-run-
+    // proven in test/StageRedeployDryRun.t.sol).
     address constant ANCHOR_EOA = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
-    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00ef0925278b81d5e6aa477d;
-    address constant PREDICTED = 0x60d867AfA7c6f4b0822413fA51D0EE9edE786c05;
+    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00a3f42727cffd80f349d0a0;
+    address constant PREDICTED = 0xFba54FF0260ED18e2a48884C4FE8650D4416e022;
     // The Heart (PossessioPool) — deployed FIRST (DeployPoolCreate3.PREDICTED).
     // x402Core's surplus routes here; construction verifies it is a live infra-sink.
-    address constant HEART     = 0xE0612f38EEd23BEba5228b14bd5E1f269D4D19ce;
+    address constant HEART     = 0xD064Bb5C00798d8A523089B750a6c3350eC86797;
 
     error WrongChain(uint256 got);
     error KeyIsNotAnchorEOA(address got);

@@ -32,13 +32,40 @@ contract PossessioSaltPoolTest is Test {
                     Helpers
     //////////////////////////////////////////////////////////////*/
 
+    /// @dev G-1: build a factory-permissioned salt (leading 20 bytes == prefix,
+    ///      distinct entropy in the low 96 bits) so refillSalts accepts it.
+    function _ps(address prefix, uint256 entropy) internal pure returns (bytes32) {
+        return bytes32(bytes20(prefix)) | bytes32(uint256(uint96(entropy)));
+    }
+
     function _refill(uint256 n) internal returns (bytes32[] memory salts) {
         salts = new bytes32[](n);
         for (uint256 i = 0; i < n; i++) {
-            salts[i] = keccak256(abi.encode("salt", i));
+            salts[i] = _ps(FACTORY, uint256(keccak256(abi.encode("salt", i))));
         }
         vm.prank(KEEPER);
         pool.refillSalts(salts);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        G-1 (cold-seat audit) - refill enforces factory-permissioned salts
+    //////////////////////////////////////////////////////////////*/
+
+    function test_G1_refill_nonFactoryPrefixed_reverts() public {
+        bytes32 bad = bytes32(uint256(1)); // prefix is address(0), not FACTORY
+        bytes32[] memory salts = new bytes32[](1);
+        salts[0] = bad;
+        vm.prank(KEEPER);
+        vm.expectRevert(abi.encodeWithSelector(PossessioSaltPool.SaltNotFactoryPermissioned.selector, bad));
+        pool.refillSalts(salts);
+    }
+
+    function test_G1_refill_factoryPrefixed_accepted() public {
+        bytes32[] memory salts = new bytes32[](1);
+        salts[0] = _ps(FACTORY, 0x1234);
+        vm.prank(KEEPER);
+        pool.refillSalts(salts);
+        assertEq(pool.depth(), 1, "factory-prefixed salt accepted");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -167,7 +194,7 @@ contract PossessioSaltPoolTest is Test {
 
         // interleave a second refill, LIFO must track the new top
         bytes32[] memory second = new bytes32[](1);
-        second[0] = keccak256("second-batch");
+        second[0] = _ps(FACTORY, uint256(keccak256("second-batch")));
         vm.prank(KEEPER);
         pool.refillSalts(second);
         assertEq(pool.depth(), 2);
@@ -197,8 +224,8 @@ contract PossessioSaltPoolTest is Test {
 
     function test_events_refill_and_pull() public {
         bytes32[] memory salts = new bytes32[](2);
-        salts[0] = bytes32(uint256(0xA));
-        salts[1] = bytes32(uint256(0xB));
+        salts[0] = _ps(FACTORY, 0xA);
+        salts[1] = _ps(FACTORY, 0xB);
 
         vm.expectEmit(false, false, false, true);
         emit PoolRefilled(2, 2);
@@ -206,7 +233,7 @@ contract PossessioSaltPoolTest is Test {
         pool.refillSalts(salts);
 
         vm.expectEmit(false, false, false, true);
-        emit SaltPulled(bytes32(uint256(0xB)), 1); // LIFO top, remaining=1
+        emit SaltPulled(_ps(FACTORY, 0xB), 1); // LIFO top, remaining=1
         vm.prank(FACTORY);
         pool.pullSalt();
     }
@@ -253,7 +280,7 @@ contract PossessioSaltPoolTest is Test {
         );
         // One address holds both capabilities: refill AND pull.
         bytes32[] memory salts = new bytes32[](1);
-        salts[0] = keccak256("self-mined");
+        salts[0] = _ps(dual, uint256(keccak256("self-mined"))); // G-1: prefix == this pool's factory
         vm.startPrank(dual);
         p.refillSalts(salts);                    // as keeper
         assertEq(p.pullSalt(), salts[0]);        // as factory - same wallet

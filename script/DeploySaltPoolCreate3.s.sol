@@ -25,10 +25,12 @@ contract DeploySaltPoolCreate3 is Script {
     ICreateX constant CREATEX = ICreateX(0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed);
 
     // ---- deploy/anchor.json (phrase TREGUNA_..._DEE) ----
+    // RESTAGED 2026-08-26: fresh salts for the fixed-source redeploy (dry-run-
+    // proven in test/StageRedeployDryRun.t.sol).
     address constant ANCHOR_EOA = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
-    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00e5f3f7bbb10c509f42c757;
-    address constant PREDICTED = 0x7181a6Dac7582f4544c5dFC5e1C512258F4A61B6;
-    address constant FACTORY   = 0x0DD06656cb9a38730a7177792C357E48cEdb49Bd; // verify-before-wire
+    bytes32 constant SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec00554b55a2dc800801b2e2b0;
+    address constant PREDICTED = 0xb61f5200Dd46d4D6d6399aCf12c8E9bFF549a5d9;
+    address constant FACTORY   = 0x5509BA759ce6CdC4Fc719E38436bA33b734BF155; // verify-before-wire
 
     error WrongChain(uint256 got);
     error KeyIsNotAnchorEOA(address got);

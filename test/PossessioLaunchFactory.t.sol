@@ -184,8 +184,17 @@ contract PossessioLaunchFactoryTest is Test {
         require(address(f) == predictedFactory, "factory address prediction failed");
     }
 
+    /// @dev L-1 fix: the factory now requires the launch address to carry the v4
+    ///      BEFORE_INITIALIZE flag (bit 13). Mine the entropy upward from the seed
+    ///      until the predicted CREATE3 launch address carries it (the keeper's
+    ///      real-world job), so the deploy passes the new guard.
     function _refillSalt(PossessioSaltPool p, address f, uint88 entropy) internal returns (bytes32 salt) {
-        salt = bytes32(bytes20(f)) | bytes32(uint256(entropy));
+        while (true) {
+            salt = bytes32(bytes20(f)) | bytes32(uint256(entropy));
+            address predicted = CREATEX.computeCreate3Address(_guarded(f, salt));
+            if (uint160(predicted) & (uint160(1) << 13) != 0) break;
+            entropy++;
+        }
         bytes32[] memory b = new bytes32[](1);
         b[0] = salt;
         vm.prank(keeper);
@@ -199,7 +208,10 @@ contract PossessioLaunchFactoryTest is Test {
     uint88 internal saltEntropy = 0x1000;
 
     function _launch() internal returns (address launch, IPoolManagerMinimal.PoolKey memory key) {
-        _refillSalt(pool, address(factory), ++saltEntropy);
+        // Wide stride so each launch's flag-mining range (a few dozen entropy
+        // values) can never overlap the next seed and collide on a salt.
+        saltEntropy += 0x10000;
+        _refillSalt(pool, address(factory), saltEntropy);
         vm.prank(buyer);
         (launch, key) = factory.deployLaunch(
             custody, abi.encode("v3"), type(MockLaunchTemplate).creationCode, PRICE, _auth()
