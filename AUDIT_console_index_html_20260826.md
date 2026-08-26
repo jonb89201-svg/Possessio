@@ -73,6 +73,22 @@ the multi-RPC ladder (L1542–1543). No action required; noted for completeness.
 
 ---
 
+## Resolution (2026-08-26, same PR)
+
+- **W-1 — FIXED.** All four `esm.sh` imports of `@farcaster/miniapp-sdk` pinned to an
+  exact version `@0.3.0` (current `latest`, so no behavior change): `public/index.html`
+  ×2, `public/miniapp-solana.js` L72, `radar/feed.ts` L486. This also closes the documented
+  2026-08-05 drift defect (two SDK versions in one page) noted in `miniapp-solana.js`.
+  Residual: still served by esm.sh (CDN trust) — full removal needs same-origin bundling,
+  left as a follow-up; version-pinning removes the silent-bump vector, which was the finding.
+- **W-2 — SHIPPED (Report-Only).** `public/_headers` now serves a
+  `Content-Security-Policy-Report-Only` grounded in the real load set (adds the `esm.sh`
+  script/connect origins and the Base read-RPCs the earlier draft omitted). Report-Only
+  monitors without blocking, so it is safe to ship without device access; the enforcing
+  `Content-Security-Policy` is drafted immediately beside it and flips on only after an
+  on-device pass shows the Report-Only console clean (Codebyte Law: verify before enforcing).
+- **C-1 — unchanged (redeploy checklist item).** Repoint happens at redeploy time.
+
 ## Bottom line
 No live exploit in the console. The injection and wallet-tx paths are handled with real
 care (escaping at every sink, chain-guarded writes, a codehash-gated fail-safe launch

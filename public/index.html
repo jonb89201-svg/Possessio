@@ -2168,7 +2168,7 @@ window.PossessioEvm = {
     if (this.cached) return this.cached;
     if (window.ethereum) return (this.cached = window.ethereum);
     try {
-      const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
+      const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk@0.3.0");
       if (!(await sdk.isInMiniApp?.())) return null;
       this.cached = (await sdk.wallet.getEthereumProvider?.()) || null;
       return this.cached;
@@ -4877,7 +4877,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 // webview shows the splash forever. Guarded: in a normal browser (or if the
 // CDN import fails) every path lands in catch and the page is unaffected.
 try {
-  const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk");
+  const { sdk } = await import("https://esm.sh/@farcaster/miniapp-sdk@0.3.0");
   await sdk.actions.ready();
   console.log("[MINIAPP] sdk.actions.ready() sent");
 } catch (e) { /* not a mini-app context - nothing to do */ }
