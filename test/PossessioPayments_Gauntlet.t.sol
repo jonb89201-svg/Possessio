@@ -1057,6 +1057,11 @@ contract PossessioPaymentsGauntlet is Test {
         vm.warp(block.timestamp + 25 hours);
         chainlinkEth.setAnswer(int256(980_000_000_000_000_000));  // v2.4.1 — 18-dec cbETH/ETH healthy
         chainlinkDai.setAnswer(int256(500_000_000_000));  // v2.4.1 — 8-dec DAI/ETH retained
+        // P-1 — the WETH-leg floor is now fail-closed, so a healthy sweep needs
+        // the composite USDC/USD + ETH/USD feeds fresh too (they went stale over
+        // the 25h warp). Refresh them to their setUp values for this healthy sweep.
+        chainlinkUsdcUsd.setAnswer(int256(100_000_000));       // $1.00
+        chainlinkEthUsd.setAnswer(int256(300_000_000_000));    // $3000
 
         vm.prank(MERCHANT);
         payments.sweep(0, 0, 0.31 ether);
@@ -1092,25 +1097,42 @@ contract PossessioPaymentsGauntlet is Test {
         vm.warp(block.timestamp + 25 hours);
         chainlinkEth.setAnswer(int256(980_000_000_000_000_000));  // v2.4.1 — 18-dec cbETH/ETH healthy
         chainlinkDai.setAnswer(int256(500_000_000_000));  // v2.4.1 — 8-dec DAI/ETH retained
+        // P-1 — fail-closed WETH floor needs the composite feeds fresh for a
+        // healthy sweep after the 25h warp (see test_Recovery_FailureThenSuccess).
+        chainlinkUsdcUsd.setAnswer(int256(100_000_000));       // $1.00
+        chainlinkEthUsd.setAnswer(int256(300_000_000_000));    // $3000
         usdc.mint(address(payments), 5000 * 1e6);
 
-        // 2500 DAI gap to reach ceiling. With 5000 USDC incoming, ~2500 USDC for refill, 2500 USDC for cbETH
+        // 2500 DAI gap to reach ceiling. With 5000 USDC incoming, 2500 USDC for
+        // refill, then split 1250/1250 across the cbETH (WETH) and Morpho legs.
         router.setDaiOut(2500 * 1e18);
         // v2.4.2 — cbETH delivered by the Aerodrome leg; set it there.
-        router.setWethOut(0.31 ether);
-        aeroRouter.setCbEthOut(0.31 ether);
+        // P-1 — with the WETH-leg floor now live (feeds fresh), the USDC→WETH
+        // output must clear the ~0.375 ETH oracle floor for 1250 USDC @ $3000,
+        // and the WETH→cbETH output must clear its own ~0.386 ETH Aero floor.
+        // The old 0.31/0.31 values were only valid while the floor was off.
+        router.setWethOut(0.42 ether);
+        aeroRouter.setCbEthOut(0.40 ether);
 
         vm.prank(MERCHANT);
         payments.sweep(2400 * 1e18, 0, 0.31 ether);
 
         // Final state checks
         assertEq(dai.balanceOf(address(payments)), 5000 * 1e18, "DAI at ceiling");
-        assertEq(cbeth.balanceOf(address(payments)), 0.31 ether, "cbETH accumulated");
+        assertEq(cbeth.balanceOf(address(payments)), 0.40 ether, "cbETH accumulated");
 
         assertEq(payments.dailyRemaining(), DAILY_LIMIT, "Window rolled, full limit available");
 
-        uint256 expectedGauge = (0.31 ether * 1.05e18) / 1e18;
-        assertEq(payments.getTreasuryGauge(), expectedGauge, "Gauge reflects cbETH holdings");
+        // Gauge now reflects BOTH dual-acquisition legs (fresh composite feeds
+        // make the Morpho leg visible — pre-P-1 it silently read 0). Reconstruct
+        // the expected value from the same public inputs the contract aggregates:
+        //   cbETH leg : cbETH balance × LST rate (mock 1.05e18)
+        //   Morpho leg: convertToAssets(shares) × _usdcToEth (usdc·1e12·usdcUsd8 / ethUsd8)
+        uint256 cbLeg = (cbeth.balanceOf(address(payments)) * 1.05e18) / 1e18;
+        (, uint256 mUsdc) = payments.getMorphoBalance();
+        uint256 mLeg = (mUsdc * 1e12 * uint256(100_000_000)) / uint256(300_000_000_000);
+        uint256 expectedGauge = cbLeg + mLeg;
+        assertEq(payments.getTreasuryGauge(), expectedGauge, "Gauge reflects both dual-acquisition legs");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
