@@ -19,7 +19,27 @@ Anchor deployer: `0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC` (salts are sender-
 ## Pre-flight (do these once, in order)
 
 1. **Merge the audit PR** (P-1 / L-1 / G-1 + fork proofs).
-2. **Regenerate `TEMPLATE_CODEHASH`** from the FIXED `PossessioPayments` **with the production toolchain (solc 0.8.35)** — `keccak256(type(PossessioPayments).creationCode)`. Do **not** reuse the value the dry-run logged (that was this environment's 0.8.27). `script/GenTemplateArtifact.s.sol` produces the console-shaped codehash; use whatever your factory-verify path expects.
+2. **`TEMPLATE_CODEHASH` (production, solc 0.8.35) — MEASURED in CI:**
+   ```
+   TEMPLATE_CODEHASH=0x7dd017f4b4ba788b0002b78c0d933dde57a03c31a1a1f81ab5f51b329d337130
+   ```
+   `keccak256(type(PossessioPayments).creationCode)` for the FIXED (P-1) `PossessioPayments`,
+   compiled with the production toolchain (solc 0.8.35, via_ir, runs=200). Measured by
+   `test/TemplateCodehashProbe.t.sol` in the `forge (solidity)` CI job on run #173
+   (commit `7d1d7c2`, `head_sha 7d1d7c2ceba4158725088da0475f57353d6ddd7a`), creationCode
+   21865 bytes. Supply this as the `TEMPLATE_CODEHASH` env var to `DeployFactoryCreate3`
+   (the scripts stay env-driven on purpose — this value is recorded here, **not** hardcoded
+   into any broadcast script).
+   - **Toolchain-dependence is proven, not assumed:** the local 0.8.27 control hashed to
+     `0x94df70b23f7968759fa44be8d7d7515880c2905f59ea27f0194e0123012b3e50` (also 21865 bytes).
+     Same byte length, different hash — reusing the dry-run's 0.8.27 value would brick the
+     redeploy. Do **not** use it.
+   - `script/GenTemplateArtifact.s.sol` is **not** the tool here: it is a drift-guard hardwired
+     to the OLD factory pin (`0x14357940…`, factory `0x0DD0…`) and **reverts** on any change.
+     The fixed Payments intentionally hashes to a new value, so that script would revert — which
+     is also why the fixed template cannot be launched through the existing factory.
+   - Re-measure only if `PossessioPayments.sol` (or its imports) changes again before deploy;
+     re-run the probe in CI and update this value.
 3. **Confirm the four anchor addresses above are still empty on mainnet** (nobody squatted them) — the deploy scripts assert `deployed == PREDICTED` and revert on mismatch, so this is belt-and-suspenders.
 4. **Re-run the dry-run against a *fresh* Base fork** (Base state drifts): `BASE_RPC_URL=<rpc> forge test --match-path test/StageRedeployDryRun.t.sol` → must be green.
 
