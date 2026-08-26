@@ -9,7 +9,7 @@
 
 ## One-line verdict
 
-The audited subsystem is **sound**, with **one MEASURED Medium** on the live-product payment processor (P-1 — WETH-leg oracle floor fails open under composite-feed staleness), **now FIXED in this branch** with a fail-closed guard and a red→green regression suite. Also **one sibling-diff finding** (F-1, Low/Info — governance record-integrity), and two Info items (I-1 doc-drift, I-2 counter drift). The two prior open contract findings (V-1, R-1) are **confirmed fixed and merged at HEAD**. No custody drain and no external-attacker door in the audited set; P-1 was conditional MEV value-leakage on a swap leg.
+The audited subsystem is **sound**, with **one MEASURED Medium** on the live-product payment processor (P-1 — WETH-leg oracle floor fails open under composite-feed staleness), **now FIXED in this branch** with a fail-closed guard and a red→green regression suite. Also **one sibling-diff finding** (F-1, Low/Info — governance record-integrity) and three Info items (I-1 doc-drift, I-2 counter drift, S-1 L1Anchor leakage-check parity gap — benign). **`L1Anchor` (936 LOC) was sibling-diffed against P-1 and is clean** — no swap means no fail-open oracle floor, and its Symmetry Guard is a correct fail-closed one-way latch; it is in fact the better-hardened sibling on the Morpho principal counter (see I-2). The two prior open contract findings (V-1, R-1) are **confirmed fixed and merged at HEAD**. No custody drain and no external-attacker door in the audited set; P-1 was conditional MEV value-leakage on a swap leg.
 
 ---
 
@@ -23,6 +23,7 @@ The audited subsystem is **sound**, with **one MEASURED Medium** on the live-pro
 | `PossessioFundingVault` | 445 | sound (exact `outstanding`, CEI, asymmetric caps) |
 | `POSSESSIO_v2-6-3` (STEEL + Hook) | 2223 | sound; all historical fixes (M-1/C-1/C-4/C-5/FIX-3) present & correct |
 | `PossessioPayments` | 2118 | sound custody rails **except P-1** (WETH-leg floor fail-open, MEASURED Medium); daily-limit + guardian-freeze + 7-day emergency design solid |
+| `L1Anchor` | 936 | sound; **clean of P-1** (no swap → no oracle floor; Symmetry Guard is fail-CLOSED one-way latch); one Info parity gap (S-1) |
 
 ---
 
@@ -62,9 +63,23 @@ The audited subsystem is **sound**, with **one MEASURED Medium** on the live-pro
 
 - `src/POSSESSIO_v2-6-3.sol` `rescueToken` NatSpec (≈L2161) lists "DAI (protocol emergency reserve)" among protected tokens, but the DAI leg was removed (v3) and the code blocks only STEEL/cbETH/WETH. No security impact (DAI is never held). Comment cleanup only.
 
+### S-1 (INFO — sibling-diff) — `L1Anchor.routeToMorpho` lacks the USDC-consumption leakage check its Payments sibling has
+
+- **Where:** `src/L1Anchor.sol` `routeToMorpho` (L538–559) vs `src/PossessioPayments.sol` `_sweep` Morpho leg (L1069–1072).
+- **Diff:** Payments reverts `LeakageDetected` unless `(usdcBefore − usdcAfter) == morphoAlloc` (v2.4.1 Plate finding). L1Anchor performs the share-delta check (`sharesAfter <= sharesBefore → revert`) but **not** the USDC-consumption equality check.
+- **Not exploitable:** `USDC.forceApprove(vault, amount)` bounds the vault's `transferFrom` at exactly `amount`, and the allowance is reset to 0 immediately after the deposit — the vault cannot pull more than `amount`, and no allowance dangles. The only behaviour the missing check permits is *under*-consumption, which leaves harmless leftover USDC in the merchant's own contract (re-routable, never lost). **Info-level defense-in-depth parity gap; no fund risk.** Provenance: DERIVED (two code sites compared).
+- **Verdict on the header's warning:** the Payments header flagged that Morpho-leg parity gaps "may exist in L1Anchor." Confirmed — this is the gap, and it is benign. The MAVAN leg (`routeToMavan`) is analogous and equally benign (approval-bounded, share-delta-checked).
+
+### L1Anchor sibling-diff — positive results (MEASURED-from-source)
+
+- **P-1 has no analog in L1Anchor.** No DEX swap → no `_usdcToEth`, no `amountOutMinimum`, no oracle-derived slippage floor to fail open. The only oracle (cbETH/ETH) drives the Symmetry Guard, which is **fail-closed**: every bad-oracle condition (revert, staleness, future-timestamp, incomplete round, non-positive answer, below-threshold price) latches `depegPaused=true` (one-way; cleared only by `resetDepeg()` on verified-good data). This is the correct inverse of P-1.
+- **`morphoDepositedPrincipal` is correctly decremented** in L1Anchor (`withdrawFromMorpho` L627–631, `emergencyUnwind` L717–721, Delta-Verification), **which reframes Payments I-2**: L1Anchor is the reference implementation; Payments' write-only counter is the divergent one. See I-2.
+- Withdrawals ungated by the guard (merchant sovereignty), delta-verified against contract balance rather than external return values; `emergencyUnwind` best-effort per-leg with stranded-principal accounting; no admin, no upgrade, per-merchant; all state-changers `nonReentrant`.
+
 ### I-2 (INFO) — `PossessioPayments.morphoDepositedPrincipal` is a write-only counter that drifts high
 
 - `morphoDepositedPrincipal` (L452) is incremented in `_sweep` (L1083, `+= morphoAlloc`) but **never decremented** on `redeemMorpho` and **never read** in any safety-critical path — the treasury gauge (`_computeCurrentEthEquivalent`) values the Morpho leg from live `MORPHO_VAULT.balanceOf → convertToAssets`, not from this counter. So it is purely an informational cumulative-deposit tally; after redemptions it overstates the current position. No accounting or custody impact — record it so a future consumer doesn't mistake it for the current principal.
+- **Sibling-diff:** the L1 sibling `L1Anchor` has an identically-named `morphoDepositedPrincipal` that **is** correctly decremented on every unwind path (Delta-Verification). Payments diverged from that pattern. If a future version reads this counter (e.g. for a principal-vs-value yield display), mirror L1Anchor: decrement `morphoDepositedPrincipal` in `redeemMorpho` by the redeemed principal (floored at zero). Low priority while the counter stays unread.
 
 ---
 
@@ -86,7 +101,7 @@ The audited subsystem is **sound**, with **one MEASURED Medium** on the live-pro
 
 ## Non-Proven Scope (Codebyte Results Statement)
 
-- **Not yet read this pass (follow-on):** `L1Anchor` (936) — **priority sibling-diff** for P-1's fail-open pattern on its `routeToMorpho` slippage floor, `PossessioX402Core` (858), `PossessioPool` (473), `PossessioLaunchFactory` (410), `PossessioFactory` (264), `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `PossessioSaltPool`, `LSTExchangeRate`, `SymmetryGuardCore`, `PossessioCouncilToken`, `HandshakeLib`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~7,700 LOC.
+- **Not yet read this pass (follow-on):** `PossessioX402Core` (858), `PossessioPool` (473), `PossessioLaunchFactory` (410), `PossessioFactory` (264), `PLATE`/`PLATEStaking`, `PossessioWhiskyMarket`, `PossessioSaltPool`, `LSTExchangeRate`, `SymmetryGuardCore`, `PossessioCouncilToken`, `HandshakeLib`, `PossessioAutoTarget` fork behavior, `PossessioTestnetLaunchPool`. ~7,700 LOC.
 - **Assumptions:** STEEL/PLATE and USDC are standard ERC-20 (no fee-on-transfer / rebasing) — asserted from `STEEL` source (clean ERC20, no custom transfer). External venues (Aerodrome, Uniswap v4 PoolManager, Chainlink feeds, EIP-3009 USDC) behave to interface. The v4 hook fee-delta algebra is read-correct but is best proven by the repo's own differential/fork suites, not re-derived here.
 - **MEASURED vs DERIVED:** verdicts are DERIVED (full source reads) except the `forge build` clean and the two prior fixes' presence, which are MEASURED from HEAD. F-1 is DERIVED and can be promoted to MEASURED with a red→green test on request.
 
