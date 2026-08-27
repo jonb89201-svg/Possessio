@@ -44,8 +44,9 @@ contract POSSESSIO_v2_InventSig is POSSESSIO_v2_Invariants_t {
             weth:            address(weth),
             council:         council
         });
-        vm.prank(deployer);
+        vm.startPrank(deployer);
         sigHook = new PossessioHook(params);
+        vm.stopPrank();
 
         _seedSig(100 ether);
     }
