@@ -100,8 +100,9 @@ contract POSSESSIO_v2_Invariants_t is Test {
             council:         council
         });
 
-        vm.prank(deployer);
+        vm.startPrank(deployer);
         hook = new PossessioHook(params);
+        vm.stopPrank();
     }
 
     // ======================================================================
