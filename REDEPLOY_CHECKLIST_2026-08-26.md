@@ -42,6 +42,36 @@ Anchor deployer: `0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC` (salts are sender-
      re-run the probe in CI and update this value.
 3. **Confirm the four anchor addresses above are still empty on mainnet** (nobody squatted them) — the deploy scripts assert `deployed == PREDICTED` and revert on mismatch, so this is belt-and-suspenders.
 4. **Re-run the dry-run against a *fresh* Base fork** (Base state drifts): `BASE_RPC_URL=<rpc> forge test --match-path test/StageRedeployDryRun.t.sol` → must be green.
+5. **Cold-seat LST oracle re-audit (Moonwell-lens) — do BEFORE deploy, red-first on a fresh fork.**
+   The warm-seat pass (2026-08-29) MEASURED the deployed `LSTExchangeRate` guard fails closed:
+   manipulated oracle → `RateDivergence` revert, stale feed → `OracleStale`, and live
+   `cbEthToEth` == the Chainlink feed to the wei (see `test/LSTExchangeRate_AuditGuards.t.sol`,
+   6/6 on live fork). **Not the Moonwell fund-loss class** — the output prices only the telemetry
+   gauge, and truth is unmanipulable Chainlink. Do **not** inherit that "sound" — the cold seat
+   re-derives it and MEASURES the three residuals below.
+   - **F-1 (Low, liveness) — sweep DoS via forced TWAP divergence.** Design rule is "works
+     correctly or not at all, *without failing anything else*." The gauge read (`:1235`) obeys it
+     (try/catch → cbETH leg = 0); the sweep call site (`PossessioPayments.sol:1108`) does **not** —
+     a griefed >2% TWAP reverts the whole sweep. **Redeploy fix: wrap `:1108` in the same
+     try/catch downgrade as `:1235`** so a griefed valuation degrades the gauge field to 0 instead
+     of failing the sweep. MEASURE end-to-end (the P-1 harness scaffolds a Payments deploy; it
+     currently stubs a non-reverting `cbEthToEth`). Also quantify: sweep access control
+     (keeper-only vs permissionless) and the cost to hold the ~1440-cardinality pool's 30-min TWAP
+     >2% for a block vs live liquidity.
+     - ⚠️ **CODEHASH DEPENDENCY:** F-1's fix edits `PossessioPayments.sol` → item 2's
+       `TEMPLATE_CODEHASH` **must be re-measured** (re-run `test/TemplateCodehashProbe.t.sol` in CI
+       and update the pinned value) before deploy. Ship F-1 and re-pin, or defer F-1 and keep the
+       current pin — do not deploy a fixed Payments against the old codehash.
+   - **F-2 (Low, informational) — 24h staleness window.** MEASURED fail-closed and doubly
+     backstopped by the divergence guard. Cold seat: read consecutive feed rounds' `updatedAt` for
+     the real cbETH/ETH heartbeat; if ≪24h, tighten `ORACLE_STALE` in the redeploy (cosmetic).
+     Note: tightening a `constant` in `LSTExchangeRate.sol` re-deploys that contract (no codehash
+     link, but the staged `lstRates` address changes → update Payments' `DeployParams`).
+   - **F-3 (Low, optional) — `_tickToRate18` full-range fuzz.** MEASURED clean at anchors and
+     in-range (tick 0 = 1e18, monotonic, reciprocal, 1000 cbETH no overflow). Optional cold-seat
+     fuzz across the full int24 range vs a reference `1.0001^tick`: assert no revert-by-overflow,
+     bounded error, and all out-of-band ticks land in the divergence revert.
+   - Full memo: warm-seat `AUDIT_LSTExchangeRate_live_2026-08-29.md` (Architect-gated scratchpad).
 
 ## Deploy (RUNBOOK order — POOL → x402Core → factory → saltPool)
 
