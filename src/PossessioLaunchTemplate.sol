@@ -5,6 +5,7 @@ import {IERC20}    from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20}     from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast}  from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IPoolManager}    from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
@@ -106,7 +107,7 @@ interface IPossessioLaunchFactory {
     function poolManager() external view returns (address);
 }
 
-contract PossessioLaunchTemplate is ERC20, IUnlockCallback {
+contract PossessioLaunchTemplate is ERC20, IUnlockCallback, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -387,7 +388,7 @@ contract PossessioLaunchTemplate is ERC20, IUnlockCallback {
     /*//////////////////////////////////////////////////////////////
                     OWNER: claim the captured fee
     //////////////////////////////////////////////////////////////*/
-    function claimFees() external onlyOwner {
+    function claimFees() external onlyOwner nonReentrant {
         uint256 amount = accumulatedCouncilFees;
         if (amount == 0) revert NothingToClaim();
         accumulatedCouncilFees = 0;
@@ -403,7 +404,7 @@ contract PossessioLaunchTemplate is ERC20, IUnlockCallback {
 
     /// @notice Add full-range liquidity, pulling both sides from the caller
     ///         (owner must pre-approve). Callable any number of times.
-    function addLiquidity(uint256 amountCouncil, uint256 amountLaunch) external onlyOwner {
+    function addLiquidity(uint256 amountCouncil, uint256 amountLaunch) external onlyOwner nonReentrant {
         if (!poolInitialized) revert PoolNotInitialized();
         if (amountCouncil == 0 && amountLaunch == 0) revert ZeroAmount();
 
@@ -439,7 +440,7 @@ contract PossessioLaunchTemplate is ERC20, IUnlockCallback {
 
     /// @notice Withdraw `liquidityToRemove` units of the owner's full-range
     ///         position; proceeds settle straight to `to`.
-    function removeLiquidity(uint128 liquidityToRemove, address to) external onlyOwner {
+    function removeLiquidity(uint128 liquidityToRemove, address to) external onlyOwner nonReentrant {
         if (!poolInitialized) revert PoolNotInitialized();
         if (liquidityToRemove == 0) revert ZeroAmount();
         if (to == address(0)) revert ZeroAddress();

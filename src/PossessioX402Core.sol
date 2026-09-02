@@ -435,6 +435,10 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         // X-H1 / X-L3 (re-audit 2026-09-01): bounds the floor math relies on —
         // see getRunningMinimumFloor's draw-room invariant, and the
         // 2*VELOCITY_HALFLIFE term in _decayedVelocity.
+        // X-H1 fresh-pass finding (re-audit, second pass): ABSOLUTE_FLOOR == 0
+        // makes the draw-room guarantee vacuous (maxFloor collapses to the
+        // full cap). Mirrors PossessioPool's identical guard.
+        if (_absoluteFloor == 0) revert FloorParamsInvalid();
         if (_operationalCap < 2 * _absoluteFloor) revert FloorParamsInvalid();
         if (_velocityHalflife > type(uint128).max) revert FloorParamsInvalid();
         OPERATIONAL_CAP = _operationalCap;

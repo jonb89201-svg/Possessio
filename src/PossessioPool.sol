@@ -227,6 +227,13 @@ contract PossessioPool is ReentrancyGuard {
         // The cap must leave at least one absolute floor of draw room (see the
         // draw-room invariant in getRunningMinimumFloor), and the half-life must
         // be small enough that 2*VELOCITY_HALFLIFE cannot overflow in decay.
+        // X-H1 fresh-pass finding (re-audit, second pass): ABSOLUTE_FLOOR == 0
+        // makes the draw-room guarantee vacuous (maxFloor collapses to the
+        // full cap, reproducing the exact absorbing-lock the fix exists to
+        // prevent). A floor literally named "ABSOLUTE_FLOOR" that is zero was
+        // always a degenerate configuration; forbid it so the guarantee holds
+        // for every valid deployment, not just the current live calibration.
+        if (_absoluteFloor == 0) revert FloorParamsInvalid();
         if (_operationalCap < 2 * _absoluteFloor) revert FloorParamsInvalid();
         if (_velocityHalflife > type(uint128).max) revert FloorParamsInvalid();
 

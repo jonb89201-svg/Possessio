@@ -217,6 +217,17 @@ contract PossessioPoolDeployValuesTest is Test {
         assertEq(pool.poolBalance(), CAP - FLOOR);
     }
 
+    // D12. X-H1 fresh-pass finding (re-audit, second pass): ABSOLUTE_FLOOR == 0
+    //      made the draw-room guarantee vacuous (maxFloor collapsed to the
+    //      full cap, reproducing the exact absorbing-lock the fix exists to
+    //      prevent). RED on the pre-fix (first-pass) constructor guard.
+    function test_D12_zeroAbsoluteFloor_reverts() public {
+        address[] memory srcs = new address[](1);
+        srcs[0] = srcA;
+        vm.expectRevert(PossessioPool.FloorParamsInvalid.selector);
+        new PossessioPool(address(usdc), srcs, operator, treasury, CAP, 0, PER_UNIT, HALFLIFE);
+    }
+
     // ── D9. Full-cap runway against the stated total burn ────────────────
     //      §22 sizes the $700 cap as ~3 months of $235/mo total burn.
     function test_D9_capGivesStatedRunway() public view {

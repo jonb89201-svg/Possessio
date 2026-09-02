@@ -61,7 +61,7 @@ contract PossessioAutoTargetForkTest is Test {
         // the constructor REJECTS it as a sink (the inverted V2 guard).
         address[] memory sources = new address[](1);
         sources[0] = makeAddr("someAuthorizedSource");
-        heart = new PossessioPool(USDC, sources, operator, treasury, 1e18, 0, 0, 3600);
+        heart = new PossessioPool(USDC, sources, operator, treasury, 1e18, 1, 0, 3600);
         tollSink = makeAddr("tollSink");
         desk = new PossessioAutoTarget(USDC, tollSink, keeper, FEE);
 
