@@ -79,6 +79,7 @@ contract MockSwapRouter {
 }
 
 contract PossessioRailTest is Test {
+    uint256 internal constant MIN_SETTLE_BPS = 0; // R-H1 floor OFF here: this suite proves pre-existing behaviour; the floor is proven in PossessioRailAdversarial
     MockUSDC usdc; MockToken token; MockToken weth; MockSwapRouter router; MockAutoTarget at;
     address remoteAgent = makeAddr("remoteAgent");
     uint256 constant REMOTE_TIMEOUT = 24 hours;
@@ -99,7 +100,8 @@ contract PossessioRailTest is Test {
         uint256 n = vm.getNonce(address(this));
         address predictedRail = vm.computeCreateAddress(address(this), n + 1);
         vault = new PossessioFundingVault(IERC20(address(usdc)), owner, predictedRail, predictedRail, MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP);
-        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT);
+        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT, MIN_SETTLE_BPS);
+        vm.prank(owner); rail.setRouteAllowed(address(token), false, FEE, 0, true);   // R-H1 route whitelist
         assertEq(address(rail), predictedRail, "prewire prediction");
         // fund the vault; pre-fund the router with both sides so it can pay out
         usdc.mint(owner, 10_000e6);
@@ -153,6 +155,7 @@ contract PossessioRailTest is Test {
     function test_enter_tokenMismatch_reverts() public {
         _openIntent(1, 1); // intent authored for `token`
         MockToken other = new MockToken();
+        vm.prank(owner); rail.setRouteAllowed(address(other), false, FEE, 0, true);   // R-H1
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.TokenMismatch.selector);
         rail.enter(1, address(other), 3_000e6, 1e18, false, FEE, 0);
@@ -294,6 +297,7 @@ contract PossessioRailTest is Test {
         hp.mint(address(router), 1_000_000e18); // router can pay out the buy
         at.setIntent(id, address(hp), 8453, 1);  // Open, Base-tagged
         router.setOut(500e18);
+        vm.prank(owner); rail.setRouteAllowed(address(hp), false, FEE, 0, true);   // R-H1
         vm.prank(keeper); rail.enter(id, address(hp), 3_000e6, 1e18, false, FEE, 0);
     }
 

@@ -1126,7 +1126,7 @@ contract PossessioPaymentsTest is Test {
 
     function test_ExitLimit_AssetLimit_CancelQueuedIncrease() public {
         vm.prank(MERCHANT);
-        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH, 5 ether);
+        payments.queueAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH, 2 ether);   // P-H1: <= 2x reference
         vm.prank(MERCHANT);
         payments.cancelAssetDailyLimitIncrease(PossessioPayments.DailyLimitAsset.CBETH);
         vm.warp(block.timestamp + 24 hours + 1);
@@ -1264,6 +1264,8 @@ contract PossessioPaymentsTest is Test {
     function test_Guardian_DisableByOwner() public {
         vm.startPrank(MERCHANT);
         payments.enableGuardian();
+        payments.queueGuardianDisable();                       // P-H1: timelocked disarm
+        vm.warp(block.timestamp + payments.GUARDIAN_DISABLE_DELAY());
         payments.disableGuardian();
         vm.stopPrank();
         assertFalse(payments.guardianEnabled());

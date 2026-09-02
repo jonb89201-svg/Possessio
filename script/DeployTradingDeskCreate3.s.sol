@@ -69,6 +69,7 @@ contract DeployTradingDeskCreate3 is Script {
         address weth      = vm.envAddress("WETH");           // the ONE permitted multi-hop middle
         address remoteAgt = vm.envAddress("REMOTE_AGENT");   // Solana-leg capital destination
         uint256 remoteTo  = vm.envUint("REMOTE_LEG_TIMEOUT");// owner may release a dead leg after this
+        uint256 minSettleBps = vm.envUint("MIN_SETTLE_BPS");  // R-H1: keeper settle/exit floor, bps of usdcIn (calibrate before freeze)
         bytes32 railSalt  = vm.envBytes32("RAIL_SALT");
         address railPinned = vm.envAddress("RAIL_PREDICTED");
 
@@ -114,7 +115,7 @@ contract DeployTradingDeskCreate3 is Script {
         // 3. Rail via CREATE3 into the predicted slot.
         bytes memory initCode = abi.encodePacked(
             type(PossessioRail).creationCode,
-            abi.encode(usdc, vault, at, keeper, dexRouter, weth, remoteAgt, remoteTo)
+            abi.encode(usdc, vault, at, keeper, dexRouter, weth, remoteAgt, remoteTo, minSettleBps)
         );
         rail = CREATEX.deployCreate3(railSalt, initCode);
 

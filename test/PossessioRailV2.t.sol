@@ -30,6 +30,7 @@ import {PossessioRail, IFundingVault, IAutoTarget, ISwapRouter} from "../src/Pos
 import {MockUSDC, MockToken, MockSwapRouter, MockAutoTarget} from "./PossessioRail.t.sol";
 
 contract PossessioRailV2Test is Test {
+    uint256 internal constant MIN_SETTLE_BPS = 0; // R-H1 floor OFF here: this suite proves pre-existing behaviour; the floor is proven in PossessioRailAdversarial
     MockUSDC usdc; MockToken token; MockToken weth; MockSwapRouter router; MockAutoTarget at;
     PossessioFundingVault vault; PossessioRail rail;
 
@@ -59,8 +60,12 @@ contract PossessioRailV2Test is Test {
         );
         rail = new PossessioRail(
             IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)),
-            keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT
+            keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT, MIN_SETTLE_BPS
         );
+        vm.startPrank(owner);   // R-H1 route whitelist
+        rail.setRouteAllowed(address(token), false, FEE_WETH_TOK, 0, true);
+        rail.setRouteAllowed(address(token), true, FEE_USDC_WETH, FEE_WETH_TOK, true);
+        vm.stopPrank();
         require(address(rail) == predictedRail, "prewire");
 
         usdc.mint(owner, 100_000e6);
@@ -452,13 +457,13 @@ contract PossessioRailV2Test is Test {
     function test_V2_25_constructor_rejectsZeroAndZeroTimeout() public {
         vm.expectRevert(PossessioRail.ZeroAddress.selector);
         new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)),
-            keeper, ISwapRouter(address(router)), address(0), remoteAgent, REMOTE_TIMEOUT);
+            keeper, ISwapRouter(address(router)), address(0), remoteAgent, REMOTE_TIMEOUT, MIN_SETTLE_BPS);
         vm.expectRevert(PossessioRail.ZeroAddress.selector);
         new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)),
-            keeper, ISwapRouter(address(router)), address(weth), address(0), REMOTE_TIMEOUT);
+            keeper, ISwapRouter(address(router)), address(weth), address(0), REMOTE_TIMEOUT, MIN_SETTLE_BPS);
         vm.expectRevert(PossessioRail.ZeroAmount.selector);
         new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)),
-            keeper, ISwapRouter(address(router)), address(weth), remoteAgent, 0);
+            keeper, ISwapRouter(address(router)), address(weth), remoteAgent, 0, MIN_SETTLE_BPS);
     }
 
     /// Inv. 8 -- one Rail, one vault, both legs settle through the same door.

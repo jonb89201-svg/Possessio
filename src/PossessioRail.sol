@@ -98,6 +98,22 @@ contract PossessioRail is ReentrancyGuard {
     ///         release it (a dead leg must not charge `outstanding` forever).
     uint256      public immutable REMOTE_LEG_TIMEOUT;
 
+    // ─── R-H1 (re-audit 2026-09-01): a compromised KEEPER key could drain the
+    // vault at dailyDrawCap/day with outstanding == 0 throughout — remote leg:
+    // openRemoteLeg → 1 wei back → settleRemoteLeg (no minimum); Base leg: a
+    // rigged near-empty venue + exit(minUsdcOut = 1). "Bounded four ways" was
+    // really two (maxPerTrade + dailyDrawCap). Two structural bounds close it:
+    //   1. MIN_SETTLE_BPS — a keeper-driven settle/exit must return at least
+    //      this fraction of usdcIn; anything worse is OWNER-only (ownerExit /
+    //      ownerSettleRemoteLeg), so a bad trade is visible and owner-signed,
+    //      never keeper-silent.
+    //   2. Route whitelist — the keeper may only enter on (token, route) pairs
+    //      the owner has allowed, so it cannot pick a thin fee tier it seeded.
+    // Residual, stated: within an allowed deep venue the keeper can still lose
+    // up to (1 - MIN_SETTLE_BPS) per trade under the vault's caps.
+    uint256      public immutable MIN_SETTLE_BPS;
+    mapping(bytes32 => bool) public allowedRoute;
+
     /// @notice Status.Pending is APPENDED so None=0/Open=1/Closed=2 keep their
     ///         numeric meaning for anything already reading this enum.
     enum Status { None, Open, Closed, Pending }
@@ -129,6 +145,8 @@ contract PossessioRail is ReentrancyGuard {
     event RemoteLegSettled(uint256 indexed intentId, uint256 usdcIn, uint256 got, bool ruleResolved);
     event RemoteLegAbandoned(uint256 indexed intentId, uint256 usdcIn, uint256 recovered);
     event UsdcSweptHome(uint256 amount);
+    event RouteAllowed(address indexed token, bool viaWeth, uint24 feeA, uint24 feeB, bool allowed);
+    event RemoteLegOwnerSettled(uint256 indexed intentId, uint256 usdcIn, uint256 got);
 
     // ── Errors ──────────────────────────────────────────────────────────────
     error NotKeeper();
@@ -151,6 +169,11 @@ contract PossessioRail is ReentrancyGuard {
     error PositionNotPending();
     error NothingReturned();
     error TimeoutNotElapsed();
+    error BadBps();
+    error RouteNotAllowed();                       // R-H1: keeper route not owner-allowed
+    error SettleBelowMinimum(uint256 got, uint256 minimum);      // R-H1: keeper settle under floor
+    error ExitFloorBelowMinimum(uint256 minUsdcOut, uint256 minimum); // R-H1: keeper exit under floor
+    error SlippageMeasured(uint256 got, uint256 minimum);        // R-L2: measured delta under minOut
 
     modifier onlyKeeper() { if (msg.sender != keeper) revert NotKeeper(); _; }
     modifier onlyOwner()  { if (msg.sender != vault.owner()) revert NotOwner(); _; }
@@ -168,7 +191,8 @@ contract PossessioRail is ReentrancyGuard {
         ISwapRouter   _dexRouter,
         address       _weth,
         address       _remoteAgent,
-        uint256       _remoteLegTimeout
+        uint256       _remoteLegTimeout,
+        uint256       _minSettleBps
     ) {
         if (address(_usdc)       == address(0)) revert ZeroAddress();
         if (address(_vault)      == address(0)) revert ZeroAddress();
@@ -178,6 +202,7 @@ contract PossessioRail is ReentrancyGuard {
         if (_weth                == address(0)) revert ZeroAddress();
         if (_remoteAgent         == address(0)) revert ZeroAddress();
         if (_remoteLegTimeout    == 0)          revert ZeroAmount();
+        if (_minSettleBps > 10_000)             revert BadBps();
         usdc       = _usdc;
         vault      = _vault;
         autoTarget = _autoTarget;
@@ -186,6 +211,7 @@ contract PossessioRail is ReentrancyGuard {
         weth       = _weth;
         remoteAgent = _remoteAgent;
         REMOTE_LEG_TIMEOUT = _remoteLegTimeout;
+        MIN_SETTLE_BPS = _minSettleBps;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -223,21 +249,28 @@ contract PossessioRail is ReentrancyGuard {
     function _swap(address tokenIn, address token, bool viaWeth, uint24 feeA, uint24 feeB, bool reverse,
                    uint256 amountIn, uint256 minOut) internal returns (uint256 out)
     {
+        // R-L2 (re-audit 2026-09-01): measure the balance delta, never trust the
+        // router's reported figure (fee-on-transfer tokens, or a router that
+        // lies, would otherwise mis-size the position / the return home).
+        address tokenOut = reverse ? address(usdc) : token;
+        uint256 before = IERC20(tokenOut).balanceOf(address(this));
         IERC20(tokenIn).forceApprove(address(dexRouter), amountIn);
         if (!viaWeth) {
-            out = dexRouter.exactInputSingle(ISwapRouter.ExactInputSingleParams({
+            dexRouter.exactInputSingle(ISwapRouter.ExactInputSingleParams({
                 tokenIn: tokenIn,
-                tokenOut: reverse ? address(usdc) : token,
+                tokenOut: tokenOut,
                 fee: feeA, recipient: address(this),
                 amountIn: amountIn, amountOutMinimum: minOut, sqrtPriceLimitX96: 0
             }));
         } else {
-            out = dexRouter.exactInput(ISwapRouter.ExactInputParams({
+            dexRouter.exactInput(ISwapRouter.ExactInputParams({
                 path: _path(token, true, feeA, feeB, reverse),
                 recipient: address(this), amountIn: amountIn, amountOutMinimum: minOut
             }));
         }
         IERC20(tokenIn).forceApprove(address(dexRouter), 0);
+        out = IERC20(tokenOut).balanceOf(address(this)) - before;
+        if (out < minOut) revert SlippageMeasured(out, minOut);
     }
 
     /// @dev Route hygiene. A zero fee tier is never a real V3 pool, and feeB is
@@ -289,6 +322,7 @@ contract PossessioRail is ReentrancyGuard {
         if (st != AT_OPEN)                                        revert IntentNotOpen();
         if (chainTag != CHAIN_BASE)                               revert WrongChain();
         if (address(uint160(uint256(tokenRef))) != token)        revert TokenMismatch();
+        if (!allowedRoute[_routeKey(token, viaWeth, feeA, feeB)]) revert RouteNotAllowed();   // R-H1
 
         // ── Effects: the ROUTE IS RECORDED here, so exit cannot diverge ──────
         p.token = token; p.usdcIn = size; p.status = Status.Open;
@@ -322,6 +356,10 @@ contract PossessioRail is ReentrancyGuard {
         if (minUsdcOut == 0)         revert ZeroMinOut();
         (, , , , , , , uint8 st, , ) = autoTarget.intents(intentId);
         if (st != AT_RESOLVED) revert ExitNotAuthorized();
+        // R-H1: a keeper exit must set its floor at >= MIN_SETTLE_BPS of usdcIn;
+        // a worse close is the owner's call (ownerExit), never keeper-silent.
+        uint256 exitFloor = (p.usdcIn * MIN_SETTLE_BPS) / 10_000;
+        if (minUsdcOut < exitFloor) revert ExitFloorBelowMinimum(minUsdcOut, exitFloor);
         _closeSwapReturn(intentId, p, minUsdcOut, p.viaWeth, p.feeA, p.feeB, false);
     }
 
@@ -462,6 +500,9 @@ contract PossessioRail is ReentrancyGuard {
         uint256 snap = p.usdcSnapshot;
         uint256 got = bal > snap ? bal - snap : 0;
         if (got == 0) revert NothingReturned();
+        // R-H1: below the floor only the owner may settle (ownerSettleRemoteLeg).
+        uint256 settleFloor = (p.usdcIn * MIN_SETTLE_BPS) / 10_000;
+        if (got < settleFloor) revert SettleBelowMinimum(got, settleFloor);
 
         (, , , , , , , uint8 st, , ) = autoTarget.intents(intentId);
 
@@ -473,6 +514,43 @@ contract PossessioRail is ReentrancyGuard {
         usdc.forceApprove(address(vault), got);
         vault.returnProceeds(intentId, got);
         emit RemoteLegSettled(intentId, p.usdcIn, got, st == AT_RESOLVED);
+    }
+
+    /**
+     * @notice R-H1: owner settles a remote leg that came home BELOW the keeper
+     *         floor, before the timeout. Same measured-delta rule, owner-signed.
+     *         Without this an honest losing trade would strand until
+     *         abandonRemoteLeg's timeout.
+     */
+    function ownerSettleRemoteLeg(uint256 intentId) external onlyOwner nonReentrant {
+        Position storage p = positions[intentId];
+        if (p.status != Status.Pending) revert PositionNotPending();
+
+        uint256 bal = usdc.balanceOf(address(this));
+        uint256 snap = p.usdcSnapshot;
+        uint256 got = bal > snap ? bal - snap : 0;
+        if (got == 0) revert NothingReturned();
+
+        p.status = Status.Closed;
+        pendingRemoteLegs = 0;
+
+        usdc.forceApprove(address(vault), got);
+        vault.returnProceeds(intentId, got);
+        emit RemoteLegOwnerSettled(intentId, p.usdcIn, got);
+    }
+
+    /// @notice R-H1: owner allows / revokes a (token, route) the keeper may enter on.
+    function setRouteAllowed(address token, bool viaWeth, uint24 feeA, uint24 feeB, bool allowed)
+        external onlyOwner
+    {
+        if (token == address(0)) revert ZeroAddress();
+        _validateRoute(token, viaWeth, feeA, feeB);
+        allowedRoute[_routeKey(token, viaWeth, feeA, feeB)] = allowed;
+        emit RouteAllowed(token, viaWeth, feeA, feeB, allowed);
+    }
+
+    function _routeKey(address token, bool viaWeth, uint24 feeA, uint24 feeB) internal pure returns (bytes32) {
+        return keccak256(abi.encode(token, viaWeth, feeA, feeB));
     }
 
     /**
