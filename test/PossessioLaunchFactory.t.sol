@@ -66,6 +66,7 @@ contract MockHeart {
     uint256 public received;
     constructor(MockUSDC u) { usdc = u; }
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
@@ -80,6 +81,12 @@ contract NotAHeart {
 /// A sink that answers the marker with an explicit false.
 contract FalseHeart {
     function isInfraSink() external pure returns (bool) { return false; }
+}
+
+/// A real Pool marker that does NOT list the caller as a source (F-L3).
+contract UnlistedHeart {
+    function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return false; }
 }
 
 /// Recording mock PoolManager: stores the exact key + price it was
@@ -440,6 +447,32 @@ contract PossessioLaunchFactoryTest is Test {
         new PossessioLaunchFactory(
             FEE, templateCodehash, address(pool), address(usdc), brick,
             address(council), address(pm), POOL_FEE, TICK_SPACING
+        );
+    }
+
+    /// F-L3 (re-audit 2026-09-01): a live Pool that does not list this factory
+    /// used to construct clean and revert every fee push forever.
+    function test_ctor_heartDoesNotListFactory_reverts() public {
+        address unlisted = address(new UnlistedHeart());
+        vm.expectRevert(PossessioLaunchFactory.FeeSinkSourceNotAuthorized.selector);
+        new PossessioLaunchFactory(
+            FEE, templateCodehash, address(pool), address(usdc), unlisted,
+            address(council), address(pm), POOL_FEE, TICK_SPACING
+        );
+    }
+
+    /// F-I4 (re-audit 2026-09-01): tick spacing above v4's MAX_TICK_SPACING
+    /// (32767) used to construct clean and brick every initialize.
+    function test_ctor_tickSpacingAboveMax_reverts() public {
+        vm.expectRevert(PossessioLaunchFactory.BadTickSpacing.selector);
+        new PossessioLaunchFactory(
+            FEE, templateCodehash, address(pool), address(usdc), address(heart),
+            address(council), address(pm), POOL_FEE, 32768
+        );
+        // the boundary itself is accepted
+        new PossessioLaunchFactory(
+            FEE, templateCodehash, address(pool), address(usdc), address(heart),
+            address(council), address(pm), POOL_FEE, 32767
         );
     }
 

@@ -140,7 +140,7 @@ contract L1AnchorTestBase is Test {
 
     /// @notice Make oracle report data older than ORACLE_STALE (3600s).
     function _setOracleStale() internal {
-        oracle.setStale(3600 + 1);
+        oracle.setStale(anchor.ORACLE_STALE() + 1);   // A-H1: 25h window (24h heartbeat + slack)
     }
 
     /// @notice Make oracle's latestRoundData() revert.

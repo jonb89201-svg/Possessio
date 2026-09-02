@@ -86,6 +86,13 @@ contract PossessioSaltPool {
     ///         the prefix on-chain so a keeper mistake can never seed a
     ///         front-runnable salt.
     error SaltNotFactoryPermissioned(bytes32 salt);
+    /// @notice F-L2 (re-audit 2026-09-01): CreateX reads byte 21 of the salt as
+    ///         its redeploy-protection flag and accepts ONLY 0x00 (permissioned,
+    ///         cross-chain) or 0x01 (permissioned, chain-locked). Any other value
+    ///         passed the prefix check, sat on top of the LIFO queue, and made
+    ///         every deploy revert InvalidSalt (fee-atomic) until the keeper
+    ///         covered it - then resurfaced once the cover was consumed.
+    error SaltRedeployFlagInvalid(bytes32 salt);
 
     /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -98,6 +105,7 @@ contract PossessioSaltPool {
     /// @notice Emitted on every successful refill. `newDepth` is the
     ///         queue depth AFTER the batch was added.
     event PoolRefilled(uint256 added, uint256 newDepth);
+    event SaltDropped(bytes32 salt, uint256 remaining);
 
     /*//////////////////////////////////////////////////////////////
                               STORAGE
@@ -192,11 +200,32 @@ contract PossessioSaltPool {
             if (address(bytes20(newSalts[i])) != factory) {
                 revert SaltNotFactoryPermissioned(newSalts[i]);
             }
+            // F-L2: byte 21 must be a CreateX-valid redeploy flag, or the salt
+            // is a queue poison (see SaltRedeployFlagInvalid).
+            bytes1 flag = newSalts[i][20];
+            if (flag != 0x00 && flag != 0x01) {
+                revert SaltRedeployFlagInvalid(newSalts[i]);
+            }
             saltQueue.push(newSalts[i]);
             unchecked { ++i; }
         }
 
         emit PoolRefilled(len, saltQueue.length);
+    }
+
+    /// @notice F-L2 escape hatch: the keeper discards the top-of-queue salt.
+    /// @dev If a salt is ever unusable at deploy time for a reason the refill
+    ///      filter does not model, the keeper clears it here instead of burying
+    ///      it under a cover salt that resurfaces later. Compute-only - no value
+    ///      moves (Invariant 3 holds). Keeper-only, same trust as refill.
+    function dropTop() external returns (bytes32 salt) {
+        if (msg.sender != keeper) revert UnauthorizedCall();
+        if (saltQueue.length == 0) revert PoolEmpty();
+
+        salt = saltQueue[saltQueue.length - 1];
+        saltQueue.pop();
+
+        emit SaltDropped(salt, saltQueue.length);
     }
 
     /*//////////////////////////////////////////////////////////////

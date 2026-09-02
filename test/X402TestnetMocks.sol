@@ -121,6 +121,7 @@ contract MockInfraSink {
     uint256 public received;
     constructor(address u) { usdc = u; }
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         ITransferFrom(usdc).transferFrom(msg.sender, address(this), amount);
         received += amount;

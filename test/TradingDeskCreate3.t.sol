@@ -40,6 +40,7 @@ contract DeskUSDC is ERC20 {
 /// @dev Minimal live infra-sink: satisfies AutoTarget's feeSink brick-guard.
 contract MockInfraPool {
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
 }
 
 contract TradingDeskCreate3Test is Test {

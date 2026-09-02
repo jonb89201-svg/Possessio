@@ -79,6 +79,7 @@ contract PossessioPool is ReentrancyGuard {
     error ZeroAmount();
     error InsufficientOperationalFunds();
     error ExceedsDrawableSurplus(uint256 requested, uint256 drawable);
+    error FloorParamsInvalid();
 
     /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -222,6 +223,13 @@ contract PossessioPool is ReentrancyGuard {
         payTokenERC20 = IERC20(_payToken);
         treasuryDestination = _treasuryDestination;
         operatorDestination = _operatorDestination;
+        // X-H1 / X-L3 (re-audit 2026-09-01): bounds the floor math relies on.
+        // The cap must leave at least one absolute floor of draw room (see the
+        // draw-room invariant in getRunningMinimumFloor), and the half-life must
+        // be small enough that 2*VELOCITY_HALFLIFE cannot overflow in decay.
+        if (_operationalCap < 2 * _absoluteFloor) revert FloorParamsInvalid();
+        if (_velocityHalflife > type(uint128).max) revert FloorParamsInvalid();
+
         OPERATIONAL_CAP = _operationalCap;
         ABSOLUTE_FLOOR = _absoluteFloor;
         FLOOR_PER_UNIT = _floorPerUnit;
@@ -284,7 +292,12 @@ contract PossessioPool is ReentrancyGuard {
 
         // Feed the velocity window (decay-then-add) so the running-
         // minimum floor tracks real inflow throughput.
-        _bumpVelocity();
+        // X-H1 dust gate (re-audit 2026-09-01): an inflow counts as a
+        // throughput unit only if it brought at least the floor it would
+        // add. A 32-wei surplus push must not raise the floor by
+        // FLOOR_PER_UNIT; otherwise dust is the cheapest way to pin the
+        // floor at its cap.
+        if (amount >= FLOOR_PER_UNIT) _bumpVelocity();
 
         emit InfraFundsReceived(msg.sender, amount);
 
@@ -350,9 +363,22 @@ contract PossessioPool is ReentrancyGuard {
     /// @notice The current ungameable running-minimum floor, in USDC.
     ///         Derived from decayed throughput - the operator cannot
     ///         lower it. (Lifted verbatim: x402Core lines 510-513.)
+    /// @dev X-H1 / F-M1 (re-audit 2026-09-01) — DRAW-ROOM INVARIANT. The
+    ///      velocity term was unbounded: ABSOLUTE_FLOOR + units*FLOOR_PER_UNIT
+    ///      exceeded OPERATIONAL_CAP after 32 inflow events inside one decay
+    ///      window at the live calibration ($60 + 32*$20 = $700), after which
+    ///      drawableSurplus was 0 and stayed 0 — an absorbing lock the operator
+    ///      cannot escape, and one that honest launch traffic alone (~2.3
+    ///      factory deploys/day) crosses. The floor is now capped at
+    ///      OPERATIONAL_CAP - ABSOLUTE_FLOOR: a full pool always keeps at least
+    ///      one absolute floor of draw room. Derived from existing immutables
+    ///      (no new knob); the constructor requires CAP >= 2*ABSOLUTE_FLOOR so
+    ///      the cap is never vacuous.
     function getRunningMinimumFloor() public view returns (uint256) {
         uint256 vUnits = _decayedVelocity() / 1e18; // back to whole units
-        return ABSOLUTE_FLOOR + (vUnits * FLOOR_PER_UNIT);
+        uint256 floor = ABSOLUTE_FLOOR + (vUnits * FLOOR_PER_UNIT);
+        uint256 maxFloor = OPERATIONAL_CAP - ABSOLUTE_FLOOR;
+        return floor > maxFloor ? maxFloor : floor;
     }
 
     /// @notice The surplus currently drawable above the floor, in USDC.

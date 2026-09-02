@@ -153,6 +153,7 @@ interface IERC3009 {
 interface IPossessioPool {
     function receiveInfraFunds(uint256 amount) external;
     function isInfraSink() external view returns (bool);
+    function isAuthorizedSource(address source) external view returns (bool);
 }
 
 contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
@@ -355,6 +356,11 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
     ///         "ingress structurally impossible" for that path. Now structural.
     error ValveIntegrityViolation();
     error ZeroAddress();
+    /// @notice X-H2 (re-audit 2026-09-01): the Heart is a live Pool but THIS
+    ///         x402Core is not in its immutable source set — every surplus push
+    ///         at the cap would revert forever. Caught at construction.
+    error HeartSourceNotAuthorized();
+    error FloorParamsInvalid();
 
     constructor(
         bytes32 root,
@@ -393,6 +399,16 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         } catch {
             revert FeeSinkInterfaceMismatch();
         }
+        // X-H2 (re-audit 2026-09-01): isInfraSink() proves the sink is a Pool;
+        // it does not prove this x402Core is in the Pool's immutable source
+        // set. A Pool that rejects us constructs clean and then reverts every
+        // surplus push at the cap — a permanent dead x402Core. Prove the wiring
+        // here (the Pool bakes our predicted CREATE3 address at ITS deploy).
+        try IPossessioPool(_heartSink).isAuthorizedSource(address(this)) returns (bool authorized) {
+            if (!authorized) revert HeartSourceNotAuthorized();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
+        }
 
         // FIX #1 - VALVE INTEGRITY, ENFORCED STRUCTURALLY (not by deploy discipline).
         // deploymentFeeSource is the ONLY inbound path to the pool. If it could
@@ -416,6 +432,11 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
         heartSink = _heartSink;
         operatorDestination = _operatorDestination;
         deploymentFeeSource = _deploymentFeeSource;
+        // X-H1 / X-L3 (re-audit 2026-09-01): bounds the floor math relies on —
+        // see getRunningMinimumFloor's draw-room invariant, and the
+        // 2*VELOCITY_HALFLIFE term in _decayedVelocity.
+        if (_operationalCap < 2 * _absoluteFloor) revert FloorParamsInvalid();
+        if (_velocityHalflife > type(uint128).max) revert FloorParamsInvalid();
         OPERATIONAL_CAP = _operationalCap;
         ABSOLUTE_FLOOR = _absoluteFloor;
         FLOOR_PER_UNIT = _floorPerUnit;
@@ -513,7 +534,10 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
         // 7a. Feed the velocity window (time-decayed) so the running-minimum
         //     floor tracks real settlement throughput. Decay-then-add.
-        _bumpVelocity();
+        //     X-H1 dust gate (re-audit 2026-09-01): a settle below DUST_FLOOR
+        //     is not throughput — 32 self-settles of 1 wei must not pin the
+        //     floor at its cap (the cheapest door to the absorbing lock).
+        if (value >= DUST_FLOOR) _bumpVelocity();
 
         emit CallSettled(caller, seller, channelId, value, tollValue, basePrice, tollBps, nonce);
     }
@@ -576,9 +600,16 @@ contract PossessioX402Core is SymmetryGuardCore, ReentrancyGuard {
 
     /// @notice The current ungameable running-minimum floor, in USDC.
     ///         Derived from decayed throughput - operator cannot lower it.
+    /// @dev X-H1 (re-audit 2026-09-01) — DRAW-ROOM INVARIANT, mirrored from
+    ///      PossessioPool: the velocity term is capped so the floor never
+    ///      exceeds OPERATIONAL_CAP - ABSOLUTE_FLOOR. Without it, 32 settles
+    ///      inside one decay window pinned floor >= cap and drawableSurplus
+    ///      locked at 0 with no escape. Constructor requires CAP >= 2*FLOOR.
     function getRunningMinimumFloor() public view returns (uint256) {
         uint256 vUnits = _decayedVelocity() / 1e18; // back to whole units
-        return ABSOLUTE_FLOOR + (vUnits * FLOOR_PER_UNIT);
+        uint256 floor = ABSOLUTE_FLOOR + (vUnits * FLOOR_PER_UNIT);
+        uint256 maxFloor = OPERATIONAL_CAP - ABSOLUTE_FLOOR;
+        return floor > maxFloor ? maxFloor : floor;
     }
 
     /// @notice The surplus currently drawable above the floor, in USDC.

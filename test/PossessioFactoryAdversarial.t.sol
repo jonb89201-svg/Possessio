@@ -42,6 +42,7 @@ contract MockPool {
     uint256 public received;
     constructor(MockUSDC u) { usdc = u; }
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;
@@ -340,5 +341,18 @@ contract PossessioFactoryAdversarialTest is Test {
         // (b) an EOA / undeployed address — no code, staticcall throws.
         vm.expectRevert(PossessioFactory.FeeSinkInterfaceMismatch.selector);
         new PossessioFactory(FEE, codehash, address(p), address(usdc), makeAddr("eoaFeeSink"));
+
+        // (c) F-L3 (re-audit 2026-09-01): a real Pool that does NOT list this
+        //     factory as a source — constructed clean, then every fee push
+        //     reverted forever. Refuses to exist now.
+        address unlisted = address(new UnlistedPool());
+        vm.expectRevert(PossessioFactory.FeeSinkSourceNotAuthorized.selector);
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), unlisted);
     }
+}
+
+/// A real Pool marker that does NOT list the caller as a source (F-L3).
+contract UnlistedPool {
+    function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return false; }
 }

@@ -75,6 +75,7 @@ interface ICreateX {
 interface IPossessioPool {
     function receiveInfraFunds(uint256 amount) external;
     function isInfraSink() external view returns (bool);
+    function isAuthorizedSource(address source) external view returns (bool);
 }
 
 contract PossessioFactory is ReentrancyGuard {
@@ -92,6 +93,10 @@ contract PossessioFactory is ReentrancyGuard {
     error TemplateCodehashMismatch(bytes32 got, bytes32 expected);
     error DeployFailed();
     error FeeSinkInterfaceMismatch();
+    /// @notice F-L3 (re-audit 2026-09-01): the sink is a live Pool but this
+    ///         factory is not in its immutable source set — every fee push
+    ///         would revert forever. Caught at construction.
+    error FeeSinkSourceNotAuthorized();
 
     /*//////////////////////////////////////////////////////////////
                         FEE AUTHORIZATION (EIP-3009)
@@ -180,6 +185,15 @@ contract PossessioFactory is ReentrancyGuard {
         if (_feeSink.code.length == 0) revert FeeSinkInterfaceMismatch();
         try IPossessioPool(_feeSink).isInfraSink() returns (bool ok) {
             if (!ok) revert FeeSinkInterfaceMismatch();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
+        }
+        // F-L3 (re-audit 2026-09-01): the marker proves "a Pool"; this proves
+        // "a Pool that accepts THIS factory". The Pool bakes our predicted
+        // CREATE3 address into its source set at its own deploy, so a correctly
+        // sequenced constellation passes; a mis-wired one refuses to exist.
+        try IPossessioPool(_feeSink).isAuthorizedSource(address(this)) returns (bool authorized) {
+            if (!authorized) revert FeeSinkSourceNotAuthorized();
         } catch {
             revert FeeSinkInterfaceMismatch();
         }
