@@ -85,6 +85,8 @@ contract DeskLiveVenueForkTest is Test {
             WETH,
             remoteAgent,
             REMOTE_TIMEOUT
+        ,
+            0 // R-H1 MIN_SETTLE_BPS off: live-venue probe uses minUsdcOut=1
         );
         assertEq(address(rail), predictedRail, "prewire: rail landed where the vault expects");
 

@@ -381,6 +381,7 @@ contract MockHeart {
     }
 
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
 
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);

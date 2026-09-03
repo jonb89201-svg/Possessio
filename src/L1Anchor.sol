@@ -166,8 +166,13 @@ contract L1Anchor is ReentrancyGuard {
     ///         Math uses 1e18 scale; constructor reverts if oracle decimals ≠ 18.
     uint256 public constant DEPEG_THRESHOLD_BPS = 970; // 97.0%
 
-    /// @notice Oracle staleness cap (3600s = 1 hour). Same as PLATE.sol v1.
-    uint256 public constant ORACLE_STALE = 3600;
+    /// @notice Oracle staleness cap. A-H1 (re-audit 2026-09-01): the cbETH/ETH
+    ///         exchange-rate feed is a 24-hour-heartbeat feed; the legacy 3600s
+    ///         window (PLATE.sol v1) latched the guard ~96% of every day and any
+    ///         EOA could re-latch it at will. 25h = heartbeat + 1h slack, the
+    ///         same window PossessioPayments uses for this feed class
+    ///         (ORACLE_STALE_CBETH).
+    uint256 public constant ORACLE_STALE = 90_000;
 
     // ═══════════════════════════════════════════════════════════════════════
     //                                STATE
@@ -181,6 +186,17 @@ contract L1Anchor is ReentrancyGuard {
     ///         resetDepeg() with verified-recovered oracle data (one-way
     ///         latch per council 2026-05-17).
     bool public depegPaused;
+
+    /// @notice A-M2 (re-audit 2026-09-01): moving depeg reference. The cbETH/ETH
+    ///         feed is an ACCRUING exchange rate (~1.14e18 and rising), not a
+    ///         peg at 1e18: a fixed 0.97e18 threshold could only fire on a
+    ///         >14.8% collapse of the rate. The guard now measures the drop
+    ///         against the highest rate it has verified (floored at 1e18, the
+    ///         rate's genesis). Advanced only by a passing check; re-based by
+    ///         resetDepeg() (the merchant's explicit acceptance of a new level).
+    ///         NOTE: a market discount of the token to its rate is invisible to
+    ///         this feed - that needs cbETH/USD vs ETH/USD (not wired here).
+    uint256 public lastGoodRate;
 
     /// @notice Merchant's net cbETH staked into MAVAN (principal tracking).
     ///         Maintained for accounting/view; MAVAN itself authoritative on shares.
@@ -383,22 +399,29 @@ contract L1Anchor is ReentrancyGuard {
                 return;
             }
 
-            // 18-decimal feed: 1.0 ETH per cbETH = 1e18.
-            // Threshold: 97% = (1e18 * 970) / 1000.
+            // 18-decimal exchange-rate feed. A-M2: threshold = 97% of the moving
+            // reference (highest verified rate, floored at 1e18), not of 1e18.
             // Cast safe: answer > 0 confirmed above; positive int256 fits uint256.
             // forge-lint: disable-next-line(unsafe-typecast)
             uint256 priceUint = uint256(answer);
-            uint256 threshold = (1e18 * DEPEG_THRESHOLD_BPS) / 1000;
+            uint256 refRate = _depegReference();
+            uint256 threshold = (refRate * DEPEG_THRESHOLD_BPS) / 1000;
 
             // Observed depeg latches paused. Resume removed from this function
             // per ratification — only resetDepeg() can clear depegPaused.
-            if (priceUint < threshold && !depegPaused) {
-                depegPaused = true;
-                // depegBps for offchain monitoring (informational, not gating).
-                // priceUint < threshold and threshold ≤ 1e18, so depegBps ∈ [0, 1000) safe.
-                uint256 depegBps = (1e18 - priceUint) * 1000 / 1e18;
-                emit SymmetryGuardPaused(depegBps, block.timestamp);
+            if (priceUint < threshold) {
+                if (!depegPaused) {
+                    depegPaused = true;
+                    // depegBps for offchain monitoring (informational, not gating).
+                    // priceUint < threshold <= reference, so depegBps ∈ [0, 1000).
+                    uint256 depegBps = (refRate - priceUint) * 1000 / refRate;
+                    emit SymmetryGuardPaused(depegBps, block.timestamp);
+                }
+                return;
             }
+            // Passing check: ratchet the reference upward only (a reference
+            // that could fall would let a slow bleed walk the guard down).
+            if (!depegPaused && priceUint > lastGoodRate) lastGoodRate = priceUint;
         } catch {
             // Oracle reverted: latch paused with sentinel.
             if (!depegPaused) {
@@ -453,11 +476,17 @@ contract L1Anchor is ReentrancyGuard {
 
             // forge-lint: disable-next-line(unsafe-typecast)
             uint256 priceUint = uint256(answer);
+            // A-M2: resume checks the ABSOLUTE sanity floor (97% of the rate's
+            // 1e18 genesis - the rate cannot honestly sit below it) and then
+            // RE-BASES the moving reference to the accepted level. A ratcheted
+            // reference must not make a slashing-class drop unrecoverable: the
+            // merchant's resetDepeg() is the explicit acceptance of the new rate.
             uint256 threshold = (1e18 * DEPEG_THRESHOLD_BPS) / 1000;
 
             if (priceUint < threshold) return;
 
-            // All verification passed; oracle reports recovered peg. Clear latch.
+            // All verification passed; oracle reports a sane rate. Re-base + clear.
+            lastGoodRate = priceUint;
             if (depegPaused) {
                 depegPaused = false;
                 emit SymmetryGuardResumed(block.timestamp);
@@ -482,9 +511,17 @@ contract L1Anchor is ReentrancyGuard {
             if (answer > 0) {
                 // forge-lint: disable-next-line(unsafe-typecast)
                 uint256 p = uint256(answer);
-                currentBps = p >= 1e18 ? 0 : ((1e18 - p) * 1000 / 1e18);
+                uint256 refRate = _depegReference();
+                currentBps = p >= refRate ? 0 : ((refRate - p) * 1000 / refRate);
             }
         } catch { /* return defaults */ }
+    }
+
+    /// @dev A-M2: the level the depeg threshold is measured from - the highest
+    ///      rate the guard has verified, floored at 1e18 (the rate's genesis).
+    function _depegReference() internal view returns (uint256) {
+        uint256 ref = lastGoodRate;
+        return ref > 1e18 ? ref : 1e18;
     }
 
     // ═══════════════════════════════════════════════════════════════════════

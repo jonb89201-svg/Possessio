@@ -181,17 +181,51 @@ contract PossessioPoolDeployValuesTest is Test {
     //      economic property and must not be discovered later by surprise.
     //      Pinned here so a future change to amount-weighting breaks a test
     //      rather than silently re-pricing the machine's floor.
+    //      X-H1 dust gate (re-audit 2026-09-01): an inflow below FLOOR_PER_UNIT
+    //      is NOT a throughput unit — $1 must not raise the floor by $20 (that
+    //      was the cheapest door to the absorbing lock). $20 and $500 each
+    //      raise it by exactly one unit: still event-count, not amount.
     function test_D10_floorScalesWithEventCountNotAmount() public {
         uint256 base = pool.getRunningMinimumFloor();
 
-        _feed(srcA, 1_000000);            // $1
-        uint256 afterTiny = pool.getRunningMinimumFloor();
-        assertEq(afterTiny - base, PER_UNIT, "$1 inflow raises the floor by exactly one unit");
+        _feed(srcA, 1_000000);            // $1 — below FLOOR_PER_UNIT
+        assertEq(pool.getRunningMinimumFloor(), base, "sub-unit dust must not move the floor");
 
-        _feed(srcB, 500_000000);          // $500 — 500x larger
+        _feed(srcA, PER_UNIT);            // $20 — exactly one unit's worth
+        uint256 afterUnit = pool.getRunningMinimumFloor();
+        assertEq(afterUnit - base, PER_UNIT, "a $20 inflow raises the floor by exactly one unit");
+
+        _feed(srcB, 500_000000);          // $500 — 25x larger
         uint256 afterLarge = pool.getRunningMinimumFloor();
-        assertEq(afterLarge - afterTiny, PER_UNIT,
-            "a 500x larger inflow raises the floor by the SAME one unit");
+        assertEq(afterLarge - afterUnit, PER_UNIT,
+            "a 25x larger inflow raises the floor by the SAME one unit");
+    }
+
+    // ── D11. X-H1 / F-M1 draw-room invariant (re-audit 2026-09-01) ──────
+    //      32 factory-fee-sized inflows inside one decay window used to pin
+    //      floor = $60 + 32*$20 = $700 = CAP → drawableSurplus 0, permanently
+    //      (honest launch traffic of ~2.3 deploys/day crossed it). The floor
+    //      now caps at CAP - ABSOLUTE_FLOOR: a full pool always leaves the
+    //      operator one absolute floor of draw room. RED on the pre-fix Pool.
+    function test_D11_drawRoomInvariant_32FeesCannotLockOperatorOut() public {
+        for (uint256 i = 0; i < 40; ++i) _feed(srcA, 50_000000);   // 40 × $50 fees, one block
+        assertEq(pool.poolBalance(), CAP, "pool pinned at cap");
+        assertEq(pool.getRunningMinimumFloor(), CAP - FLOOR, "floor must cap at CAP - ABSOLUTE_FLOOR");
+        assertEq(pool.drawableSurplus(), FLOOR, "a full pool keeps one absolute floor of draw room");
+        vm.prank(operator);
+        pool.settleOperationalCosts(FLOOR);   // the draw that used to revert forever
+        assertEq(pool.poolBalance(), CAP - FLOOR);
+    }
+
+    // D12. X-H1 fresh-pass finding (re-audit, second pass): ABSOLUTE_FLOOR == 0
+    //      made the draw-room guarantee vacuous (maxFloor collapsed to the
+    //      full cap, reproducing the exact absorbing-lock the fix exists to
+    //      prevent). RED on the pre-fix (first-pass) constructor guard.
+    function test_D12_zeroAbsoluteFloor_reverts() public {
+        address[] memory srcs = new address[](1);
+        srcs[0] = srcA;
+        vm.expectRevert(PossessioPool.FloorParamsInvalid.selector);
+        new PossessioPool(address(usdc), srcs, operator, treasury, CAP, 0, PER_UNIT, HALFLIFE);
     }
 
     // ── D9. Full-cap runway against the stated total burn ────────────────

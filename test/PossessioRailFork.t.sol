@@ -16,6 +16,7 @@ import {PossessioRail, IFundingVault, IAutoTarget, ISwapRouter} from "../src/Pos
 import {MockAutoTarget} from "./PossessioRail.t.sol";
 
 contract PossessioRailForkTest is Test {
+    uint256 internal constant MIN_SETTLE_BPS = 0; // R-H1 floor OFF here: this suite proves pre-existing behaviour; the floor is proven in PossessioRailAdversarial
     // cast-verified Base mainnet
     address constant USDC   = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant WETH   = 0x4200000000000000000000000000000000000006; // the swap "token"
@@ -45,7 +46,8 @@ contract PossessioRailForkTest is Test {
         uint256 n = vm.getNonce(address(this));
         address predictedRail = vm.computeCreateAddress(address(this), n + 1);
         vault = new PossessioFundingVault(IERC20(USDC), owner, predictedRail, predictedRail, MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP);
-        rail  = new PossessioRail(IERC20(USDC), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(ROUTER), WETH, REMOTE_AGENT, 24 hours);
+        rail  = new PossessioRail(IERC20(USDC), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(ROUTER), WETH, REMOTE_AGENT, 24 hours, MIN_SETTLE_BPS);
+        vm.prank(owner); rail.setRouteAllowed(WETH, false, FEE, 0, true);   // R-H1 route whitelist
         require(address(rail) == predictedRail, "prewire");
 
         deal(USDC, owner, 10_000e6);

@@ -11,6 +11,7 @@ import {PossessioRail, IFundingVault, IAutoTarget, ISwapRouter} from "../src/Pos
 import {MockUSDC, MockToken, MockSwapRouter, MockAutoTarget} from "./PossessioRail.t.sol";
 
 contract PossessioRailAdversarialTest is Test {
+    uint256 internal constant MIN_SETTLE_BPS = 5_000; // R-H1: keeper settle/exit floor (50%)
     MockUSDC usdc; MockToken token; MockToken weth; MockSwapRouter router; MockAutoTarget at;
     address remoteAgent = makeAddr("remoteAgent");
     uint256 constant REMOTE_TIMEOUT = 24 hours;
@@ -30,7 +31,8 @@ contract PossessioRailAdversarialTest is Test {
         uint256 n = vm.getNonce(address(this));
         address predictedRail = vm.computeCreateAddress(address(this), n + 1);
         vault = new PossessioFundingVault(IERC20(address(usdc)), owner, predictedRail, predictedRail, MAX_PER_TRADE, MAX_OUTSTANDING, DAILY_DRAW_CAP);
-        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT);
+        rail  = new PossessioRail(IERC20(address(usdc)), IFundingVault(address(vault)), IAutoTarget(address(at)), keeper, ISwapRouter(address(router)), address(weth), remoteAgent, REMOTE_TIMEOUT, MIN_SETTLE_BPS);
+        vm.prank(owner); rail.setRouteAllowed(address(token), false, FEE, 0, true);   // R-H1 route whitelist
         require(address(rail) == predictedRail, "prewire");
         usdc.mint(owner, 100_000e6);
         vm.startPrank(owner); usdc.approve(address(vault), 100_000e6); vault.fund(100_000e6); vm.stopPrank();
@@ -105,7 +107,7 @@ contract PossessioRailAdversarialTest is Test {
     function test_proceeds_onlyToVault_notKeeperOrAttacker() public {
         _enter(1, 3_000e6); at.setStatus(1,2); router.setOut(3_600e6);
         uint256 vBefore = usdc.balanceOf(address(vault));
-        vm.prank(keeper); rail.exit(1, 1);
+        vm.prank(keeper); rail.exit(1, 1_500e6); /* R-H1: keeper floor = 50% of usdcIn */
         assertEq(usdc.balanceOf(address(vault)) - vBefore, 3_600e6); // vault got exactly the proceeds
         assertEq(usdc.balanceOf(keeper), 0);
         assertEq(usdc.balanceOf(attacker), 0);
@@ -121,7 +123,7 @@ contract PossessioRailAdversarialTest is Test {
     // ─────────────────── lifecycle terminal-state abuse ────────────────────
     function test_reenter_afterClose_reverts() public {
         _enter(1, 3_000e6); at.setStatus(1,2); router.setOut(3_600e6);
-        vm.prank(keeper); rail.exit(1, 1);            // Closed
+        vm.prank(keeper); rail.exit(1, 1_500e6); /* R-H1: keeper floor = 50% of usdcIn */            // Closed
         _open(1,1);
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.PositionExists.selector);
@@ -134,5 +136,63 @@ contract PossessioRailAdversarialTest is Test {
         vm.prank(keeper);
         vm.expectRevert(PossessioRail.PositionNotOpen.selector);
         rail.exit(1, 1);
+    }
+    /*//////////////////////////////////////////////////////////////
+        R-H1 (re-audit 2026-09-01) — keeper-key drain bounds
+    //////////////////////////////////////////////////////////////*/
+    function _openRemote(uint256 id) internal { at.setIntent(id, address(0), 101, 1); }   // Solana-tagged, Open
+
+    /// RED on the pre-fix rail: openRemoteLeg → 1 wei back → settleRemoteLeg cleared
+    /// outstanding; repeated, 49,999.999999 USDC reached the agent in 3 days.
+    function test_RH1_remoteLeg_dustSettleIsKeeperBlocked_ownerOnly() public {
+        _openRemote(1);
+        vm.prank(keeper); rail.openRemoteLeg(1, 3_000e6);
+        usdc.mint(address(rail), 1);                       // "the agent returned 1 wei"
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(PossessioRail.SettleBelowMinimum.selector, 1, 1_500e6));
+        rail.settleRemoteLeg(1);
+        assertEq(vault.outstanding(), 3_000e6, "exposure stays charged until an honest settle");
+        _openRemote(2);                                    // and the next leg cannot open on top of it
+        vm.prank(keeper);
+        vm.expectRevert(PossessioRail.RemoteLegPending.selector);
+        rail.openRemoteLeg(2, 3_000e6);
+        vm.prank(owner); rail.ownerSettleRemoteLeg(1);     // a genuinely bad leg is the owner's call
+        assertEq(vault.outstanding(), 0);
+        assertEq(rail.pendingRemoteLegs(), 0);
+    }
+
+    function test_RH1_remoteLeg_honestReturnSettles() public {
+        _openRemote(1);
+        vm.prank(keeper); rail.openRemoteLeg(1, 3_000e6);
+        usdc.mint(address(rail), 2_800e6);
+        vm.prank(keeper); rail.settleRemoteLeg(1);
+        assertEq(vault.outstanding(), 0);
+        assertEq(rail.pendingRemoteLegs(), 0);
+    }
+
+    /// RED on the pre-fix rail: exit(minUsdcOut = 1) through a rigged venue took 17,500 USDC.
+    function test_RH1_baseLeg_keeperExitFloor_ownerExitUnbounded() public {
+        _enter(1, 3_000e6); at.setStatus(1, 2); router.setOut(100e6);   // venue pays 100 of 3,000 back
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(PossessioRail.ExitFloorBelowMinimum.selector, 1, 1_500e6));
+        rail.exit(1, 1);
+        vm.prank(keeper);
+        vm.expectRevert(bytes("slippage"));                 // floor-compliant min the venue cannot meet
+        rail.exit(1, 1_500e6);
+        vm.prank(owner); rail.ownerExit(1, 1);              // the owner's call, on the record
+        assertEq(vault.outstanding(), 0);
+    }
+
+    /// RED on the pre-fix rail: any (token, fee tier) the keeper named was a valid venue.
+    function test_RH1_enter_routeMustBeOwnerAllowed() public {
+        _open(1, 1); router.setOut(100e18);
+        vm.prank(keeper);
+        vm.expectRevert(PossessioRail.RouteNotAllowed.selector);
+        rail.enter(1, address(token), 3_000e6, 1e18, false, 10000, 0);   // 1% tier: not allowed
+        vm.prank(attacker);
+        vm.expectRevert(PossessioRail.NotOwner.selector);
+        rail.setRouteAllowed(address(token), false, 10000, 0, true);
+        vm.prank(owner); rail.setRouteAllowed(address(token), false, 10000, 0, true);
+        vm.prank(keeper); rail.enter(1, address(token), 3_000e6, 1e18, false, 10000, 0);
     }
 }

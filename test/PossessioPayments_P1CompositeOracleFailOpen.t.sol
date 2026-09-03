@@ -298,7 +298,17 @@ contract PossessioPaymentsP1Test is Test {
         clEthUsd.setUpdatedAt(block.timestamp);
         // USDC/USD stale by just over the 1h window -> _usdcToEth returns 0
         // -> wethFloor == 0 -> (fixed) revert OracleStale.
-        clUsdcUsd.setUpdatedAt(block.timestamp - (payments.ORACLE_STALE() + 1));
+        // P-H2 (re-audit 2026-09-01): USDC/USD is a 24h-heartbeat feed. A 8-hour-old
+        // round is NORMAL and must pass the composite guard — the sweep then meets
+        // the armed sandbag at the router, which is the proof the guard let it
+        // through (pre-fix, ORACLE_STALE=3600 reverted OracleStale ~96% of each day).
+        clUsdcUsd.setUpdatedAt(block.timestamp - 8 hours);
+        vm.prank(MERCHANT);
+        vm.expectRevert(bytes("V3: slippage WETH"));
+        payments.sweep(0, 0, 0);
+
+        // Beyond heartbeat + slack the guard still fails closed.
+        clUsdcUsd.setUpdatedAt(block.timestamp - (payments.ORACLE_STALE_STABLE() + 1));
 
         // Sanity: cbETH/ETH is comfortably inside its own 25h window, so the
         // sweep is NOT blocked by _validateOracle — the ONLY thing that stops it

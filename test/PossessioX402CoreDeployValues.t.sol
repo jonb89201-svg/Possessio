@@ -28,6 +28,12 @@ import {Test, console2} from "forge-std/Test.sol";
 import {PossessioX402Core} from "../src/PossessioX402Core.sol";
 import {MockEIP3009USDC, MockInfraSink} from "./X402TestnetMocks.sol";
 
+/// A real Pool marker that does NOT list the caller as a source (X-H2).
+contract UnlistedHeart {
+    function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return false; }
+}
+
 contract PossessioX402CoreDeployValuesTest is Test {
     bytes32 constant RECEIVE_WITH_AUTHORIZATION_TYPEHASH =
         keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
@@ -302,5 +308,75 @@ contract PossessioX402CoreDeployValuesTest is Test {
         uint256 heartCap   = 700_000000;  // §22 POOL_OP_CAP
         assertLt(ABSOLUTE_FLOOR, heartFloor, "organ floor must sit below the Heart's floor");
         assertLt(OPERATIONAL_CAP, heartCap,  "organ cap must sit below the Heart's cap");
+    }
+    /*//////////////////////////////////////////////////////////////
+        RE-AUDIT 2026-09-01 regressions (X-H1 / X-H2 / X-L3)
+    //////////////////////////////////////////////////////////////*/
+
+    function _settleOn(bytes32 ch, uint256 basePrice, uint256 saltSeed) internal {
+        uint256 bps   = core.totalFeeBps(buyer, ch);
+        uint256 value = basePrice + (basePrice * bps) / 10_000;
+        bytes32 salt  = keccak256(abi.encode("settleOn", saltSeed));
+        bytes32 commit = keccak256(abi.encode(seller, ch, value, salt));
+        usdc.mint(buyer, value);
+        Auth memory a;
+        a.value = value;
+        a.validAfter  = block.timestamp - 1;
+        a.validBefore = block.timestamp + 3600;
+        a.nonce = commit;
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(),
+            keccak256(abi.encode(RECEIVE_WITH_AUTHORIZATION_TYPEHASH,
+                buyer, address(core), a.value, a.validAfter, a.validBefore, a.nonce))));
+        (a.v, a.r, a.s) = vm.sign(buyerPk, digest);
+        core.settleCall(buyer, seller, ch, salt, a.value,
+                        a.validAfter, a.validBefore, a.nonce, a.v, a.r, a.s);
+    }
+
+    /// X-H1 draw-room invariant. RED on the pre-fix core: 40 settles inside one
+    /// decay window pinned floor = $15 + 40*$5 = $215 > CAP $150, so
+    /// drawableSurplus was 0 with no escape (an absorbing lock).
+    function test_XH1_drawRoomInvariant_settleStormCannotLockOperatorOut() public {
+        _register(buyerPk);
+        _feeInflow(OPERATIONAL_CAP);                       // pool full
+        for (uint256 i = 0; i < 40; ++i) _settle(1000 + i); // 40 × $100 settles, one block
+        assertEq(core.operationalPoolBalance(), OPERATIONAL_CAP);
+        assertEq(core.getRunningMinimumFloor(), OPERATIONAL_CAP - ABSOLUTE_FLOOR, "floor caps at CAP - FLOOR");
+        assertEq(core.drawableSurplus(), ABSOLUTE_FLOOR, "one absolute floor of draw room remains");
+        vm.prank(operator);
+        core.settleOperationalCosts(ABSOLUTE_FLOOR);       // the draw that used to revert forever
+    }
+
+    /// X-H1 dust gate. RED on the pre-fix core: every settle bumped velocity by a
+    /// full unit regardless of size, so wei-sized self-settles were the cheapest
+    /// door to the lock.
+    function test_XH1_dustSettleDoesNotBumpVelocity() public {
+        _register(buyerPk);
+        bytes32 dustChannel = keccak256("dust-channel");
+        vm.prank(seller);
+        core.setBasePrice(dustChannel, 10);                // 0.00001 USDC, far below DUST_FLOOR $1
+        uint256 base = core.getRunningMinimumFloor();
+        for (uint256 i = 0; i < 40; ++i) _settleOn(dustChannel, 10, i);
+        assertEq(core.getRunningMinimumFloor(), base, "sub-dust settles are not throughput");
+        _settle(2000);                                     // one real $100 settle
+        assertEq(core.getRunningMinimumFloor(), base + FLOOR_PER_UNIT, "a real settle counts one unit");
+    }
+
+    /// X-H2: a live Pool that does not list this core used to construct clean and
+    /// then revert every surplus push at the cap — a permanent dead x402Core.
+    function test_XH2_ctor_heartDoesNotListCore_reverts() public {
+        address unlisted = address(new UnlistedHeart());
+        vm.expectRevert(PossessioX402Core.HeartSourceNotAuthorized.selector);
+        new PossessioX402Core(ROOT, DUST_FLOOR, address(usdc), unlisted, operator, feeSource,
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REG_FEE);
+    }
+
+    /// X-L3: floor-parameter bounds the floor math relies on.
+    function test_XL3_ctor_floorParamBounds_revert() public {
+        vm.expectRevert(PossessioX402Core.FloorParamsInvalid.selector);
+        new PossessioX402Core(ROOT, DUST_FLOOR, address(usdc), address(heart), operator, feeSource,
+            2 * ABSOLUTE_FLOOR - 1, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, VELOCITY_HALFLIFE, REG_FEE);
+        vm.expectRevert(PossessioX402Core.FloorParamsInvalid.selector);
+        new PossessioX402Core(ROOT, DUST_FLOOR, address(usdc), address(heart), operator, feeSource,
+            OPERATIONAL_CAP, ABSOLUTE_FLOOR, FLOOR_PER_UNIT, uint256(type(uint128).max) + 1, REG_FEE);
     }
 }

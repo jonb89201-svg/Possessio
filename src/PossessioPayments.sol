@@ -404,7 +404,20 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @notice Legacy staleness window retained for the DAI/USD price feed
     ///         (freshness-only read — see CHAINLINK_DAI) and any other
     ///         8-decimal Chainlink feed in the contract surface.
-    uint256 public constant ORACLE_STALE    = 3600;       // 1 hour — DAI/USD and similar 8-dec feeds
+    uint256 public constant ORACLE_STALE    = 3600;       // 1 hour — ETH/USD (~20-min heartbeat feed)
+    /// @notice P-H2 (re-audit 2026-09-01): USDC/USD and DAI/USD on Base are
+    ///         24-hour-heartbeat feeds (measured ages 31,150s / 32,568s). Under
+    ///         the 3600s window the P-1 fail-closed guard reverted the sweep
+    ///         ~96% of every day and the DAI refill was skipped just as often.
+    ///         25h = heartbeat + 1h slack — the same class as ORACLE_STALE_CBETH.
+    uint256 public constant ORACLE_STALE_STABLE = 90_000; // 25h — USDC/USD, DAI/USD
+    /// @notice P-H1 (re-audit 2026-09-01): disabling an armed guardian is a
+    ///         timelocked, guardian-cancellable act (see disableGuardian).
+    uint256 public constant GUARDIAN_DISABLE_DELAY = 7 days;
+    /// @notice P-H1: a queued limit increase may at most double the reference
+    ///         limit (the highest limit set by the constructor or an executed
+    ///         increase). A stolen key can no longer queue "infinity".
+    uint256 public constant LIMIT_INCREASE_MAX_MULT = 2;
     uint256 public constant LIMIT_DELAY     = 24 hours;   // daily limit increase delay
     uint256 public constant WINDOW_SIZE     = 24 hours;   // daily withdrawal window
 
@@ -438,6 +451,22 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // the Guardian can freeze the out-paths AND cancel a queued emergency
     // withdrawal, neither of which a compromised owner can override.
     bool    public withdrawalsFrozen;
+
+    // ─── P-H1 (re-audit 2026-09-01): the guardian must bound the owner ──────
+    // The guardian was owner-administered: a compromised OWNER key could
+    // disableGuardian → grant itself GUARDIAN_ROLE → enable → unfreeze → queue
+    // uncapped limit increases → drain 100% at T+24h. Three changes close it:
+    //   1. GUARDIAN_ROLE administers itself. The owner may only SEED the first
+    //      guardian (guardianCount == 0); after that only guardians grant/revoke.
+    //   2. disableGuardian (while a guardian exists) is a 7-day timelock the
+    //      guardian can cancel. Stated cost: a rogue guardian can keep the
+    //      merchant frozen (griefing, not theft); guardians can revoke each other.
+    //   3. Limit increases are capped at LIMIT_INCREASE_MAX_MULT x the reference
+    //      limit and the guardian can cancel a queued increase.
+    uint256 public guardianCount;
+    uint256 public guardianDisableExecuteAfter;   // 0 = nothing queued
+    uint256 public dailyLimitRef;                 // highest DAI limit set by ctor / executed increase
+    mapping(uint8 => uint256) public assetLimitRef;
     bool    public guardianEnabled;     // merchant-controlled Guardian opt-in
     uint256 public lastSweepTime;       // last successful sweep timestamp
     uint256 public minSwapBatch;        // minimum USDC before sweep allowed
@@ -583,6 +612,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event DailyLimitIncreaseQueued(uint256 newLimit, uint256 executeAfter);
     event DailyLimitIncreaseExecuted(uint256 newLimit);
     event DailyLimitIncreaseCancelled();
+    /// @notice P-M3 (re-audit 2026-09-01): the DAI refill used to fail silently
+    ///         (stale feed, or a venue too thin to clear the 90% floor — Base
+    ///         USDC/DAI 0.05% held ~97 USDC against a 10,000 DAI ceiling).
+    ///         reason: 1 = DAI/USD oracle not fresh, 2 = swap reverted.
+    event DAIRefillSkipped(uint8 reason, uint256 daiGap);
+    event GuardianDisableQueued(address indexed by, uint256 executeAfter);
+    event GuardianDisableCancelled(address indexed by);
+    event GuardianCancelledDailyLimitIncrease(address indexed guardian);
+    event GuardianCancelledAssetLimitIncrease(address indexed guardian, uint8 asset);
 
     // C-2 — per-asset exit-limit events (asset = uint8(DailyLimitAsset))
     event AssetDailyLimitDecreased(uint8 indexed asset, uint256 newLimit);
@@ -630,6 +668,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     error NotQueued();
     error ExchangeRateInvalid();
     error GuardianNotEnabled();
+    error GuardianDisableNotReady();
+    error IncreaseTooLarge(uint256 requested, uint256 maxAllowed);
     error NothingQueued();
     error NothingToWithdraw();
     error ZeroAmount();
@@ -795,6 +835,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         // rolling-window machinery. 0 = lockdown, same as dailyLimit.
         usdcDailyLimit   = p.usdcDailyLimit;
         cbEthDailyLimit  = p.cbEthDailyLimit;
+        // P-H1: reference limits for the increase cap
+        dailyLimitRef                              = p.dailyLimit;
+        assetLimitRef[uint8(DailyLimitAsset.USDC)]  = p.usdcDailyLimit;
+        assetLimitRef[uint8(DailyLimitAsset.CBETH)] = p.cbEthDailyLimit;
         usdcWindowStart  = block.timestamp;
         cbEthWindowStart = block.timestamp;
 
@@ -805,7 +849,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         // Owner gets OWNER_ROLE and is admin of OPERATOR and GUARDIAN roles
         _grantRole(OWNER_ROLE, p.owner);
         _setRoleAdmin(OPERATOR_ROLE, OWNER_ROLE);
-        _setRoleAdmin(GUARDIAN_ROLE, OWNER_ROLE);
+        _setRoleAdmin(GUARDIAN_ROLE, GUARDIAN_ROLE);   // P-H1: self-administered after the seed
         _setRoleAdmin(OWNER_ROLE, OWNER_ROLE);
     }
 
@@ -934,12 +978,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
                         } catch {
                             // DAI swap failed — skip, proceed with cbETH leg
                             // USDC stays in contract for cbETH leg below
+                            emit DAIRefillSkipped(2, daiGap);   // P-M3: never silent
                         }
 
                         // Reset approval — defends against malicious router that
                         // consumes less than approved, leaving dangling allowance.
                         USDC.forceApprove(address(ROUTER), 0);
                     }
+                } else {
+                    emit DAIRefillSkipped(1, daiGap);           // P-M3: never silent
                 }
             }
         }
@@ -1171,7 +1218,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
             if (answeredInRound < roundId)                  return 0;
             if (updatedAt == 0)                             return 0;
             // forge-lint: disable-next-line(block-timestamp)
-            if (block.timestamp - updatedAt > ORACLE_STALE) return 0;
+            if (block.timestamp - updatedAt > ORACLE_STALE_STABLE) return 0;   // P-H2: 24h-heartbeat feed
             if (answer <= 0)                                return 0;
             usdcUsdE8 = answer;
         } catch {
@@ -1312,8 +1359,60 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      * @notice Merchant disarms the Guardian. Guardian pause calls will revert.
      */
     function disableGuardian() external onlyRole(OWNER_ROLE) {
+        // P-H1: with a guardian seated, disarming is timelocked and vetoable —
+        // otherwise a stolen owner key disarms and drains in one transaction.
+        // With no guardian seated there is nothing to protect: instant.
+        if (guardianCount != 0) {
+            uint256 readyAt = guardianDisableExecuteAfter;
+            // forge-lint: disable-next-line(block-timestamp)
+            if (readyAt == 0 || block.timestamp < readyAt) revert GuardianDisableNotReady();
+            guardianDisableExecuteAfter = 0;
+        }
         guardianEnabled = false;
         emit GuardianDisabled(msg.sender, block.timestamp);
+    }
+
+    /// @notice P-H1: schedule disarming the guardian (GUARDIAN_DISABLE_DELAY).
+    ///         Re-queuing restarts the clock; it can never shorten it.
+    function queueGuardianDisable() external onlyRole(OWNER_ROLE) {
+        uint256 readyAt = block.timestamp + GUARDIAN_DISABLE_DELAY;
+        guardianDisableExecuteAfter = readyAt;
+        emit GuardianDisableQueued(msg.sender, readyAt);
+    }
+
+    /// @notice P-H1: cancel a queued disarm. Owner (changed their mind) or
+    ///         guardian (the veto — a disarm the merchant did not queue is the
+    ///         signature of a stolen owner key).
+    function cancelGuardianDisable() external {
+        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
+        }
+        if (guardianDisableExecuteAfter == 0) revert NothingQueued();
+        guardianDisableExecuteAfter = 0;
+        emit GuardianDisableCancelled(msg.sender);
+    }
+
+    /// @notice P-H1: the owner may only SEED the first guardian. Once one is
+    ///         seated, GUARDIAN_ROLE administers itself (role admin ==
+    ///         GUARDIAN_ROLE), so a compromised owner key cannot appoint
+    ///         itself guardian and lift the freeze.
+    function grantRole(bytes32 role, address account) public virtual override {
+        if (role == GUARDIAN_ROLE && guardianCount == 0) {
+            _checkRole(OWNER_ROLE);
+            _grantRole(role, account);
+            return;
+        }
+        super.grantRole(role, account);
+    }
+
+    function _grantRole(bytes32 role, address account) internal virtual override returns (bool granted) {
+        granted = super._grantRole(role, account);
+        if (granted && role == GUARDIAN_ROLE) guardianCount += 1;
+    }
+
+    function _revokeRole(bytes32 role, address account) internal virtual override returns (bool revoked) {
+        revoked = super._revokeRole(role, account);
+        if (revoked && role == GUARDIAN_ROLE) guardianCount -= 1;
     }
 
     /**
@@ -1380,11 +1479,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (to == address(0)) revert InvalidAddress();
         if (amount == 0)      revert ZeroAmount();
 
-        _rollWindowIfNeeded();
-
-        if (dailyWithdrawn + amount > dailyLimit) revert DailyLimitExceeded();
-
-        dailyWithdrawn += amount;
+        _consumeDaiDailyLimit(amount);                       // P-M4: leaky bucket
 
         DAI.safeTransfer(to, amount);
         emit DAIWithdrawn(msg.sender, amount, to, block.timestamp);
@@ -1499,6 +1594,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      */
     function queueDailyLimitIncrease(uint256 newLimit) external onlyRole(OWNER_ROLE) {
         if (newLimit <= dailyLimit) revert InvalidLimit(); // must be higher
+        _checkIncreaseCap(newLimit, dailyLimitRef);        // P-H1
         queuedLimitIncrease = QueuedLimit({
             newLimit: newLimit,
             executeAfter: block.timestamp + LIMIT_DELAY
@@ -1517,6 +1613,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
 
         dailyLimit = q.newLimit;
+        if (q.newLimit > dailyLimitRef) dailyLimitRef = q.newLimit;   // P-H1
         delete queuedLimitIncrease;
 
         emit DailyLimitIncreaseExecuted(q.newLimit);
@@ -1525,6 +1622,33 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /**
      * @notice Cancel a queued limit increase. Applies immediately.
      */
+    /// @dev P-H1: an increase may at most LIMIT_INCREASE_MAX_MULT x the reference
+    ///      (highest limit set by the constructor or an executed increase). A
+    ///      zero reference (deployed in lockdown, never raised) is uncapped for
+    ///      the first raise — still delayed and guardian-cancellable.
+    function _checkIncreaseCap(uint256 newLimit, uint256 ref) internal pure {
+        if (ref == 0) return;
+        uint256 maxAllowed = ref * LIMIT_INCREASE_MAX_MULT;
+        if (newLimit > maxAllowed) revert IncreaseTooLarge(newLimit, maxAllowed);
+    }
+
+    /// @notice P-H1: guardian veto on a queued DAI limit increase.
+    function guardianCancelDailyLimitIncrease() external onlyRole(GUARDIAN_ROLE) {
+        if (!guardianEnabled) revert GuardianNotEnabled();
+        if (queuedLimitIncrease.executeAfter == 0) revert NoIncreaseQueued();
+        delete queuedLimitIncrease;
+        emit GuardianCancelledDailyLimitIncrease(msg.sender);
+        emit DailyLimitIncreaseCancelled();
+    }
+
+    /// @notice P-H1: guardian veto on a queued per-asset limit increase.
+    function guardianCancelAssetLimitIncrease(DailyLimitAsset asset) external onlyRole(GUARDIAN_ROLE) {
+        if (!guardianEnabled) revert GuardianNotEnabled();
+        if (queuedAssetLimitIncrease[uint8(asset)].executeAfter == 0) revert NoIncreaseQueued();
+        delete queuedAssetLimitIncrease[uint8(asset)];
+        emit GuardianCancelledAssetLimitIncrease(msg.sender, uint8(asset));
+    }
+
     function cancelDailyLimitIncrease() external onlyRole(OWNER_ROLE) {
         if (queuedLimitIncrease.executeAfter == 0) revert NoIncreaseQueued();
         delete queuedLimitIncrease;
@@ -1563,6 +1687,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     {
         uint256 current = asset == DailyLimitAsset.USDC ? usdcDailyLimit : cbEthDailyLimit;
         if (newLimit <= current) revert InvalidLimit(); // must be higher
+        _checkIncreaseCap(newLimit, assetLimitRef[uint8(asset)]);   // P-H1
         queuedAssetLimitIncrease[uint8(asset)] = QueuedLimit({
             newLimit: newLimit,
             executeAfter: block.timestamp + LIMIT_DELAY
@@ -1587,6 +1712,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         } else {
             cbEthDailyLimit = q.newLimit;
         }
+        if (q.newLimit > assetLimitRef[uint8(asset)]) assetLimitRef[uint8(asset)] = q.newLimit;   // P-H1
         delete queuedAssetLimitIncrease[uint8(asset)];
 
         emit AssetDailyLimitIncreaseExecuted(uint8(asset), q.newLimit);
@@ -1607,13 +1733,31 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      * @notice Roll the daily withdrawal window if 24h has elapsed since start.
      *         Internal — called from withdrawDAI to reset counter on window boundary.
      */
-    function _rollWindowIfNeeded() internal {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+    /// @dev P-M4 (re-audit 2026-09-01): the "rolling" 24h caps were FIXED
+    ///      windows — a full limit at windowStart+24h-1 and another at +24h moved
+    ///      2x the cap in one second. Every limit is now a LEAKY BUCKET: the
+    ///      spent amount drains back to zero linearly over WINDOW_SIZE. There is
+    ///      no boundary to straddle: after a full draw the next unit of capacity
+    ///      appears at limit/WINDOW_SIZE per second, so an attacker gets at most
+    ///      limit * (1 + D/WINDOW_SIZE) over any span D — never 2x in an instant —
+    ///      and the guardian has the full window to react to the first draw.
+    ///      Honest bound stated: the SUSTAINED rate is unchanged (one limit per
+    ///      24h); only the burst is removed. Storage is reused, ABI unchanged:
+    ///      *Withdrawn = spent (as of *WindowStart), *WindowStart = last
+    ///      accounting timestamp.
+    function _drained(uint256 spent, uint256 lastTs, uint256 limit) internal view returns (uint256) {
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= windowStart + WINDOW_SIZE) {
-            windowStart = block.timestamp;
-            dailyWithdrawn = 0;
-        }
+        uint256 elapsed = block.timestamp - lastTs;
+        if (elapsed >= WINDOW_SIZE) return 0;
+        uint256 refill = (limit * elapsed) / WINDOW_SIZE;
+        return spent > refill ? spent - refill : 0;
+    }
+
+    function _consumeDaiDailyLimit(uint256 amount) internal {
+        uint256 spent = _drained(dailyWithdrawn, windowStart, dailyLimit);
+        if (spent + amount > dailyLimit) revert DailyLimitExceeded();
+        dailyWithdrawn = spent + amount;
+        windowStart = block.timestamp;
     }
 
     /**
@@ -1624,14 +1768,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         Reverts DailyLimitExceeded when `amount` would breach the window.
      */
     function _consumeUsdcDailyLimit(uint256 amount) internal {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= usdcWindowStart + WINDOW_SIZE) {
-            usdcWindowStart = block.timestamp;
-            usdcDailyWithdrawn = 0;
-        }
-        if (usdcDailyWithdrawn + amount > usdcDailyLimit) revert DailyLimitExceeded();
-        usdcDailyWithdrawn += amount;
+        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);   // P-M4
+        if (spent + amount > usdcDailyLimit) revert DailyLimitExceeded();
+        usdcDailyWithdrawn = spent + amount;
+        usdcWindowStart = block.timestamp;
     }
 
     /**
@@ -1639,14 +1779,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         Reverts DailyLimitExceeded when `amount` would breach the window.
      */
     function _consumeCbEthDailyLimit(uint256 amount) internal {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= cbEthWindowStart + WINDOW_SIZE) {
-            cbEthWindowStart = block.timestamp;
-            cbEthDailyWithdrawn = 0;
-        }
-        if (cbEthDailyWithdrawn + amount > cbEthDailyLimit) revert DailyLimitExceeded();
-        cbEthDailyWithdrawn += amount;
+        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit); // P-M4
+        if (spent + amount > cbEthDailyLimit) revert DailyLimitExceeded();
+        cbEthDailyWithdrawn = spent + amount;
+        cbEthWindowStart = block.timestamp;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1707,9 +1843,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
 
         // DAI emergency withdrawals also enforce the daily limit
         if (token == address(DAI)) {
-            _rollWindowIfNeeded();
-            if (dailyWithdrawn + amount > dailyLimit) revert DailyLimitExceeded();
-            dailyWithdrawn += amount;
+            _consumeDaiDailyLimit(amount);                   // P-M4: leaky bucket
         }
 
         delete emergencyQueue[token];
@@ -1791,9 +1925,9 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         ) {
             if (answeredInRound < roundId)                   return false;
             if (updatedAt == 0)                              return false;
-            // Oracle staleness check at 3600s ORACLE_STALE; validator's ~12s manipulation window is immaterial.
+            // P-H2: DAI/USD is a 24h-heartbeat feed — ORACLE_STALE_STABLE (25h).
             // forge-lint: disable-next-line(block-timestamp)
-            if (block.timestamp - updatedAt > ORACLE_STALE)  return false;
+            if (block.timestamp - updatedAt > ORACLE_STALE_STABLE)  return false;
             if (answer <= 0)                                 return false;
             return true;
         } catch {
@@ -1872,13 +2006,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         If window has rolled over, returns full dailyLimit.
      */
     function dailyRemaining() external view returns (uint256) {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= windowStart + WINDOW_SIZE) {
-            return dailyLimit;
-        }
-        if (dailyWithdrawn >= dailyLimit) return 0;
-        return dailyLimit - dailyWithdrawn;
+        uint256 spent = _drained(dailyWithdrawn, windowStart, dailyLimit);   // P-M4 leaky bucket
+        return spent >= dailyLimit ? 0 : dailyLimit - spent;
     }
 
     /**
@@ -1886,13 +2015,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         the current 24h window. Full limit if the window has rolled over.
      */
     function usdcDailyRemaining() external view returns (uint256) {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= usdcWindowStart + WINDOW_SIZE) {
-            return usdcDailyLimit;
-        }
-        if (usdcDailyWithdrawn >= usdcDailyLimit) return 0;
-        return usdcDailyLimit - usdcDailyWithdrawn;
+        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);   // P-M4 leaky bucket
+        return spent >= usdcDailyLimit ? 0 : usdcDailyLimit - spent;
     }
 
     /**
@@ -1900,13 +2024,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      *         24h window. Full limit if the window has rolled over.
      */
     function cbEthDailyRemaining() external view returns (uint256) {
-        // WINDOW_SIZE is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp >= cbEthWindowStart + WINDOW_SIZE) {
-            return cbEthDailyLimit;
-        }
-        if (cbEthDailyWithdrawn >= cbEthDailyLimit) return 0;
-        return cbEthDailyLimit - cbEthDailyWithdrawn;
+        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);   // P-M4 leaky bucket
+        return spent >= cbEthDailyLimit ? 0 : cbEthDailyLimit - spent;
     }
 
     /**

@@ -62,6 +62,7 @@ contract ForkHeart {
     uint256 public received;
     constructor(ForkMockUSDC u) { usdc = u; }
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
     function receiveInfraFunds(uint256 amount) external {
         usdc.transferFrom(msg.sender, address(this), amount);
         received += amount;

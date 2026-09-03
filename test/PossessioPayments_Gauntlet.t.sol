@@ -596,22 +596,50 @@ contract PossessioPaymentsGauntlet is Test {
     // Gemini #3a: DAILY LIMIT WINDOW BOUNDARY
     // ───────────────────────────────────────────────────────────────────────
 
+    /// P-M4 (re-audit 2026-09-01): the cap is a leaky bucket now. RED on the
+    /// pre-fix contract: a full limit at windowStart+24h-1 and another at +24h
+    /// moved 2x the cap in one second. Now a second full limit needs the full
+    /// 24h to refill — one limit per 24h, never two in a second.
     function test_Attack_WindowBoundaryExact() public {
         dai.mint(address(payments), 10_000 * 1e18);
+        uint256 t0 = vm.getBlockTimestamp();                 // via_ir CSEs block.timestamp across warps
 
         vm.prank(MERCHANT);
         payments.withdrawDAI(DAILY_LIMIT, PAYEE);
 
-        vm.warp(block.timestamp + 24 hours - 1);
+        vm.warp(t0 + 1);                                     // the pre-fix burst window
         vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
         vm.prank(MERCHANT);
-        payments.withdrawDAI(1, PAYEE);
+        payments.withdrawDAI(DAILY_LIMIT, PAYEE);
 
-        vm.warp(block.timestamp + 1);
+        vm.warp(t0 + 24 hours - 1);
+        assertLt(payments.dailyRemaining(), DAILY_LIMIT, "not fully refilled one second early");
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
         vm.prank(MERCHANT);
         payments.withdrawDAI(DAILY_LIMIT, PAYEE);
 
-        assertEq(dai.balanceOf(PAYEE), 2 * DAILY_LIMIT, "Two limits across boundary");
+        vm.warp(t0 + 24 hours);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT, PAYEE);
+
+        assertEq(dai.balanceOf(PAYEE), 2 * DAILY_LIMIT, "one limit per 24h");
+    }
+
+    /// P-M4: capacity refills linearly — exactly half the limit is back at 12h.
+    function test_PM4_bucketRefillsLinearly() public {
+        dai.mint(address(payments), 10_000 * 1e18);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT, PAYEE);
+        assertEq(payments.dailyRemaining(), 0);
+
+        vm.warp(vm.getBlockTimestamp() + 12 hours);
+        assertEq(payments.dailyRemaining(), DAILY_LIMIT / 2, "half the limit refilled at 12h");
+        vm.expectRevert(PossessioPayments.DailyLimitExceeded.selector);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT / 2 + 1, PAYEE);
+        vm.prank(MERCHANT);
+        payments.withdrawDAI(DAILY_LIMIT / 2, PAYEE);
+        assertEq(payments.dailyRemaining(), 0);
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -703,9 +731,17 @@ contract PossessioPaymentsGauntlet is Test {
 
         // Raising a cap is not instant either — the increase sits behind
         // LIMIT_DELAY, giving the Guardian its reaction window.
+        // P-H1 (re-audit 2026-09-01): a stolen key can no longer queue "x100" —
+        // increases are capped at LIMIT_INCREASE_MAX_MULT x the reference limit.
+        vm.expectRevert(abi.encodeWithSelector(
+            PossessioPayments.IncreaseTooLarge.selector, USDC_DAILY_LIMIT * 100, USDC_DAILY_LIMIT * 2));
         vm.prank(MERCHANT);
         payments.queueAssetDailyLimitIncrease(
             PossessioPayments.DailyLimitAsset.USDC, USDC_DAILY_LIMIT * 100
+        );
+        vm.prank(MERCHANT);
+        payments.queueAssetDailyLimitIncrease(
+            PossessioPayments.DailyLimitAsset.USDC, USDC_DAILY_LIMIT * 2
         );
         vm.expectRevert(PossessioPayments.TimelockNotPassed.selector);
         vm.prank(MERCHANT);
@@ -718,6 +754,58 @@ contract PossessioPaymentsGauntlet is Test {
     // ═══════════════════════════════════════════════════════════════════════
     //              ROLE ESCALATION & UNAUTHORIZED ACCESS ATTACKS
     // ═══════════════════════════════════════════════════════════════════════
+
+    /// P-H1 (re-audit 2026-09-01). RED on the pre-fix contract: a compromised OWNER
+    /// key ran disableGuardian → grantRole(GUARDIAN, self) → enableGuardian →
+    /// setWithdrawalsFrozen(false) → uncapped limit increases → 100% out at T+24h.
+    function test_PH1_compromisedOwnerCannotNeuterGuardian() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.startPrank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);          // the seed: owner may do this once
+        payments.enableGuardian();
+        vm.stopPrank();
+        vm.prank(GUARDIAN);
+        payments.setWithdrawalsFrozen(true);
+
+        // 1. the owner cannot appoint a guardian once one is seated
+        vm.prank(MERCHANT);
+        vm.expectRevert();
+        payments.grantRole(gRole, MERCHANT);
+        // 2. the owner cannot revoke the guardian
+        vm.prank(MERCHANT);
+        vm.expectRevert();
+        payments.revokeRole(gRole, GUARDIAN);
+        // 3. disarming is timelocked and the guardian can veto it
+        vm.prank(MERCHANT);
+        vm.expectRevert(PossessioPayments.GuardianDisableNotReady.selector);
+        payments.disableGuardian();
+        vm.prank(MERCHANT);
+        payments.queueGuardianDisable();
+        vm.prank(GUARDIAN);
+        payments.cancelGuardianDisable();
+        vm.warp(block.timestamp + payments.GUARDIAN_DISABLE_DELAY() + 1);
+        vm.prank(MERCHANT);
+        vm.expectRevert(PossessioPayments.GuardianDisableNotReady.selector);
+        payments.disableGuardian();
+        // 4. limit increases are capped at 2x the reference and guardian-cancellable
+        vm.prank(MERCHANT);
+        vm.expectRevert(abi.encodeWithSelector(
+            PossessioPayments.IncreaseTooLarge.selector, DAILY_LIMIT * 3, DAILY_LIMIT * 2));
+        payments.queueDailyLimitIncrease(DAILY_LIMIT * 3);
+        vm.prank(MERCHANT);
+        payments.queueDailyLimitIncrease(DAILY_LIMIT * 2);
+        vm.prank(GUARDIAN);
+        payments.guardianCancelDailyLimitIncrease();
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.prank(MERCHANT);
+        vm.expectRevert(PossessioPayments.NoIncreaseQueued.selector);
+        payments.executeDailyLimitIncrease();
+        // the freeze held throughout, and guardians administer themselves
+        assertTrue(payments.withdrawalsFrozen());
+        vm.prank(GUARDIAN);
+        payments.grantRole(gRole, ATTACKER);   // any second address — proves self-administration
+        assertEq(payments.guardianCount(), 2);
+    }
 
     function test_Attack_AttackerCannotPause() public {
         vm.expectRevert(PossessioPayments.Unauthorized.selector);   // L-1
@@ -1010,8 +1098,11 @@ contract PossessioPaymentsGauntlet is Test {
         assertTrue(payments.routingPaused());
 
         // Owner disables Guardian
-        vm.prank(MERCHANT);
+        vm.startPrank(MERCHANT);
+        payments.queueGuardianDisable();                       // P-H1: timelocked disarm
+        vm.warp(block.timestamp + payments.GUARDIAN_DISABLE_DELAY());
         payments.disableGuardian();
+        vm.stopPrank();
 
         // Owner queues resume
         vm.prank(MERCHANT);

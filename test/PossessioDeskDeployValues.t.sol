@@ -41,6 +41,7 @@ import {MockUSDC} from "./PossessioFundingVault.t.sol";
 
 contract MockInfraPoolDesk {
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
 }
 
 contract PossessioDeskDeployValuesTest is Test {

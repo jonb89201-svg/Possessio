@@ -260,11 +260,53 @@ contract L1AnchorOracleManipulationTests is L1AnchorTestBase {
         assertTrue(anchor.depegPaused());
     }
 
+    /// A-H1 (re-audit 2026-09-01): the cbETH/ETH feed is a 24h-heartbeat feed.
+    /// RED on the pre-fix anchor (ORACLE_STALE = 3600): a 4-hour-old, perfectly
+    /// normal round latched the guard — ~96% of every day, re-latchable by any EOA.
+    function test_AH1_fourHourOldRound_isFresh_doesNotLatch() public {
+        vm.warp(200_000);
+        _seedAnchorWithCbEth(10 ether);
+        oracle.setStale(4 hours);
+        anchor.checkSymmetry();
+        assertFalse(anchor.depegPaused(), "a 4h-old round is within the 24h heartbeat");
+
+        oracle.setStale(anchor.ORACLE_STALE() + 1);
+        anchor.checkSymmetry();
+        assertTrue(anchor.depegPaused(), "beyond heartbeat + slack still latches");
+    }
+
+    /// A-M2 (re-audit 2026-09-01): the feed is an accruing exchange RATE (~1.138e18
+    /// live), not a peg at 1e18. RED on the pre-fix anchor: a 5% collapse of the
+    /// rate (1.138 → 1.081) sailed past the fixed 0.97e18 threshold — the guard
+    /// could only ever fire on a >14.8% crash.
+    function test_AM2_rateDropAgainstMovingReference_latches() public {
+        _seedAnchorWithCbEth(10 ether);
+        oracle.setAnswer(1.138e18);
+        anchor.checkSymmetry();
+        assertFalse(anchor.depegPaused());
+        assertEq(anchor.lastGoodRate(), 1.138e18, "reference ratchets to the verified rate");
+
+        oracle.setAnswer(1.081e18);                        // -5% from the reference
+        anchor.checkSymmetry();
+        assertTrue(anchor.depegPaused(), "a >3% drop from the reference latches");
+
+        // The merchant's resetDepeg is the explicit acceptance of the new level:
+        // it re-bases the reference so a slashing-class drop is not unrecoverable.
+        vm.prank(merchant);
+        anchor.resetDepeg();
+        assertFalse(anchor.depegPaused());
+        assertEq(anchor.lastGoodRate(), 1.081e18, "reset re-bases the reference");
+
+        oracle.setAnswer(1.085e18);                        // accrual resumes from the new base
+        anchor.checkSymmetry();
+        assertFalse(anchor.depegPaused());
+        assertEq(anchor.lastGoodRate(), 1.085e18);
+    }
+
     function test_oracle_staleData_blocksRouting() public {
         // Advance block.timestamp past ORACLE_STALE so MockChainlinkFeed's
-        // setStale(3601) doesn't underflow on block.timestamp - secondsAgo.
-        // Foundry default timestamp=1; mock's setStale would compute 1-3601.
-        vm.warp(86_400);
+        // setStale(ORACLE_STALE + 1) doesn't underflow on block.timestamp - secondsAgo.
+        vm.warp(200_000);
 
         _seedAnchorWithCbEth(10 ether);
         _setOracleStale();

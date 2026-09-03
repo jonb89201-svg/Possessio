@@ -40,6 +40,7 @@ contract DeskUSDC is ERC20 {
 /// @dev Minimal live infra-sink: satisfies AutoTarget's feeSink brick-guard.
 contract MockInfraPool {
     function isInfraSink() external pure returns (bool) { return true; }
+    function isAuthorizedSource(address) external pure returns (bool) { return true; }
 }
 
 contract TradingDeskCreate3Test is Test {
@@ -89,7 +90,7 @@ contract TradingDeskCreate3Test is Test {
     function _railInit(address vault, address at) internal view returns (bytes memory) {
         return abi.encodePacked(
             type(PossessioRail).creationCode,
-            abi.encode(address(usdc), vault, at, keeper, dexRouter, WETH_BASE, REMOTE_AGENT, uint256(24 hours))
+            abi.encode(address(usdc), vault, at, keeper, dexRouter, WETH_BASE, REMOTE_AGENT, uint256(24 hours), uint256(5_000) /* R-H1 MIN_SETTLE_BPS */)
         );
     }
 

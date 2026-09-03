@@ -100,6 +100,7 @@ interface ICreateX {
 interface IPossessioPool {
     function receiveInfraFunds(uint256 amount) external;
     function isInfraSink() external view returns (bool);
+    function isAuthorizedSource(address source) external view returns (bool);
 }
 
 /// @notice Minimal Uniswap v4 PoolManager surface. Address-typed PoolKey is
@@ -131,6 +132,10 @@ contract PossessioLaunchFactory is ReentrancyGuard {
     error TemplateCodehashMismatch(bytes32 got, bytes32 expected);
     error DeployFailed();
     error FeeSinkInterfaceMismatch();
+    /// @notice F-L3 (re-audit 2026-09-01): the sink is a live Pool but this
+    ///         factory is not in its immutable source set — every fee push
+    ///         would revert forever. Caught at construction.
+    error FeeSinkSourceNotAuthorized();
     error CouncilTokenNotLive();
     error PoolManagerNotLive();
     error ZeroInitialPrice();
@@ -215,6 +220,10 @@ contract PossessioLaunchFactory is ReentrancyGuard {
     ///         Immutable per factory - a different market structure is a new
     ///         factory, same as a different price is (honest versioning).
     uint24 public immutable POOL_FEE;
+    /// @notice F-I4 (re-audit 2026-09-01): Uniswap v4 TickMath.MAX_TICK_SPACING.
+    ///         A larger spacing constructs clean and then bricks every
+    ///         initialize at the permanent anchor - bound it at deploy time.
+    int24 public constant MAX_TICK_SPACING = 32767;
     int24 public immutable TICK_SPACING;
 
     /*//////////////////////////////////////////////////////////////
@@ -272,13 +281,20 @@ contract PossessioLaunchFactory is ReentrancyGuard {
                 || _councilToken == address(0) || _poolManager == address(0)
         ) revert ZeroAddress();
         if (_poolFee >= MAX_POOL_FEE) revert BadPoolFee();
-        if (_tickSpacing <= 0) revert BadTickSpacing();
+        if (_tickSpacing <= 0 || _tickSpacing > MAX_TICK_SPACING) revert BadTickSpacing();
 
         // BRICK GUARD (inherited from PossessioFactory, verified live there):
         // heartSink must be a LIVE contract implementing the accounted door.
         if (_heartSink.code.length == 0) revert FeeSinkInterfaceMismatch();
         try IPossessioPool(_heartSink).isInfraSink() returns (bool ok) {
             if (!ok) revert FeeSinkInterfaceMismatch();
+        } catch {
+            revert FeeSinkInterfaceMismatch();
+        }
+        // F-L3 (re-audit 2026-09-01): prove the Heart accepts THIS factory as a
+        // source, not just that it is a Pool (twin of PossessioFactory's guard).
+        try IPossessioPool(_heartSink).isAuthorizedSource(address(this)) returns (bool authorized) {
+            if (!authorized) revert FeeSinkSourceNotAuthorized();
         } catch {
             revert FeeSinkInterfaceMismatch();
         }

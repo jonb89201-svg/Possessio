@@ -35,7 +35,61 @@ contract PossessioSaltPoolTest is Test {
     /// @dev G-1: build a factory-permissioned salt (leading 20 bytes == prefix,
     ///      distinct entropy in the low 96 bits) so refillSalts accepts it.
     function _ps(address prefix, uint256 entropy) internal pure returns (bytes32) {
-        return bytes32(bytes20(prefix)) | bytes32(uint256(uint96(entropy)));
+        // uint88 leaves byte 21 (CreateX's redeploy-protection flag) at 0x00 —
+        // the only flags CreateX accepts are 0x00 / 0x01 (F-L2).
+        return bytes32(bytes20(prefix)) | bytes32(uint256(uint88(entropy)));
+    }
+
+    /// F-L2 helper: a factory-prefixed salt with an explicit byte-21 flag.
+    function _psFlag(address prefix, bytes1 flag, uint256 entropy) internal pure returns (bytes32) {
+        return bytes32(bytes20(prefix)) | (bytes32(flag) >> 160) | bytes32(uint256(uint88(entropy)));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+        F-L2 (re-audit 2026-09-01) - refill rejects CreateX-invalid
+        redeploy flags; keeper can drop a poisoned top salt
+    //////////////////////////////////////////////////////////////*/
+
+    /// RED on the pre-fix pool: a byte-21 = 0x02 salt passed the prefix check,
+    /// sat on top of the LIFO queue, and made every deploy revert at CreateX.
+    function test_FL2_refill_invalidRedeployFlag_reverts() public {
+        bytes32 poison = _psFlag(FACTORY, 0x02, 1);
+        bytes32[] memory salts = new bytes32[](1);
+        salts[0] = poison;
+        vm.prank(KEEPER);
+        vm.expectRevert(abi.encodeWithSelector(PossessioSaltPool.SaltRedeployFlagInvalid.selector, poison));
+        pool.refillSalts(salts);
+        assertEq(pool.depth(), 0);
+    }
+
+    function test_FL2_refill_acceptsBothValidFlags() public {
+        bytes32[] memory salts = new bytes32[](2);
+        salts[0] = _psFlag(FACTORY, 0x00, 1);
+        salts[1] = _psFlag(FACTORY, 0x01, 2);
+        vm.prank(KEEPER);
+        pool.refillSalts(salts);
+        assertEq(pool.depth(), 2);
+    }
+
+    function test_FL2_dropTop_keeperOnly_LIFO() public {
+        bytes32[] memory salts = _refill(3);
+        vm.prank(FACTORY);
+        vm.expectRevert(PossessioSaltPool.UnauthorizedCall.selector);
+        pool.dropTop();
+
+        vm.prank(KEEPER);
+        bytes32 dropped = pool.dropTop();
+        assertEq(dropped, salts[2], "drops the top (LIFO) salt");
+        assertEq(pool.depth(), 2);
+
+        vm.prank(FACTORY);
+        assertEq(pool.pullSalt(), salts[1], "next pull sees the salt beneath");
+    }
+
+    function test_FL2_dropTop_empty_reverts() public {
+        vm.prank(KEEPER);
+        vm.expectRevert(PossessioSaltPool.PoolEmpty.selector);
+        pool.dropTop();
     }
 
     function _refill(uint256 n) internal returns (bytes32[] memory salts) {

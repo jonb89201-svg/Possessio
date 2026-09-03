@@ -30,6 +30,7 @@ import {MockAutoTarget} from "./PossessioRail.t.sol";
 interface IUSDCLike { function balanceOf(address) external view returns (uint256); }
 
 contract PossessioRailV2ForkTest is Test {
+    uint256 internal constant MIN_SETTLE_BPS = 0; // R-H1 floor OFF here: this suite proves pre-existing behaviour; the floor is proven in PossessioRailAdversarial
     address constant USDC   = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address constant WETH   = 0x4200000000000000000000000000000000000006;
     address constant DEGEN  = 0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed; // WETH-paired
@@ -65,8 +66,12 @@ contract PossessioRailV2ForkTest is Test {
         );
         rail = new PossessioRail(
             IERC20(USDC), IFundingVault(address(vault)), IAutoTarget(address(at)),
-            keeper, ISwapRouter(ROUTER), WETH, remoteAgent, REMOTE_TIMEOUT
+            keeper, ISwapRouter(ROUTER), WETH, remoteAgent, REMOTE_TIMEOUT, MIN_SETTLE_BPS
         );
+        vm.startPrank(owner);   // R-H1 route whitelist
+        rail.setRouteAllowed(DEGEN, true, FEE_USDC_WETH, FEE_WETH_DEGEN, true);
+        rail.setRouteAllowed(WETH, false, FEE_USDC_WETH, 0, true);
+        vm.stopPrank();
         require(address(rail) == predictedRail, "prewire");
 
         deal(USDC, owner, 20_000e6);
