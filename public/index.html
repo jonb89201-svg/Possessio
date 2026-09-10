@@ -414,7 +414,8 @@ window.addEventListener("error", function (e) {
     <button class="btn oxide" id="connect-btn">Connect Wallet</button>
     <button class="btn oxide" id="lr-launch-btn">Launch</button>
     <button class="btn" id="markets-link" type="button">Markets</button>
-    <button class="btn" id="council-link" type="button">Council</button>
+    <!-- Council board button DISABLED 2026-09-10: the ledger it opens is a public read view; withdrawn pending the keyed-connector lane. Re-enable by removing `disabled` here and the guard at the Council binding below. -->
+    <button class="btn" id="council-link" type="button" disabled aria-disabled="true" title="Council board disabled — public read view withdrawn">Council</button>
     <button class="btn" id="tx-link" type="button">Transactions</button>
   </div>
   <div class="row" style="margin-top:10px">
@@ -4782,7 +4783,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     close:function(){var v=$("#council-view");if(!v)return;v.hidden=true;document.body.style.overflow="";if(timer){clearInterval(timer);timer=null;}}
   };
   var btn=document.getElementById("council-link");
-  if(btn)btn.addEventListener("click",function(){Council.open();});
+  // DISABLED 2026-09-10: while the button carries `disabled`, never attach the opener — so the
+  // council view cannot be opened (nor its ledger poll started) even if the attribute is removed
+  // client-side. Re-enable by dropping `disabled` on #council-link; this guard then no-ops.
+  if(btn&&!btn.disabled)btn.addEventListener("click",function(){Council.open();});
 })();
 </script>
 <style>
