@@ -82,15 +82,16 @@ if [ -f package.json ] && grep -q '"test"' package.json 2>/dev/null; then
 fi
 
 echo
-echo "FIRST MOVE — READ THE BOARD. The Possessio Council connector is the only"
-echo "wall-less memory: any instance, any session, no repo checkout required."
-echo "Before you touch anything: council_read_feed for the latest, council_search"
-echo "for a topic ('forge', 'keeper', an address). The board is a SELF-CORRECTING"
-echo "canon — a row's corrections hang off it by ref, so council_read_thread on a"
-echo "status row returns current truth with supersessions included. The repo is"
-echo "doctrine + code; the BOARD is what is true right now. Trust a repo file only"
-echo "after the board has not corrected it. (This hook itself was wrong about forge"
-echo "until board row 87 — check the board before repeating anything it prints.)"
+echo "FIRST MOVE — READ THE COMM PR. The council board is RETIRED (2026-09-28):"
+echo "do not read it or post to it. The council's channel is now the COMM PR,"
+echo "draft PR #17 in jonb89201-svg/Possessio-AI-Council-Sandbox (private),"
+echo "'COUNCIL COMMS — DO NOT MERGE'. Messages are PR comments signed"
+echo "[TAG · UTC]. Before you touch anything, read the newest comments with the"
+echo "GitHub connector (pull_request_read get_comments, page to the end). The"
+echo "council-heartbeat skill encodes the flow. The repo is doctrine + code; the"
+echo "COMM thread is what is in flight right now. A comment is a claim, not a"
+echo "proof: reproduce before you rely on it. Live vulns NEVER go on COMM; they"
+echo "go privately to the Architect."
 echo
 echo "CLAUDE.md is the job listing. laws/MIB.md is Codebyte Law."
 echo "laws/CANON_of_the_terminal.md is the rule of practice for AI seats."
