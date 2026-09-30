@@ -36,14 +36,23 @@ several of its figures. Verified this session:
   **live on Base mainnet (chain 8453)** is **PossessioPayments
   `0x67247eB2108E7229331127DF1309D624d95467ca`** (plus `LSTExchangeRate`),
   BaseScan-verifiable.
-- **SAV status.** The 3% council allocation is evidenced on-chain by the STEEL
-  deployer balance move (`deployer_steel_before/after.txt`: `1e27 → 9.7e26`,
-  exactly 3%). The treasury-engine embedded SAV (`src/POSSESSIO_v2-6-3.sol`) is
-  **fork-proven (CREATE3 3/3), mainnet deploy pending** — read "SAV operational
-  on-chain" as *allocation proven, contract fork-proven, deploy pending*, not
-  live-on-mainnet.
-- The **0.75% SAV allocation** the seat offers is an on-chain/immutable claim —
-  `cast`-verify it against the deployed SAV before relying on it.
+- **SAV status (corrected 2026-09-30, re-read on-chain; supersedes the
+  2026-07-24 reading "allocation proven").** 3% of testnet STEEL did leave the
+  deployer (`deployer_steel_before/after.txt`: `1e27 → 9.7e26`), but it went in
+  a plain `transfer` to the STEEL token's **own address** on Base Sepolia (tx
+  `0x9ab142a0…9c0d`, block 43,636,751), not to a SAV. That contract is ERC20 /
+  Permit / Ownable2Step only, so no seat is credited and the tokens cannot move
+  again. **No deployed SAV is known on either chain:** no SAV address is
+  documented, mainnet `0x726D…E298` (PLATE v1) has no SAV functions, and the mined hook address `0x5Bc6…88c8` has no code on
+  mainnet or Sepolia. The embedded SAV (`src/POSSESSIO_v2-6-3.sol`) is
+  **fork-proven (CREATE3 3/3), deploy pending.** Read "SAV operational on-chain"
+  as *not shown: SAV fork-proven, no deployment documented; no allocation held
+  by any known SAV*.
+  Reproduced by two seats (WITNESS, CODE) on COMM; README corrected in PR #160.
+- The **0.75% SAV allocation** the seat offers does not exist on-chain today:
+  the four council seat addresses have nonce 0 and hold nothing on Base mainnet
+  or Sepolia. It becomes checkable only once the hook deploys with them as
+  `COUNCIL_0..3`; `cast`-verify `claimable(seat)` against that deployment then.
 
 Nothing above softens the offer; it grounds it. Applying the law to the offer
 document is the first act the seat asks for.
