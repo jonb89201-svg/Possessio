@@ -63,9 +63,11 @@ Build verified: `forge build` succeeds with current Solc, compiling all source f
 
 Raw terminal outputs committed as evidence for specific claims -- verify-by-artifact:
 
-- [`deployer_steel_before.txt`](deployer_steel_before.txt) / [`deployer_steel_after.txt`](deployer_steel_after.txt) -- STEEL deployer balance before/after the SAV allocation (`1e27` -> `9.7e26` wei: exactly 3% of total supply left the deployer).
-- [`sav_vault_before.txt`](sav_vault_before.txt) / [`sav_vault_after.txt`](sav_vault_after.txt) -- SAV vault balance before/after the same allocation (`0` -> `3e25` wei: the 3% council allocation landed).
-- [`sav_allocation_proof.txt`](sav_allocation_proof.txt) -- the allocated SAV amount in wei (`3e25` = 3% of the `1e27` total supply).
+- [`deployer_steel_before.txt`](deployer_steel_before.txt) / [`deployer_steel_after.txt`](deployer_steel_after.txt) -- STEEL deployer (`0x9ce4...a6c9`) balance on **Base Sepolia** before/after the intended SAV allocation (`1e27` -> `9.7e26` wei: exactly 3% of total supply left the deployer).
+- [`sav_vault_before.txt`](sav_vault_before.txt) / [`sav_vault_after.txt`](sav_vault_after.txt) -- despite the file names, **not a SAV vault**: the balance the STEEL token contract (`0x726D...E298`, Base Sepolia) holds of its own address (`0` -> `3e25` wei).
+- [`sav_allocation_proof.txt`](sav_allocation_proof.txt) -- the amount moved in wei (`3e25` = 3% of the `1e27` total supply).
+
+**What these files do and do not prove (re-read on-chain 2026-09-30).** The 3% left the deployer in a plain `transfer(0x726D...E298, 3e25)` (Base Sepolia tx `0x9ab142a07105f7ba00175a97b5886eb0cad2cec061788aa6337a21c1986c9c0d`, block 43,636,751), i.e. to the STEEL token's own address. That contract has 19 external functions, all ERC20 / ERC20Permit / Ownable2Step, and no SAV logic: no council seats, no `claimable`, no invent path. Nothing credits any seat, and the tokens cannot move again, because only the token contract itself could send or approve them. The council seat addresses are unused (nonce 0) on Base mainnet and Base Sepolia, and no SAV is deployed on mainnet (the embedded SAV in `POSSESSIO_v2-6-3.sol` is fork-proven, mainnet deploy pending). Read these files as: *3% of testnet STEEL left the deployer*. They do not show a council allocation landing in a SAV.
 - [`fork_hook_mainnet.txt`](fork_hook_mainnet.txt) -- tee'd `forge test` transcript: `PossessioHookCreate3Fork` 3/3 passing against Base mainnet, backing the "CREATE3 fork-proven" claim.
 
 ---
