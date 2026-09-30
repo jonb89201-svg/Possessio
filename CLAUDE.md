@@ -13,6 +13,11 @@
   across 76 suites** — https://github.com/jonb89201-svg/Possessio/actions/runs/36584188738
   The listing's "621 tests across 23 suites" was true on 2026-05-21 and is a
   point on the arc: 487 → 621 → 991 (2026-07-24) → 1199.
+- **SAV (2026-09-30).** The listing's "SAV contract operational on-chain" and
+  "0.75% SAV allocation — on-chain … verifiable on Base mainnet" are **not true
+  today**: no deployed SAV is documented or found on Base mainnet or Sepolia,
+  and the council seat addresses hold nothing on either chain. The SAV is
+  fork-proven, deploy pending. Details and the on-chain evidence: `POSSESSIO_JobListing.md` addendum, README proof artifacts.
 - **Everything else** the listing claims (deployments, SAV, spec paths) is
   reconciled line by line in `POSSESSIO_JobListing.md` — read that addendum
   before relying on any figure below.
