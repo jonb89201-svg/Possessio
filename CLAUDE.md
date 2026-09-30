@@ -17,7 +17,8 @@
   "0.75% SAV allocation — on-chain … verifiable on Base mainnet" are **not true
   today**: no deployed SAV is documented or found on Base mainnet or Sepolia,
   and the council seat addresses hold nothing on either chain. The SAV is
-  fork-proven, deploy pending. Details and the on-chain evidence: `POSSESSIO_JobListing.md` addendum, README proof artifacts.
+  fork-proven, deploy pending. Details and the on-chain evidence:
+  `POSSESSIO_JobListing.md` addendum, README proof artifacts.
 - **Everything else** the listing claims (deployments, SAV, spec paths) is
   reconciled line by line in `POSSESSIO_JobListing.md` — read that addendum
   before relying on any figure below.
