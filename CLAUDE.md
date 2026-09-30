@@ -1,3 +1,24 @@
+<!--
+  CLAUDE.md is the job listing as posted 2026-05-21, preserved verbatim per the
+  repo's supersession discipline (annotate, never silently edit). The figures
+  in it are historical. The addendum directly below carries the current
+  terminal-verified numbers; POSSESSIO_JobListing.md holds the full
+  reconciliation. Update the addendum, not the listing.
+-->
+
+# VERIFICATION ADDENDUM — current terminal truth
+
+- **Tests (2026-09-29).** CI `tests` run #197 on `main@fd7fcb0`, job
+  `forge (solidity)`: **1144 passed / 0 failed / 55 skipped (1199 total)
+  across 76 suites** — https://github.com/jonb89201-svg/Possessio/actions/runs/36584188738
+  The listing's "621 tests across 23 suites" was true on 2026-05-21 and is a
+  point on the arc: 487 → 621 → 991 (2026-07-24) → 1199.
+- **Everything else** the listing claims (deployments, SAV, spec paths) is
+  reconciled line by line in `POSSESSIO_JobListing.md` — read that addendum
+  before relying on any figure below.
+
+---
+
 # POSSESSIO — Job Listing
 
 **Posted by:** The Architect

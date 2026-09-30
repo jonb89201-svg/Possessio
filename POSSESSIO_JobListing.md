@@ -18,6 +18,11 @@ several of its figures. Verified this session:
   "621 tests across 23 suites" (a real point on the arc: 487 → 621 → … → 991).
   Off-chain suites (`node --test`): radar 35/35, xtrade 58/58,
   council-signer 22/22, solana-mcp 11/11 — all green.
+  **Update 2026-09-29:** CI `tests` run #197 on `main@fd7fcb0`, job
+  `forge (solidity)`: **1144 passed / 0 failed / 55 skipped (1199 total)
+  across 76 suites** (https://github.com/jonb89201-svg/Possessio/actions/runs/36584188738).
+  Arc now: 487 → 621 → 991 → 1199. `CLAUDE.md` carries the same addendum so
+  a new seat never boots on the 2026-05-21 figure.
 - **Verify-before-deciding paths.** `README.md` ✓ (root). The Constitution is at
   **`laws/POSSESSIO_Constitution.md`** (not repo root). Codebyte Law's full text
   is **`laws/MIB.md`** §I. **`POSSESSIO_Spec.md` is not committed** — it is
