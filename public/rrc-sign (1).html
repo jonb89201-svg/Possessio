@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RRC Seal Signer</title>
+<!-- No external scripts, fonts or requests. The only call leaves through the wallet (personal_sign).
+     v2 (2026-09-30): a seal link can carry the whole block after '#'. This page re-hashes it here, shows what it
+     says, and signs the text built from the hash it computed, so what you read is what you sign. -->
+<style>
+  :root { --bg:#f6f7f9; --fg:#14171d; --mut:#5b6270; --card:#ffffff; --line:#d9dde4; --accent:#2457c5; --accent-fg:#ffffff;
+          --ok:#1a7f37; --bad:#c62828; --warn:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --fg:#e8e9ec; --mut:#9aa1ad; --card:#181b22; --line:#2a2f3a;
+          --accent:#5b8def; --accent-fg:#0f1115; --ok:#3fb950; --bad:#ff6b6b; --warn:#d29922; color-scheme: dark } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:560px; margin:0 auto; padding:12px 16px 24px; display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:20px; margin:4px 0 0; }
+  p { color:var(--mut); margin:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px; min-width:0; }
+  label, .lbl { font-size:12px; color:var(--mut); letter-spacing:.04em; text-transform:uppercase; }
+  code, textarea, .mono { font:13px/1.4 ui-monospace, Menlo, Consolas, monospace; word-break:break-all; }
+  textarea { width:100%; box-sizing:border-box; min-height:84px; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  button { width:100%; padding:12px; font-size:16px; border-radius:8px; border:0; background:var(--accent); color:var(--accent-fg); }
+  button:disabled { background:var(--line); color:var(--mut); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:0; }
+  dt { color:var(--mut); font-size:13px; } dd { margin:0; font-size:14px; min-width:0; word-break:break-word; }
+  details { border-top:1px solid var(--line); padding-top:6px; }
+  summary { cursor:pointer; font-weight:600; }
+  ul { margin:6px 0 0; padding-left:18px; } li { margin:4px 0; font-size:14px; word-break:break-word; }
+  li b { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12px; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RRC Seal Signer</h1>
+  <p>Open this page in MetaMask's built-in browser. It asks MetaMask to sign the text below with the RRC account,
+     and nothing else. The signature is safe to share; the recovery phrase and private key never are.</p>
+
+  <div class="card">
+    <label>Pinned RRC host address</label>
+    <code id="pin"></code>
+  </div>
+
+  <div class="card">
+    <label>Connected account</label>
+    <code id="acct">not connected</code>
+    <div id="acctMsg"></div>
+    <button id="connect">Connect MetaMask</button>
+  </div>
+
+  <div class="card" id="sumCard" hidden>
+    <label>What you are sealing</label>
+    <div id="sumCheck"></div>
+    <dl id="sumMeta"></dl>
+    <div id="sumBody"></div>
+  </div>
+
+  <div class="card">
+    <label>Text to sign (check it before you tap Sign)</label>
+    <textarea id="msg" spellcheck="false"></textarea>
+    <div id="msgMsg"></div>
+    <button id="sign" disabled>Sign with RRC account</button>
+  </div>
+
+  <div class="card">
+    <label>Signature (copy this and send it to CODE)</label>
+    <textarea id="sig" readonly></textarea>
+    <button id="copy" disabled>Copy signature</button>
+  </div>
+</main>
+<script>
+// Keccak-256 (Ethereum, pad 0x01) and RRC canonical JSON, dependency-free. Mirrors cgp_core.keccak256 and rrc.canonical.
+const RRC = (() => {
+  const M = (1n << 64n) - 1n;
+  const RC = ["0x0000000000000001","0x0000000000008082","0x800000000000808A","0x8000000080008000","0x000000000000808B",
+    "0x0000000080000001","0x8000000080008081","0x8000000000008009","0x000000000000008A","0x0000000000000088",
+    "0x0000000080008009","0x000000008000000A","0x000000008000808B","0x800000000000008B","0x8000000000008089",
+    "0x8000000000008003","0x8000000000008002","0x8000000000000080","0x000000000000800A","0x800000008000000A",
+    "0x8000000080008081","0x8000000000008080","0x0000000080000001","0x8000000080008008"].map(BigInt);
+  const R = [[0,36,3,41,18],[1,44,10,45,2],[62,6,43,15,61],[28,55,25,21,56],[27,20,39,8,14]]; // R[x][y]
+  const rot = (v, n) => n === 0 ? v : (((v << BigInt(n)) | (v >> BigInt(64 - n))) & M);
+  function f(s) {
+    for (let r = 0; r < 24; r++) {
+      const c = [0,1,2,3,4].map(x => s[x] ^ s[x+5] ^ s[x+10] ^ s[x+15] ^ s[x+20]);
+      const d = [0,1,2,3,4].map(x => c[(x+4)%5] ^ rot(c[(x+1)%5], 1));
+      for (let i = 0; i < 25; i++) s[i] ^= d[i % 5];
+      const b = new Array(25);
+      for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++) b[y + 5*((2*x + 3*y) % 5)] = rot(s[x + 5*y], R[x][y]);
+      for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++)
+        s[x + 5*y] = (b[x + 5*y] ^ ((~b[(x+1)%5 + 5*y] & M) & b[(x+2)%5 + 5*y])) & M;
+      s[0] ^= RC[r];
+    }
+  }
+  function keccak256(bytes) {
+    const rate = 136, s = new Array(25).fill(0n);
+    const p = new Uint8Array(Math.ceil((bytes.length + 1) / rate) * rate);
+    p.set(bytes); p[bytes.length] ^= 0x01; p[p.length - 1] ^= 0x80;
+    for (let o = 0; o < p.length; o += rate) {
+      for (let i = 0; i < rate / 8; i++) {
+        let v = 0n;
+        for (let k = 7; k >= 0; k--) v = (v << 8n) | BigInt(p[o + 8*i + k]);
+        s[i] ^= v;
+      }
+      f(s);
+    }
+    let out = "";
+    for (let i = 0; i < 4; i++) for (let k = 0; k < 8; k++) out += Number((s[i] >> BigInt(8*k)) & 0xffn).toString(16).padStart(2, "0");
+    return "0x" + out;
+  }
+  // Python json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+  function canonical(v) {
+    if (v === null || typeof v !== "object") {
+      if (typeof v === "number" && !Number.isInteger(v)) throw new Error("non-integer number: canonical form not guaranteed");
+      return JSON.stringify(v);
+    }
+    if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
+    const keys = Object.keys(v).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return "{" + keys.map(k => JSON.stringify(k) + ":" + canonical(v[k])).join(",") + "}";
+  }
+  function receiptHash(block) {
+    const body = {};
+    for (const k of Object.keys(block)) if (k !== "receipt_hash" && k !== "host_seal" && k !== "seal_scheme") body[k] = block[k];
+    return keccak256(new TextEncoder().encode(canonical(body)));
+  }
+  return { keccak256, canonical, receiptHash };
+})();
+
+  const PIN = "0x6f8d2C151424707f1C2a099230aCF2d72aA9A618";
+  const PROOF = "RRC/1.0 host key proof " + PIN + " 2026-09-30";
+  const ALLOWED = [/^RRC\/1\.0 host key proof 0x[0-9a-fA-F]{40} \d{4}-\d{2}-\d{2}$/, /^RRC\/1\.0 seal 0x[0-9a-f]{64}$/];
+  const $ = (id) => document.getElementById(id);
+  let account = null;
+  let mode = "proof";        // proof | bare | summary | invalid
+
+  $("pin").textContent = PIN;
+
+  function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+  function short(h) { return h && h.length > 20 ? h.slice(0, 10) + "\u2026" + h.slice(-8) : String(h); }
+  function section(title, items, fmt) {
+    if (!items || !items.length) return null;
+    const d = el("details"); const s = el("summary", title + " (" + items.length + ")"); d.appendChild(s);
+    const ul = el("ul");
+    for (const it of items) { const li = el("li"); const parts = fmt(it); li.appendChild(el("b", parts[0])); li.appendChild(document.createTextNode(" " + parts[1])); ul.appendChild(li); }
+    d.appendChild(ul); return d;
+  }
+  function renderSummary(block, computed) {
+    const d = block.state_delta || {};
+    const inv = d.invariants || [];
+    const term = inv.filter(i => i.tag === "TERMINAL"), rest = inv.filter(i => i.tag !== "TERMINAL");
+    const meta = $("sumMeta"); meta.textContent = "";
+    const zero = "0x" + "0".repeat(64);
+    const rows = [["Session", block.session_id], ["Time", block.timestamp],
+                  ["Follows", block.parent_receipt_hash === zero ? "nothing (first block of the chain)" : short(block.parent_receipt_hash)],
+                  ["Seal hash", short(computed)]];
+    for (const [k, v] of rows) { meta.appendChild(el("dt", k)); meta.appendChild(el("dd", String(v))); }
+    const body = $("sumBody"); body.textContent = "";
+    const parts = [
+      section("Verified claims (TERMINAL)", term, i => [i.id, i.claim]),
+      section("Other claims", rest, i => [i.id + " [" + i.tag + "]", i.claim]),
+      section("Decisions", d.decisions, x => [x.id, x.claim]),
+      section("Rejected paths", d.rejected, x => [x.id + " [" + x.reason_code + "]", x.path]),
+      section("Open items", d.open, x => [x.id, x.target + (x.blocker ? " \u2014 blocked by: " + x.blocker : "")]),
+      d.next ? section("Next step", [d.next], x => [x.id, x.why || ""]) : null,
+    ].filter(Boolean);
+    if (!parts.length) body.appendChild(el("p", "This block carries no claims, decisions or items."));
+    for (const p of parts) body.appendChild(p);
+  }
+
+  async function inflate(b64url) {
+    const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
+    const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (typeof DecompressionStream === "undefined") throw new Error("this browser cannot decompress the block");
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+    return await new Response(stream).text();
+  }
+
+  async function init() {
+    let frag = ""; let m = null;
+    try { frag = location.hash || ""; m = new URLSearchParams(location.search).get("m"); } catch (e) { /* ignore */ }
+    if (frag.startsWith("#b=")) {
+      $("sumCard").hidden = false;
+      $("sumCheck").innerHTML = '<span class="warn">Checking the block\u2026</span>';
+      $("msg").readOnly = true;
+      try {
+        const block = JSON.parse(await inflate(frag.slice(3)));
+        const computed = RRC.receiptHash(block);
+        const text = "RRC/1.0 seal " + computed;
+        $("msg").value = text;
+        renderSummary(block, computed);
+        const claimed = block.receipt_hash;
+        if ((claimed && claimed.toLowerCase() !== computed) || (m && m !== text)) {
+          mode = "invalid";
+          $("sumCheck").innerHTML = '<span class="bad">The block does not match the seal hash it came with. Do not sign; tell CODE.</span>';
+        } else {
+          mode = "summary";
+          $("sumCheck").innerHTML = '<span class="ok">Hash computed on this phone from the block below. The text you sign is built from it, so it seals exactly what is shown.</span>';
+        }
+      } catch (e) {
+        mode = "invalid"; $("msg").value = "";
+        $("sumCheck").innerHTML = '<span class="bad">Could not read the block in this link (' + String(e.message || e).replace(/</g, "&lt;") + '). Do not sign; tell CODE.</span>';
+      }
+    } else if (m) {
+      mode = /^RRC\/1\.0 seal /.test(m) ? "bare" : "proof";
+      $("msg").value = m;
+    } else {
+      $("msg").value = PROOF;
+    }
+    refresh();
+  }
+
+  function msgOk() {
+    const t = $("msg").value;
+    const ok = ALLOWED.some((re) => re.test(t));
+    let note = ok ? '<span class="ok">Recognised RRC text.</span>'
+                  : '<span class="bad">Not an RRC seal or proof text. Signing is disabled.</span>';
+    if (ok && mode === "bare") note += '<br><span class="warn">No block summary came with this link: you would be signing a bare hash. Ask CODE for a summary link.</span>';
+    $("msgMsg").innerHTML = note;
+    return ok;
+  }
+  function refresh() {
+    const pinned = account && account.toLowerCase() === PIN.toLowerCase();
+    $("acctMsg").innerHTML = !account ? "" : pinned ? '<span class="ok">This is the pinned RRC account.</span>'
+      : '<span class="bad">Wrong account. Switch MetaMask to the account named RRC.</span>';
+    const textOk = msgOk();
+    $("sign").disabled = !(pinned && textOk && mode !== "invalid");
+  }
+  $("msg").addEventListener("input", refresh);
+
+  $("connect").onclick = async () => {
+    if (!window.ethereum) { $("acctMsg").innerHTML = '<span class="bad">No wallet found. Open this page inside MetaMask.</span>'; return; }
+    try {
+      const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      account = accts[0] || null;
+      $("acct").textContent = account || "none";
+    } catch (e) { $("acctMsg").innerHTML = '<span class="bad">' + String(e.message || e).replace(/</g, "&lt;") + '</span>'; }
+    refresh();
+  };
+  if (window.ethereum && window.ethereum.on) {
+    window.ethereum.on("accountsChanged", (a) => { account = a[0] || null; $("acct").textContent = account || "none"; refresh(); });
+  }
+
+  $("sign").onclick = async () => {
+    if (!msgOk() || mode === "invalid") return;
+    const text = $("msg").value;
+    const hex = "0x" + Array.from(new TextEncoder().encode(text)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    try {
+      const sig = await window.ethereum.request({ method: "personal_sign", params: [hex, account] });
+      $("sig").value = sig;
+      $("copy").disabled = false;
+    } catch (e) { $("sig").value = "Not signed: " + (e.message || e); }
+  };
+  $("copy").onclick = async () => {
+    try { await navigator.clipboard.writeText($("sig").value); $("copy").textContent = "Copied"; }
+    catch (e) { $("sig").select(); }
+  };
+  init();
+</script>
+</body>
+</html>
