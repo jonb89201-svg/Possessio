@@ -338,5 +338,6 @@ function main(argv) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  process.exit(main(process.argv.slice(2)));
+  // exitCode, not exit(): exit() drops stdout still queued for a piped parent, cutting the summary line (CI #224).
+  process.exitCode = main(process.argv.slice(2));
 }
