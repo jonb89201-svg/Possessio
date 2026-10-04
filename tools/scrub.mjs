@@ -47,7 +47,7 @@
 //   node tools/scrub.mjs --check <paths...>   scan specific paths
 //   node tools/scrub.mjs --redact <file>      write a redacted copy to stdout
 //
-// Exit 0 clean, 1 on any BLOCK finding, 0 on WARN-only (warnings are printed).
+// Exit 0 clean, 1 on any BLOCK finding, 0 on WARN-only (warnings are printed), 2 on an explicit path it cannot read.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
@@ -293,7 +293,17 @@ function main(argv) {
   }
 
   let files;
-  if (explicit.length) files = explicit;
+  // Explicit paths are the caller's: resolve them against the cwd (path.join(ROOT, "/abs") would not), and treat a
+  // path that cannot be read as an error. Before this, an absolute, cwd-relative or missing path was silently
+  // skipped yet counted, so the summary read "1 files, 0 blocking" for a file never scanned.
+  if (explicit.length) {
+    files = [];
+    for (const e of explicit) {
+      const abs = path.resolve(e);
+      try { readFileSync(abs); } catch (err) { console.error(`scrub: cannot read ${e} (${err.code || err.message})`); return 2; }
+      files.push(path.relative(ROOT, abs));
+    }
+  }
   else if (staged) files = git(["diff", "--cached", "--name-only", "--diff-filter=ACM"]).split("\n").filter(Boolean);
   else files = git(["ls-files"]).split("\n").filter(Boolean);
 
