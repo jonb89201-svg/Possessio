@@ -21,6 +21,8 @@
 import assert from "node:assert";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import os from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { scan, redact } from "../../tools/scrub.mjs";
 
@@ -170,6 +172,29 @@ t("redact() rewrites the credential and leaves the published artifact alone", ()
   assert.ok(out.includes("<REDACTED:quicknode-url>"));
   assert.ok(out.includes("0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed"), "redaction ate a public address");
   assert.strictEqual(blocks(out).length, 0, "redacted output must itself pass the scan");
+});
+
+// ---------------------------------------------------------------------------
+// EXPLICIT PATHS. `--check <path>` must scan the file the caller named, however it is named, and must never report
+// "0 blocking" for a file it did not read. Fixture written to a temp dir at runtime; nothing key-shaped is committed.
+// ---------------------------------------------------------------------------
+t("--check <path> scans absolute and cwd-relative paths, and refuses a missing one", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "scrub-explicit-"));
+  try {
+    mkdirSync(path.join(dir, "sub"));
+    const keyFile = path.join(dir, "k.js");
+    writeFileSync(keyFile, `const COUNCIL_SEAT_KEY = "${EVM_KEY}";\n`);
+    const run = (cwd, arg) => {
+      try {
+        execFileSync("node", [path.join(ROOT, "tools/scrub.mjs"), "--check", arg],
+          { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        return 0;
+      } catch (e) { return e.status; }
+    };
+    assert.strictEqual(run(ROOT, keyFile), 1, "absolute path to a planted key must block");
+    assert.strictEqual(run(path.join(dir, "sub"), "../k.js"), 1, "cwd-relative path to a planted key must block");
+    assert.strictEqual(run(ROOT, path.join(dir, "does-not-exist.js")), 2, "a missing explicit path must be an error");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---------------------------------------------------------------------------
