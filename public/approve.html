@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approve Act</title>
+<!-- No external scripts, fonts or requests besides this site's own /api/act/<id>. The wallet does the signing.
+     What you approve is EIP-712 typed data whose title and summary are the text shown below; your wallet
+     displays those fields itself before you sign, so it is the wallet you check, not this page. -->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111; --mut:#5b6370; --line:#d9dde3; --ok:#137a3a; --bad:#b42318; --warn:#9a6700; --btn:#2457c5; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e8eaee; --mut:#9aa3b2; --line:#2a2f3a; --ok:#3fb26b; --bad:#f0716a; --warn:#d9a43a; --btn:#4a7be0; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:12px 0; }
+  .lab { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin-bottom:6px; }
+  .title { font-size:19px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:7px 0; border-top:1px solid var(--line); vertical-align:top; }
+  td:first-child { color:var(--mut); width:38%; padding-right:10px; }
+  .mono, pre, textarea { font:13px/1.4 ui-monospace, Menlo, Consolas, monospace; word-break:break-all; }
+  pre { white-space:pre-wrap; margin:0; }
+  textarea { width:100%; box-sizing:border-box; min-height:84px; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  button { width:100%; padding:14px; border:0; border-radius:10px; background:var(--btn); color:#fff; font-size:16px; margin-top:10px; }
+  button:disabled { opacity:.45; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Approve an act</h1>
+  <div id="state" class="card">Loading…</div>
+
+  <div id="what" class="card" hidden>
+    <div class="lab">What you are approving</div>
+    <div id="title" class="title"></div>
+    <table id="lines"></table>
+  </div>
+
+  <div id="terms" class="card" hidden>
+    <div class="lab">Terms</div>
+    <table>
+      <tr><td>Approver</td><td id="approver" class="mono"></td></tr>
+      <tr><td>Window closes</td><td id="deadline"></td></tr>
+      <tr><td>Chain</td><td id="chain"></td></tr>
+      <tr><td>Act id</td><td id="actid" class="mono"></td></tr>
+      <tr><td>Filed by</td><td id="seat"></td></tr>
+    </table>
+  </div>
+
+  <div id="wallet" class="card" hidden>
+    <div class="lab">Your wallet will show exactly this — check it there before you tap Sign</div>
+    <pre id="walletText"></pre>
+    <button id="connect">Connect wallet</button>
+    <div id="acctMsg"></div>
+    <button id="sign" disabled>Sign approval</button>
+    <div id="signMsg"></div>
+  </div>
+
+  <div id="done" class="card" hidden>
+    <div class="lab">Signature</div>
+    <textarea id="sig" readonly></textarea>
+    <div id="doneMsg"></div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const show = (id, on = true) => { $(id).hidden = !on; };
+const setMsg = (id, cls, text) => { const el = $(id); el.className = cls; el.textContent = text; };
+const CHAINS = { 1: "Ethereum", 8453: "Base", 84532: "Base Sepolia" };
+let rec = null, account = null;
+
+function render() {
+  const s = rec.status;
+  setMsg("state", s === "approved" ? "card ok" : s === "expired" ? "card bad" : "card",
+    s === "approved" ? "Approved — signed by " + rec.signer + " at " + new Date(rec.signed_ms).toLocaleString()
+    : s === "expired" ? "This request has expired. Nothing can be signed for it."
+    : "Pending your approval. Read every line below.");
+  $("title").textContent = rec.title;
+  const t = $("lines"); t.textContent = "";
+  for (const [label, value] of rec.lines) {
+    const tr = t.insertRow(); tr.insertCell().textContent = label; tr.insertCell().textContent = value;
+  }
+  $("approver").textContent = rec.approver;
+  const d = new Date(rec.validUntil * 1000);
+  $("deadline").textContent = d.toLocaleString() + " (" + Math.max(0, Math.round((rec.validUntil * 1000 - Date.now()) / 60000)) + " min from now)";
+  $("chain").textContent = (CHAINS[rec.chainId] || "chain") + " (" + rec.chainId + ")";
+  $("actid").textContent = rec.act;
+  $("seat").textContent = rec.seat;
+  $("walletText").textContent = "Title: " + rec.title + "\n\nSummary:\n" + rec.summary + "\n\nact: " + rec.act +
+    "\nvalidUntil: " + rec.validUntil;
+  show("what"); show("terms");
+  show("wallet", s === "pending");
+  if (rec.signature) { show("done"); $("sig").value = rec.signature; }
+}
+
+async function load() {
+  const act = (location.hash || "").slice(1).toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(act)) return setMsg("state", "card bad", "No act id in this link. Ask the seat for the approve link.");
+  try {
+    const r = await fetch("/api/act/" + act, { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok) return setMsg("state", "card bad", "Could not load this act: " + (j.error || r.status));
+    // The page re-checks what the server sent against the act it was asked for, and that the summary is the
+    // lines it shows (the summary is what gets signed).
+    const rebuilt = j.lines.map(([l, v]) => l + ": " + v).join("\n");
+    if (j.act !== act || rebuilt !== j.summary || j.typed_data.message.summary !== j.summary || j.typed_data.message.title !== j.title)
+      return setMsg("state", "card bad", "The server's record is inconsistent (act, summary or typed data differ). Do not sign; tell the seat.");
+    rec = j; render();
+  } catch (e) { setMsg("state", "card bad", "Could not load this act: " + (e.message || e)); }
+}
+
+$("connect").onclick = async () => {
+  if (!window.ethereum) return setMsg("acctMsg", "bad", "No wallet in this browser. Open this page in your wallet's built-in browser.");
+  try {
+    const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    account = accts[0];
+    const match = account && account.toLowerCase() === rec.approver.toLowerCase();
+    setMsg("acctMsg", match ? "ok" : "bad", match ? "Connected as the approver." : "Connected as " + account + ", which is not the approver. Switch accounts.");
+    $("sign").disabled = !match;
+  } catch (e) { setMsg("acctMsg", "bad", String(e.message || e)); }
+};
+
+$("sign").onclick = async () => {
+  $("sign").disabled = true;
+  try {
+    const want = "0x" + rec.chainId.toString(16);
+    const have = await window.ethereum.request({ method: "eth_chainId" });
+    if (have.toLowerCase() !== want) {
+      setMsg("signMsg", "warn", "Asking your wallet to switch to " + (CHAINS[rec.chainId] || rec.chainId) + "…");
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: want }] });
+    }
+    const td = rec.typed_data;
+    const payload = {
+      domain: td.domain,
+      types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }], ...td.types },
+      primaryType: td.primaryType,
+      message: td.message,
+    };
+    setMsg("signMsg", "warn", "Check the title and summary in your wallet, then sign.");
+    const sig = await window.ethereum.request({ method: "eth_signTypedData_v4", params: [account, JSON.stringify(payload)] });
+    $("sig").value = sig; show("done");
+    const r = await fetch("/api/act/" + rec.act, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signature: sig }) });
+    const j = await r.json();
+    if (r.ok) { rec = j; render(); setMsg("doneMsg", "ok", "Recorded. The server checked it recovers to the approver. The seat can now read it."); setMsg("signMsg", "", ""); }
+    else setMsg("doneMsg", "bad", "Signed, but the server refused it: " + (j.error || r.status) + ". Copy the signature above and send it to the seat.");
+  } catch (e) { setMsg("signMsg", "bad", "Not signed: " + (e.message || e)); $("sign").disabled = false; }
+};
+
+load();
+</script>
+</body>
+</html>
