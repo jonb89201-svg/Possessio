@@ -5,6 +5,7 @@
 // assets-only; the script only ever sees requests no asset matches.
 import { handleDrip } from "./drip-endpoint";
 import { recoverTypedDataAddress, getAddress, isAddress } from "viem";
+import { normaliseRequest, typedDataFor, checkSignature } from "./act-approval.mjs";
 
 interface Env {
   ASSETS: Fetcher;
@@ -383,7 +384,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.6.2";
+const MCP_VERSION = "0.7.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -423,6 +424,27 @@ const MCP_TOOLS = [
     name: "radar_health",
     description: "Radar feed health self-diagnosis — the same verdict the console's /api/radar/health serves: status, plain-language diagnosis, recommended action, per-stream ages, failing scans. Read-only; cross-organ (radar D1). May serve a briefly cached verdict, marked cached:true.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "act_request",
+    description: "File an act for a human to approve. Returns the possessio.io/approve.html link the approver opens: it shows the title and the label/value lines in plain words, and their wallet signs EIP-712 typed data carrying the same title and summary, so the wallet itself displays what is signed. The act id is opaque here. Requires the COUNCIL_MCP_TOKEN bearer. This server holds no signing key.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        seat: { type: "string", description: "Who is asking (your seat identity)" },
+        act: { type: "string", description: "The act's 32-byte id, 0x + 64 hex. One request per act." },
+        title: { type: "string", description: "One-line title the approver reads first (max 120 chars)" },
+        lines: { type: "array", description: "[[label, value], ...] describing the act, max 20 lines; no control characters; labels without ':'", items: { type: "array", items: { type: "string" } } },
+        approver: { type: "string", description: "The address whose signature counts" },
+        valid_until: { type: "number", description: "Unix seconds; the approval window closes then (max 7 days ahead)" },
+      },
+      required: ["seat", "act", "title", "lines", "approver", "valid_until"],
+    },
+  },
+  {
+    name: "act_status",
+    description: "Read an act request and whether it is approved: pending, approved (with the signature and the recovered signer) or expired. Read-only.",
+    inputSchema: { type: "object", properties: { act: { type: "string", description: "The act id, 0x + 64 hex" } }, required: ["act"] },
   },
   {
     name: "council_post",
@@ -575,8 +597,71 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     }
     return { ok: true, ts_ms: ts, seat, kind, ref, note: "sandbox message posted (unsigned — attributed by claim)" };
   }
+  if (name === "act_request") {
+    if (!authed)
+      throw new Error("act requests are token-gated: send Authorization: Bearer <COUNCIL_MCP_TOKEN>.");
+    const seat = String(args?.seat ?? "").trim().slice(0, 64);
+    if (!seat) throw new Error("seat is required");
+    const rec = normaliseRequest(args, Math.floor(Date.now() / 1000), Number(env.COUNCIL_CHAIN_ID || 8453));
+    try {
+      await env.COUNCIL_DB
+        .prepare("INSERT INTO act_approvals (act, created_ms, seat, title, lines_json, summary, approver, valid_until, chain_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)")
+        .bind(rec.act, Date.now(), seat, rec.title, JSON.stringify(rec.lines), rec.summary, rec.approver, rec.validUntil, rec.chainId).run();
+    } catch (e: any) {
+      const m = e?.message || String(e);
+      throw new Error(/UNIQUE|PRIMARY/i.test(m) ? "act " + rec.act + " is already filed (one request per act)" : "write failed: " + m);
+    }
+    return { ok: true, act: rec.act, approve_url: "https://possessio.io/approve.html#" + rec.act, summary: rec.summary,
+             approver: rec.approver, valid_until: rec.validUntil, chain_id: rec.chainId };
+  }
+  if (name === "act_status") {
+    const row = await actRow(env, String(args?.act ?? ""));
+    if (!row) throw new Error("no such act");
+    return actView(row);
+  }
   throw new Error("unknown tool: " + name);
 }
+// ── Act approval (worker/act-approval.mjs) ───────────────────────────────────
+// Requests and signatures only; the worker holds no key. A signature is stored
+// only after it recovers to the request's approver within the window.
+function actRec(row: any) {
+  return { act: row.act, title: row.title, lines: JSON.parse(row.lines_json), summary: row.summary,
+           approver: row.approver, validUntil: Number(row.valid_until), chainId: Number(row.chain_id) };
+}
+function actView(row: any) {
+  const rec = actRec(row);
+  const now = Math.floor(Date.now() / 1000);
+  const status = row.signature ? "approved" : now > rec.validUntil ? "expired" : "pending";
+  const td = typedDataFor(rec);
+  return { status, ...rec, seat: row.seat, created_ms: Number(row.created_ms),
+           signature: row.signature || null, signer: row.signer || null, signed_ms: row.signed_ms ? Number(row.signed_ms) : null,
+           typed_data: { ...td, message: { ...td.message, validUntil: String(rec.validUntil) } } };
+}
+async function actRow(env: Env, act: string): Promise<any> {
+  const a = act.toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(a)) throw new Error("act must be 0x + 64 hex characters");
+  return await env.COUNCIL_DB.prepare("SELECT * FROM act_approvals WHERE act = ?1 LIMIT 1").bind(a).first();
+}
+async function handleAct(request: Request, env: Env, act: string): Promise<Response> {
+  if (!env.COUNCIL_DB) return json({ error: "COUNCIL_DB_UNBOUND" }, 503);
+  let row: any;
+  try { row = await actRow(env, act); } catch (e: any) { return json({ error: e.message }, 400); }
+  if (!row) return json({ error: "no such act" }, 404);
+  if (request.method === "GET") return json(actView(row));
+  if (request.method !== "POST") return json({ error: "GET or POST" }, 405);
+  if (row.signature) return json({ error: "already approved", ...actView(row) }, 409);
+  let body: any;
+  try { body = await request.json(); } catch { return json({ error: "body must be JSON {signature}" }, 400); }
+  let signer: string;
+  try { signer = await checkSignature(actRec(row), body?.signature, Math.floor(Date.now() / 1000)); }
+  catch (e: any) { return json({ error: e.message }, 422); }
+  const res: any = await env.COUNCIL_DB
+    .prepare("UPDATE act_approvals SET signature = ?1, signed_ms = ?2, signer = ?3 WHERE act = ?4 AND signature IS NULL")
+    .bind(body.signature, Date.now(), signer, row.act).run();
+  if (!res?.meta?.changes) return json({ error: "already approved" }, 409);
+  return json(actView(await actRow(env, row.act)));
+}
+
 async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: MCP_CORS });
   const jrpc = (obj: unknown, status = 200) =>
@@ -663,6 +748,10 @@ export default {
 
     // Read-only council message board as a claude.ai custom connector (no key).
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return handleMcp(request, env);
+
+    // Act approval: read a request (GET) or submit the approver's signature (POST).
+    // Self-authenticating: a POST lands only if it recovers to the request's approver.
+    if (pathname.startsWith("/api/act/")) return handleAct(request, env, pathname.slice("/api/act/".length));
 
     // Pinned template artifact for the launch rail (LaunchRail D2). Holds the
     // Account template's creation code so the browser can hash it and compare
