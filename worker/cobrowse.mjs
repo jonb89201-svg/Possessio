@@ -4,8 +4,13 @@
 // Budget (Architect, 2026-10-10: "We have paid worker but keep the limit so we have no overages"). Workers Paid
 // includes 10 browser-hours a month and 10 concurrent browsers averaged monthly; beyond that is billed. This module
 // keeps every 31-day window under BUDGET.capSeconds (9 h, one hour of margin), runs at most BUDGET.maxConcurrent
-// browser at a time, closes any session at BUDGET.sessionMaxSeconds, and counts each session's idle tail
-// (keepAlive) as used. A 31-day rolling window bounds every billing period, which is at most 31 days.
+// browser at a time, closes any session at BUDGET.sessionMaxSeconds, and charges each session BUDGET.slackSeconds
+// on top of its recorded span. A 31-day rolling window bounds every billing period, which is at most 31 days.
+//
+// keepAlive is Browser Run's inactivity timeout: a session with no CDP command for that long is closed. The tools
+// connect per call, so while a human reads and signs a typing act the browser gets no commands at all. keepAlive and
+// the sweeper's idle limit must outlast the approval window (first live drive, 2026-10-10: at 60 s, both sessions
+// were ended by Browser Run 1-2 minutes after the type request, before anyone could sign).
 //
 // AI typing (Architect, same day: "Allow the ai typing tool" / "It will be gated by the mcp rrc hash signs"). The AI
 // may type, but each typing action must first be approved: browse_type_request files an act-approval request whose
@@ -23,8 +28,13 @@ export const BUDGET = {
   windowSeconds: 31 * 86400,     // rolling, so any billing period (<= 31 days) stays under the cap
   maxConcurrent: 1,              // of the 10 included (averaged monthly)
   sessionMaxSeconds: 15 * 60,    // any one session is closed at this age
-  keepAliveMs: 60_000,           // Browser Run's idle timeout; also charged once per session as its idle tail
-  idleCloseSeconds: 5 * 60,      // the sweeper closes a session with no tool call for this long
+  approvalSeconds: 9 * 60,       // a typing act must be signed within this long
+  keepAliveMs: 10 * 60_000,      // Browser Run's inactivity timeout (10 min: the close-reasons page's maximum; the binding allows 20)
+  idleCloseSeconds: 10 * 60,     // the sweeper closes a session with no tool call for this long
+  sweepSeconds: 60,              // the cron interval: how late the sweeper can notice an age or idle limit
+  slackSeconds: 60,              // charged per session on top of its recorded span (billing granularity). Every close path
+                                 // records closed_ms at or after the browser's real end; a close that fails silently could
+                                 // leave up to keepAlive uncounted, which the one-hour margin under the cap absorbs.
 };
 export const DEFAULT_APPROVER = "0x6f8d2C151424707f1C2a099230aCF2d72aA9A618"; // the RRC pin
 const TEXT_MAX = 200;           // one approval line holds the full text
@@ -48,7 +58,7 @@ export async function usage(db, nowMs) {
     const start = Math.max(Number(r.opened_ms), since);
     const end = r.closed_ms == null ? nowMs : Number(r.closed_ms);
     if (r.closed_ms == null) open++;
-    used += Math.max(0, end - start) / 1000 + BUDGET.keepAliveMs / 1000;
+    used += Math.max(0, end - start) / 1000 + BUDGET.slackSeconds;
   }
   const cap = BUDGET.capSeconds;
   return { used_s: Math.round(used), cap_s: cap, remaining_s: Math.max(0, Math.round(cap - used)), open_sessions: open,
@@ -60,7 +70,7 @@ export async function usage(db, nowMs) {
 export async function canOpen(db, nowMs) {
   const u = await usage(db, nowMs);
   if (u.open_sessions >= BUDGET.maxConcurrent) throw new Error(`budget: ${u.open_sessions} session(s) already open (max ${BUDGET.maxConcurrent}); close one first`);
-  const need = BUDGET.sessionMaxSeconds + BUDGET.keepAliveMs / 1000;
+  const need = BUDGET.sessionMaxSeconds + BUDGET.sweepSeconds + BUDGET.slackSeconds;   // the longest a session can run
   if (u.used_s + need > u.cap_s) throw new Error(`budget: ${u.used_s}s used of ${u.cap_s}s in the last ${u.window_days} days; a session may need ${need}s — refused to stay inside the included hours`);
   return u;
 }
@@ -297,7 +307,7 @@ export async function callTool(name, args, deps) {
         const nowS = Math.floor(now() / 1000);
         const rec = normaliseRequest({ act, title: "Co-Browse: type on " + new URL(field.url).host,
           lines: typingLines({ url: field.url, selector, text, submit: !!args?.submit, isPassword, sessionId: r.session_id, textHash }),
-          approver, valid_until: nowS + 600 }, nowS, deps.chainId || 8453);
+          approver, valid_until: nowS + BUDGET.approvalSeconds }, nowS, deps.chainId || 8453);
         await db.prepare("INSERT INTO act_approvals (act, created_ms, seat, title, lines_json, summary, approver, valid_until, chain_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)")
           .bind(rec.act, now(), seat, rec.title, JSON.stringify(rec.lines), rec.summary, rec.approver, rec.validUntil, rec.chainId).run();
         await logEvent(db, r.session_id, seat, "type_request", `${selector} act ${act}`, now());

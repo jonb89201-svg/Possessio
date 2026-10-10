@@ -387,7 +387,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.8.0";
+const MCP_VERSION = "0.8.1";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
