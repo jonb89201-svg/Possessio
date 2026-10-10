@@ -5,6 +5,10 @@
   // unchanged); only asset-misses reach the script - i.e. /api/*.
   "main": "worker/index.ts",
   "assets": { "directory": "./public", "binding": "ASSETS" },
+  // Co-Browse (worker/cobrowse.mjs): Cloudflare Browser Run, driven over /mcp. The budget in cobrowse.mjs keeps use
+  // inside the Workers Paid included hours; the cron sweeper closes any session past its age or idle limit.
+  "browser": { "binding": "BROWSER" },
+  "triggers": { "crons": ["* * * * *"] },
   "routes": [{ "pattern": "possessio.io", "custom_domain": true }],
   "kv_namespaces": [
     { "binding": "DRIP_LIMITS", "id": "49f2f2c858424605a9e90efc11e5e5f7" } // possessio-testnet-drip-limits (provisioned by Code Integrity seat)
