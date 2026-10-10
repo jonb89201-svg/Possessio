@@ -6,6 +6,7 @@
 import { handleDrip } from "./drip-endpoint";
 import { recoverTypedDataAddress, getAddress, isAddress } from "viem";
 import { normaliseRequest, typedDataFor, checkSignature } from "./act-approval.mjs";
+import { TOOLS as COBROWSE_TOOLS, TOOL_NAMES as COBROWSE_TOOL_NAMES, callTool as cobrowseCall, sweep as cobrowseSweep } from "./cobrowse.mjs";
 
 interface Env {
   ASSETS: Fetcher;
@@ -19,6 +20,8 @@ interface Env {
   COUNCIL_MCP_TOKEN?: string;  // optional bearer that gates /mcp (secret). Data is public; token is access control.
   COUNCIL_HOOK_ADDRESS?: string; // optional, for council_status readout
   COUNCIL_CHAIN_ID?: string;   // optional, defaults 8453
+  BROWSER?: any;               // Cloudflare Browser Run binding (Co-Browse, worker/cobrowse.mjs)
+  COBROWSE_APPROVER?: string;  // address whose act approvals gate AI typing; defaults to the RRC pin
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -384,7 +387,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.7.0";
+const MCP_VERSION = "0.8.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -446,6 +449,7 @@ const MCP_TOOLS = [
     description: "Read an act request and whether it is approved: pending, approved (with the signature and the recovered signer) or expired. Read-only.",
     inputSchema: { type: "object", properties: { act: { type: "string", description: "The act id, 0x + 64 hex" } }, required: ["act"] },
   },
+  ...COBROWSE_TOOLS,
   {
     name: "council_post",
     description: "Post a message to the council board so the seats can talk to each other. SANDBOX: the message is NOT cryptographically signed — it is attributed to the {seat} you claim, and the write is gated by the connector token (a shared write password, NOT a seat key). Requires the COUNCIL_MCP_TOKEN bearer.",
@@ -614,6 +618,12 @@ async function mcpCallTool(name: string, args: any, env: Env, authed: boolean): 
     return { ok: true, act: rec.act, approve_url: "https://possessio.io/approve.html#" + rec.act, summary: rec.summary,
              approver: rec.approver, valid_until: rec.validUntil, chain_id: rec.chainId };
   }
+  if (COBROWSE_TOOL_NAMES.has(name)) {
+    // Co-Browse spends included browser-hours, so every browse_* tool needs the connector token
+    if (!authed) throw new Error("Co-Browse tools are token-gated: send Authorization: Bearer <COUNCIL_MCP_TOKEN>.");
+    return await cobrowseCall(name, args, { browser: env.BROWSER, db: env.COUNCIL_DB, approver: env.COBROWSE_APPROVER,
+                                            chainId: Number(env.COUNCIL_CHAIN_ID || 8453) });
+  }
   if (name === "act_status") {
     const row = await actRow(env, String(args?.act ?? ""));
     if (!row) throw new Error("no such act");
@@ -743,6 +753,11 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
+  // Co-Browse sweeper (cron, every minute): closes sessions past their maximum age or idle, so no browser outlives
+  // the budget even if no agent calls back. Touches Browser Run only when the ledger shows a session open.
+  async scheduled(_controller: any, env: Env, ctx: any): Promise<void> {
+    if (env.BROWSER && env.COUNCIL_DB) ctx.waitUntil(cobrowseSweep(env.BROWSER, env.COUNCIL_DB, Date.now()));
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
