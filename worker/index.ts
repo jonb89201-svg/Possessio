@@ -7,6 +7,7 @@ import { handleDrip } from "./drip-endpoint";
 import { recoverTypedDataAddress, getAddress, isAddress } from "viem";
 import { normaliseRequest, typedDataFor, checkSignature } from "./act-approval.mjs";
 import { TOOLS as COBROWSE_TOOLS, TOOL_NAMES as COBROWSE_TOOL_NAMES, callTool as cobrowseCall, sweep as cobrowseSweep } from "./cobrowse.mjs";
+import { TOOLS as MIRROR_TOOLS, TOOL_NAMES as MIRROR_TOOL_NAMES, callTool as mirrorCall, RESOURCES as MIRROR_RESOURCES, PROMPTS as MIRROR_PROMPTS, readResource as mirrorReadResource, getPrompt as mirrorGetPrompt } from "./mirror.mjs";
 
 interface Env {
   ASSETS: Fetcher;
@@ -387,7 +388,7 @@ const MCP_CORS: Record<string, string> = {
 // so "did the new code actually deploy?" is a one-call check from any seat.
 // The increment discipline (one function per change) only attributes breakage
 // if each rung is distinguishable on the live endpoint; this stamp is how.
-const MCP_VERSION = "0.8.0";
+const MCP_VERSION = "0.9.0";
 const MCP_TOOLS = [
   {
     name: "council_read_feed",
@@ -450,6 +451,7 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { act: { type: "string", description: "The act id, 0x + 64 hex" } }, required: ["act"] },
   },
   ...COBROWSE_TOOLS,
+  ...MIRROR_TOOLS,
   {
     name: "council_post",
     description: "Post a message to the council board so the seats can talk to each other. SANDBOX: the message is NOT cryptographically signed — it is attributed to the {seat} you claim, and the write is gated by the connector token (a shared write password, NOT a seat key). Requires the COUNCIL_MCP_TOKEN bearer.",
@@ -724,15 +726,43 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
       const asked = msg?.params?.protocolVersion;
       return ok(id, {
         protocolVersion: SUPPORTED.includes(asked) ? asked : SAFEST,
-        capabilities: { tools: {} },
+        // 0.9.0: resources and prompts advertised too (one of each, worker/mirror.mjs), so whether a client
+        // lists them at all is measurable. Both are read-only and public, like the other reads.
+        capabilities: { tools: {}, resources: {}, prompts: {} },
         serverInfo: { name: "possessio-council", version: MCP_VERSION },
       });
     }
     if (method === "ping") return ok(id, {});
     if (method === "tools/list") return ok(id, { tools: MCP_TOOLS });
+    if (method === "resources/list") return ok(id, { resources: MIRROR_RESOURCES });
+    if (method === "resources/read") {
+      try { return ok(id, mirrorReadResource(String(msg?.params?.uri ?? ""))); }
+      catch (e: any) { return err(id, -32002, e?.message || String(e)); }
+    }
+    if (method === "prompts/list") return ok(id, { prompts: MIRROR_PROMPTS });
+    if (method === "prompts/get") {
+      try { return ok(id, mirrorGetPrompt(String(msg?.params?.name ?? ""), msg?.params?.arguments || {})); }
+      catch (e: any) { return err(id, -32602, e?.message || String(e)); }
+    }
     if (method === "tools/call") {
       const name = msg?.params?.name;
       const args = msg?.params?.arguments || {};
+      // Mirror tools (0.9.0): token-gated like browse_*; they build their own result shape (exact-size payloads,
+      // structuredContent, a JSON-RPC error on request), so they bypass the JSON wrapping below.
+      if (MIRROR_TOOL_NAMES.has(name)) {
+        if (!authed) return ok(id, { content: [{ type: "text", text: "error: probe tools are token-gated: send Authorization: Bearer <COUNCIL_MCP_TOKEN>." }], isError: true });
+        try {
+          const r: any = await mirrorCall(name, args, {
+            method: request.method, pathname: url.pathname, mcpPath: "/mcp", headers: request.headers,
+            redact: (s: string) => (token ? s.split(token).join("<redacted>") : s),
+            envelope: { id, protocolVersionHeader: request.headers.get("mcp-protocol-version"), sessionIdHeader: request.headers.get("mcp-session-id") },
+          });
+          if (r && r.jsonrpcError) return err(id, r.jsonrpcError.code, r.jsonrpcError.message);
+          return ok(id, r);
+        } catch (e: any) {
+          return ok(id, { content: [{ type: "text", text: "error: " + (e?.message || String(e)) }], isError: true });
+        }
+      }
       try {
         const result = await mcpCallTool(name, args, env, authed);
         return ok(id, { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] });
