@@ -153,8 +153,9 @@ test("ledger: every row carries factsSource, honest default caller-asserted (W-2
 });
 
 // ---- W-2 tripwire: the hot path must refuse when facts are not chain-read.
-// server.js opens a stdio transport on require, so this is a source-level
-// assertion; the guard's BEHAVIOR is unit-proven in test/facts.test.js.
+// server.js now exports buildServer() and opens stdio only when run directly;
+// this stays a source-level assertion so the regexes keep guarding the text
+// itself. The guard's BEHAVIOR is unit-proven in test/facts.test.js.
 // Original intent preserved: hot execution on caller-asserted facts is
 // forbidden. The check is now computed per call (facts.hotFactsGuard) -
 // a hardcodable FACTS_VERIFIED_ON_DEVICE constant must never reappear,
