@@ -61,7 +61,7 @@ test("unknown paths are 404 before the door", async () => {
 test("the door: no token, wrong token, raw token, query token → 401 and nothing runs", async () => {
   for (const [path, headers] of [
     ["/mcp", {}],
-    ["/mcp", { authorization: "Bearer wrong-token-wrong-token-wrong-token" }],
+    ["/mcp", { authorization: "Bearer wrong-token-wrong-token-wrong-token" }], // scrub-allow:bearer-token — a deliberately wrong token, not a credential
     ["/mcp", { authorization: TOKEN }],
     ["/mcp?token=" + TOKEN, {}],
     ["/mcp/" + TOKEN.slice(0, -1), {}],
