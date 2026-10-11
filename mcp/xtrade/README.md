@@ -53,6 +53,46 @@ key ceremony/dedicated wallet, only then `ALLOW_HOT`) remain open. The
 three Sec4 gates (`ALLOW_HOT=1` + signer + `confirm:true`) remain required
 and remain unwired.
 
+## Run — stdio (local clients: Claude Code, Claude Desktop)
+
+```
+node server.js      # build-mode; see mcp.json.example for wiring into a local MCP client
+npm test            # offline: constitution + facts + auth-gate + remote-transport tests
+```
+
+## Run — remote (Streamable HTTP; claude.ai on the web)
+
+claude.ai web can only reach a connector at a **URL**, not a spawned process, so a
+remote transport is required. `remote.js` serves the **same six tools** as
+`server.js` (both call `buildServer()`, so the constitution gates cannot be
+bypassed by picking a transport) over Streamable HTTP behind a bearer-token door
+(`auth.js`), one stateless server per request.
+
+```
+XTRADE_MCP_TOKEN=$(openssl rand -hex 32) node remote.js   # listens on 127.0.0.1:8788/mcp by default
+```
+
+Put TLS in front of it (a reverse proxy or tunnel) so the URL is `https://…`, then in
+claude.ai → **Settings → Connectors → Add custom connector**. If that UI offers a
+Request header field, set the URL to `https://your-host/mcp` and add
+`Authorization: Bearer <XTRADE_MCP_TOKEN>`. If it offers only a URL, use the
+capability-URL form `https://your-host/mcp/<XTRADE_MCP_TOKEN>` — the token then *is*
+the URL, so treat the URL as a password. A query-string token is never accepted.
+`remote.mcp.json.example` shows the header form.
+
+Env for `remote.js` (in addition to the stdio vars): `XTRADE_MCP_TOKEN` (**required**,
+≥32 chars — the server refuses to start without it), and optional `PORT`,
+`XTRADE_MCP_HOST`, `XTRADE_MCP_PATH`. `GET /healthz` is a liveness probe only and
+returns `{ok:true}` and nothing else.
+
+**What remote exposes, honestly.** Build-mode only: there is no signer
+(RULEBOOK Sec4 — the dedicated trading wallet does not exist, `execute_trade`
+refuses by construction). A caller who passes the door can spend this host's
+Solana RPC / Jupiter quota and append rows to this host's ledger file, nothing
+more. If a signer is ever wired, this transport becomes a URL to a key — that is
+the council-signer trade-off (`../council-signer/README.md`) and needs its own
+review before `ALLOW_HOT` is discussed.
+
 ## Env vars (facts layer - no secrets in the repo, env only)
 
 | Var | Meaning |
