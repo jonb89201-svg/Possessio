@@ -32,7 +32,7 @@ const out = []; const ok = (name, cond, detail = "") => out.push([name, !!cond, 
 
 let r = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "0" } });
 const caps = r.body.result.capabilities;
-ok("initialize: version 0.9.2, resources and prompts advertised", r.body.result.serverInfo.version === "0.9.2" && caps.resources && caps.prompts, JSON.stringify(r.body.result));
+ok("initialize: version 0.9.3, resources and prompts advertised", r.body.result.serverInfo.version === "0.9.3" && caps.resources && caps.prompts, JSON.stringify(r.body.result));
 r = await call("tools/list", {});
 const tools = r.body.result.tools;
 ok("tools/list: 22 tools, five of them probe_*", tools.length === 22 && tools.filter((t) => t.name.startsWith("probe_")).length === 5, String(tools.length));

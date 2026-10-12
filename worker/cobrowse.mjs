@@ -285,7 +285,9 @@ export async function callTool(name, args, deps) {
           if (type === "hidden") continue;
           if (fields.length >= ${FIELDS_MAX}) break;
           const name = e.getAttribute("name");
-          const f = {selector: e.id ? "#" + CSS.escape(e.id) : name ? e.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]" : e.tagName.toLowerCase(), type};
+          // Options in one group share a name, so a checkbox or radio is named by its value too: the selector clicks that option.
+          const opt = (type === "checkbox" || type === "radio") && e.hasAttribute("value") ? "[value=" + JSON.stringify(e.getAttribute("value")) + "]" : "";
+          const f = {selector: e.id ? "#" + CSS.escape(e.id) : name ? e.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]" + opt : e.tagName.toLowerCase(), type};
           if (type === "checkbox" || type === "radio") { f.checked = e.checked; if (e.value) f.value = e.value.slice(0, ${VALUE_MAX}); }
           else if (type === "password") f.value = e.value ? "••• (" + e.value.length + " characters)" : "";
           else f.value = String(e.value ?? "").slice(0, ${VALUE_MAX});

@@ -104,7 +104,8 @@ function makeDb() {
 const PAGES = {
   "/form": `<html><head><title>Form</title></head><body><h1>FORM-PAGE</h1>
     <form action="/done" method="get"><input id="q" name="q"><input id="pw" type="password" name="pw">
-    <input type="hidden" name="csrf" value="HIDDEN-TOKEN"><input type="checkbox" name="extra" value="cheese"><button type="submit">send</button></form>
+    <input type="hidden" name="csrf" value="HIDDEN-TOKEN"><input type="checkbox" name="extra" value="cheese">
+    <input type="radio" name="size" value="small"><input type="radio" name="size" value="large"><button type="submit">send</button></form>
     <button id="go" onclick="this.textContent='GO-CLICKED'">go</button></body></html>`,
   "/page2": `<html><head><title>Two</title></head><body><p>PAGE-TWO-TEXT</p></body></html>`,
 };
@@ -260,9 +261,17 @@ await test("browse_read shows field values: typed text, a password only as its l
   const by = Object.fromEntries((r.fields || []).map((f) => [f.selector, f]));
   if (by["#q"]?.value !== "slow signer") throw new Error("typed text not read back: " + JSON.stringify(r.fields));
   if (by["#pw"]?.value !== "••• (11 characters)") throw new Error("password: " + JSON.stringify(by["#pw"]));
-  if (by['input[name="extra"]']?.checked !== false || by['input[name="extra"]']?.value !== "cheese") throw new Error("checkbox: " + JSON.stringify(r.fields));
+  if (by['input[name="extra"][value="cheese"]']?.checked !== false) throw new Error("checkbox: " + JSON.stringify(r.fields));
   const all = JSON.stringify(r);
   if (all.includes("s3cret") || all.includes("HIDDEN-TOKEN")) throw new Error("browse_read leaked a password or a hidden input");
+});
+await test("each option in a group gets its own selector, and clicking it picks that option", async () => {
+  const sizes = (await call("browse_read", { session_id: S })).fields.filter((f) => f.type === "radio").map((f) => f.selector);
+  if (sizes.length !== 2 || new Set(sizes).size !== 2) throw new Error("radio selectors not distinct: " + JSON.stringify(sizes));
+  const large = sizes.find((x) => x.includes('"large"'));
+  await call("browse_click", { session_id: S, selector: large, seat: "CODE" });
+  const after = Object.fromEntries((await call("browse_read", { session_id: S })).fields.map((f) => [f.selector, f]));
+  if (after[large]?.checked !== true || after[sizes.find((x) => x !== large)]?.checked !== false) throw new Error("clicked the wrong option: " + JSON.stringify(after));
 });
 
 // ---- budget and lifecycle
