@@ -27,8 +27,12 @@ function findChrome() {
 const CHROME = findChrome();
 
 class FakeBrowserRun {
-  constructor() { this.s = new Map(); this.devtools = { newTarget: (id, url) => this.#newTarget(id, url) }; }
-  async acquire() {
+  // Like Browser Run, a session with no CDP command for keepAlive ms is closed ("Browser idle"), on the test clock.
+  constructor(now) { this.now = now; this.s = new Map(); this.devtools = { newTarget: (id, url) => this.#newTarget(id, url) }; }
+  #expireIdle() {
+    for (const [id, sess] of this.s) if (this.now() - sess.last > sess.keepAlive) this.closeSession(id);
+  }
+  async acquire({ keepAlive = 60_000 } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cobrowse-"));
     const proc = spawn(CHROME, ["--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu", "--remote-debugging-port=0",
                                 `--user-data-dir=${dir}`, "about:blank"], { stdio: "ignore" });
@@ -36,7 +40,7 @@ class FakeBrowserRun {
     for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) await new Promise((r) => setTimeout(r, 100));
     const port = Number(fs.readFileSync(portFile, "utf8").split("\n")[0]);
     const sessionId = randomUUID();
-    this.s.set(sessionId, { proc, port, dir });
+    this.s.set(sessionId, { proc, port, dir, keepAlive, last: this.now() });
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     return { sessionId, targets: targets.map((t) => ({ id: t.id, type: t.type, url: t.url })) };
   }
@@ -46,8 +50,10 @@ class FakeBrowserRun {
     return { id: t.id, type: t.type, url: t.url };
   }
   async connectSession(id, { targetId }) {
+    this.#expireIdle();
     const sess = this.s.get(id);
     if (!sess) throw new Error("no such session");
+    sess.last = this.now();
     return { webSocket: { fetch: async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${sess.port}/devtools/page/${targetId}`);
       await new Promise((res, rej) => { ws.addEventListener("open", res, { once: true }); ws.addEventListener("error", rej, { once: true }); });
@@ -58,7 +64,7 @@ class FakeBrowserRun {
   async getLiveView(id, { targetId, guardrails } = {}) {
     return { devtoolsFrontendUrl: `https://live.example.invalid/${id}/${targetId}${guardrails?.mode === "readonly" ? "?readonly" : ""}` };
   }
-  async listSessions() { return [...this.s.keys()].map((sessionId) => ({ sessionId })); }
+  async listSessions() { this.#expireIdle(); return [...this.s.keys()].map((sessionId) => ({ sessionId })); }
   async closeSession(id) {
     const sess = this.s.get(id);
     if (!sess) return "closed";
@@ -122,9 +128,9 @@ const throws = async (fn, re) => {
 };
 
 const approver = privateKeyToAccount(generatePrivateKey());
-const browser = new FakeBrowserRun();
-const db = makeDb();
 let clock = Date.now();
+const browser = new FakeBrowserRun(() => clock);
+const db = makeDb();
 const deps = { browser, db, now: () => clock, approver: approver.address, chainId: 8453 };
 const call = (name, args) => callTool(name, args, deps);
 
@@ -220,9 +226,23 @@ await test("an approval signed by someone other than the approver is refused", a
 await test("an approval past its window is refused", async () => {
   const r3 = await call("browse_type_request", { session_id: S, selector: "#q", text: "late", seat: "CODE" });
   await approve(r3.act);
-  const saved = clock; clock += 601_000;
+  const saved = clock; clock += BUDGET.approvalSeconds * 1000 + 1000;
   try { await throws(() => call("browse_type", { session_id: S, selector: "#q", text: "late", nonce: r3.nonce }), /window closed/); }
   finally { clock = saved; }
+});
+await test("the session outlives a slow signer: approved 30 s before the window closes, the sweeper has run, it still types", async () => {
+  // First live drive (2026-10-10): with a 60 s keepAlive, Browser Run ended both sessions before the human could sign.
+  if (!(BUDGET.approvalSeconds * 1000 < BUDGET.keepAliveMs && BUDGET.approvalSeconds < BUDGET.idleCloseSeconds && BUDGET.keepAliveMs <= 600_000))
+    throw new Error("approval window must close before keepAlive and the sweeper's idle limit, and keepAlive <= 10 min");
+  const r = await call("browse_type_request", { session_id: S, selector: "#q", text: "slow signer", seat: "CODE" });
+  const saved = clock; clock += (BUDGET.approvalSeconds - 30) * 1000;
+  try {
+    await approve(r.act);
+    const swept = await sweep(browser, db, clock);
+    if (swept.length !== 0) throw new Error("the sweeper closed the session while the act awaited a signature: " + JSON.stringify(swept));
+    const out = await call("browse_type", { session_id: S, selector: "#q", text: "slow signer", nonce: r.nonce, seat: "CODE" });
+    if (out.typed !== "slow signer") throw new Error(JSON.stringify(out));
+  } finally { clock = saved; }
 });
 await test("password fields: the approval shows ••• with the length, the log never holds the text, the field is filled", async () => {
   const r4 = await call("browse_type_request", { session_id: S, selector: "#pw", text: "s3cret-pass", seat: "CODE" });
@@ -247,13 +267,13 @@ await test("a session past its maximum age is closed before any further action",
   const row = db.raw.prepare("SELECT close_reason FROM cobrowse_sessions WHERE session_id = ?").get(S);
   if (row.close_reason !== "max age" || browser.s.has(S)) throw new Error(JSON.stringify(row));
 });
-await test("usage counts every session's span plus its keepAlive tail, over a rolling 31 days", async () => {
+await test("usage counts every session's span plus its slack, over a rolling 31 days", async () => {
   const t = clock;
   db.raw.prepare("DELETE FROM cobrowse_sessions").run();
   db.raw.prepare("INSERT INTO cobrowse_sessions VALUES ('a','t','x',?,?,?,'closed','u')").run(t - 3600_000, t - 3600_000, t - 3000_000);   // 600 s
   db.raw.prepare("INSERT INTO cobrowse_sessions VALUES ('old','t','x',?,?,?,'closed','u')").run(t - 40 * 86400_000, 0, t - 39 * 86400_000); // outside window
   const u = await usage(db, t);
-  if (u.used_s !== 600 + 60 || u.open_sessions !== 0) throw new Error(JSON.stringify(u));
+  if (u.used_s !== 600 + BUDGET.slackSeconds || u.open_sessions !== 0) throw new Error(JSON.stringify(u));
 });
 await test("a new session is refused when it could push the window past 9 hours", async () => {
   const t = clock;
