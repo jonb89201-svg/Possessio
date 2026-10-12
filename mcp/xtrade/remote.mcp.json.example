@@ -1,0 +1,13 @@
+{
+  "//": "REMOTE transport for xtrade. The OPERATOR self-hosts remote.js; Possessio never runs it. XTRADE_MCP_TOKEN gates the URL (host env only, >= 32 chars, never in this file). Build-mode only: no signer is wired (RULEBOOK Sec4).",
+  "//claude.ai-web": "In claude.ai -> Settings -> Connectors -> Add custom connector. If the UI offers a Request header field, set the URL to https://your-host/mcp and add `Authorization: Bearer <XTRADE_MCP_TOKEN>`. If it offers only a URL, use the capability-URL form https://your-host/mcp/<XTRADE_MCP_TOKEN> — the token then IS the URL, so share it like a password.",
+  "mcpServers": {
+    "xtrade-remote": {
+      "type": "http",
+      "url": "https://your-host.example/mcp",
+      "headers": {
+        "Authorization": "Bearer <the XTRADE_MCP_TOKEN you set on the host>"
+      }
+    }
+  }
+}

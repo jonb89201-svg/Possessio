@@ -41,7 +41,12 @@ const nowIso = () => new Date().toISOString();
 const day = () => nowIso().slice(0, 10);
 const text = (o) => ({ content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(o, null, 2) }] });
 
-const server = new McpServer({ name: "xtrade", version: "0.1.0" });
+// buildServer(): one fresh McpServer carrying the full tool surface. BOTH
+// transports call it — stdio (below, when this file is run directly) and
+// Streamable HTTP (remote.js, one server per request). The constitution gates
+// are registered inside it, so no transport can expose a tool without them.
+function buildServer() {
+const server = new McpServer({ name: "xtrade", version: "0.2.0" });
 
 // --- read-only: what is wired and enabled right now ---
 server.tool("list_supported", "Chains, backends, modes, and caps in force.", {}, async () => text({
@@ -290,4 +295,11 @@ function refuse(gate, reason, a, extra = {}) {
 }
 function safeAddr(a) { try { return typeof a.tokenAddress === "string" ? a.tokenAddress : null; } catch { return null; } }
 
-new StdioServerTransport && server.connect(new StdioServerTransport());
+return server;
+}
+
+// stdio ONLY when run directly (`node server.js`). Requiring this module — as
+// remote.js and the tests do — opens no transport and touches no stdio.
+if (require.main === module) buildServer().connect(new StdioServerTransport());
+
+module.exports = { buildServer };
