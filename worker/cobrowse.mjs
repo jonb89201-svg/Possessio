@@ -39,6 +39,8 @@ export const BUDGET = {
 export const DEFAULT_APPROVER = "0x6f8d2C151424707f1C2a099230aCF2d72aA9A618"; // the RRC pin
 const TEXT_MAX = 200;           // one approval line holds the full text
 const READ_MAX = 20_000;
+const FIELDS_MAX = 100;          // form controls listed by browse_read
+const VALUE_MAX = 500;           // characters of each field value
 
 // ------------------------------------------------------------------ walls
 export function checkUrl(url) {
@@ -185,7 +187,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { seat: { type: "string" }, url: { type: "string" } }, required: ["seat", "url"] } },
   { name: "browse_goto", description: "Navigate the session's page to a URL (http/https only). Token-gated.",
     inputSchema: { type: "object", properties: { session_id: { type: "string" }, url: { type: "string" }, seat: { type: "string" } }, required: ["session_id", "url"] } },
-  { name: "browse_read", description: "Read the page as the human sees it now: URL, title and visible text (up to 20,000 characters). Token-gated.",
+  { name: "browse_read", description: "Read the page as the human sees it now: URL, title, visible text (up to 20,000 characters) and the form fields with their current values (checked state for checkboxes and radios; a password shows only its length; hidden inputs are left out). Token-gated.",
     inputSchema: { type: "object", properties: { session_id: { type: "string" } }, required: ["session_id"] } },
   { name: "browse_click", description: "Click the first element matching a CSS selector. Token-gated.",
     inputSchema: { type: "object", properties: { session_id: { type: "string" }, selector: { type: "string" }, seat: { type: "string" } }, required: ["session_id", "selector"] } },
@@ -275,7 +277,22 @@ export async function callTool(name, args, deps) {
       return st;
     }
     if (name === "browse_read") {
-      const v = await evalJs(cdp, `({url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, ${READ_MAX})})`);
+      // innerText leaves out what is inside fields, so typing could not be checked from here (drive 3, 2026-10-12).
+      const v = await evalJs(cdp, `(() => {
+        const fields = [];
+        for (const e of document.querySelectorAll("input, textarea, select")) {
+          const type = String(e.type || e.tagName).toLowerCase();
+          if (type === "hidden") continue;
+          if (fields.length >= ${FIELDS_MAX}) break;
+          const name = e.getAttribute("name");
+          const f = {selector: e.id ? "#" + CSS.escape(e.id) : name ? e.tagName.toLowerCase() + "[name=" + JSON.stringify(name) + "]" : e.tagName.toLowerCase(), type};
+          if (type === "checkbox" || type === "radio") { f.checked = e.checked; if (e.value) f.value = e.value.slice(0, ${VALUE_MAX}); }
+          else if (type === "password") f.value = e.value ? "••• (" + e.value.length + " characters)" : "";
+          else f.value = String(e.value ?? "").slice(0, ${VALUE_MAX});
+          fields.push(f);
+        }
+        return {url: location.href, title: document.title, text: (document.body ? document.body.innerText : "").slice(0, ${READ_MAX}), fields};
+      })()`);
       return v;
     }
     if (name === "browse_click") {
