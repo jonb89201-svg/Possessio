@@ -2994,10 +2994,13 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   const CFG = {
     // Factory addresses per chain. NULL = preview mode (D1).
     FACTORY: {
-      // Base mainnet — LIVE 2026-07-28, CREATE3 anchor from deploy/anchor.json.
-      // feeSink = the Heart (0xE0612f38…), DEPLOYMENT_FEE = 50 USDC,
-      // templateCodehash pinned to the Account template. All verified on-chain.
-      8453:  "0x0DD06656cb9a38730a7177792C357E48cEdb49Bd",
+      // Base mainnet — NULL until the fixed factory is deployed (D1: preview).
+      // The 2026-07-28 factory 0x0DD06656cb9a38730a7177792C357E48cEdb49Bd pins
+      // templateCodehash 0x14357940…e39d: a PossessioPayments without the
+      // 2026-09-01 re-audit fixes (P-H1 limit-increase cap, P-H2 guardian-disable
+      // timelock). Its hash check passes, so leaving it here sells that contract
+      // for $50. Set the new factory here after the redeploy.
+      8453:  null,
       84532: null    // Base Sepolia  — set after testnet factory deploy
     },
     // USDC per chain. Verified against the repo canonical constant used
