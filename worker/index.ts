@@ -7,6 +7,7 @@ import { handleDrip } from "./drip-endpoint";
 import { recoverTypedDataAddress, getAddress, isAddress } from "viem";
 import { normaliseRequest, typedDataFor, checkSignature } from "./act-approval.mjs";
 import { TOOLS as COBROWSE_TOOLS, TOOL_NAMES as COBROWSE_TOOL_NAMES, callTool as cobrowseCall, sweep as cobrowseSweep } from "./cobrowse.mjs";
+import { handleVerified as deskVerified, handleTrending as deskTrending } from "./desk-feed.mjs";
 import { TOOLS as MIRROR_TOOLS, TOOL_NAMES as MIRROR_TOOL_NAMES, callTool as mirrorCall, RESOURCES as MIRROR_RESOURCES, PROMPTS as MIRROR_PROMPTS, readResource as mirrorReadResource, getPrompt as mirrorGetPrompt } from "./mirror.mjs";
 
 interface Env {
@@ -1010,6 +1011,16 @@ export default {
         }
       }
       return json({ error: "METHOD" }, 405);
+    }
+
+    // ── THE DESK'S TWO LISTS (2026-10-15) ────────────────────────────────
+    // The automatic Jupiter-verified feed and the hand-curated trending list.
+    // Trending writes pass the same allowlist as arming. See worker/desk-feed.mjs.
+    if (pathname === "/api/desk/verified") {
+      return deskVerified(request, env, { json, isMint: isBase58Pubkey });
+    }
+    if (pathname === "/api/desk/trending") {
+      return deskTrending(request, env, { json, isMint: isBase58Pubkey, verifyEd25519, deskArmingAllowed });
     }
 
     // ── THE DESK'S RULE LEDGER ───────────────────────────────────────────
