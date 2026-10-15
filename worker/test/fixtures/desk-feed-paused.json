@@ -1,0 +1,668 @@
+{
+ "live": [
+  {
+   "token_address": "A9eFt6Erx69qMUaMQVoSX3wcgvzowxyqArw47FWCpump",
+   "symbol": "L1",
+   "name": "Fixture token L1",
+   "qualified_ms": 1787597418132,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 53165,
+   "last_mc": 53165,
+   "peak_mc": 53165,
+   "strat_take": 0,
+   "gate_rug": null
+  },
+  {
+   "token_address": "Cq9omFwm3GUNTzps36xhrn9kKMLNghVh11oBa7bApump",
+   "symbol": "L2",
+   "name": "Fixture token L2",
+   "qualified_ms": 1787597297981,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 9636.13,
+   "last_mc": 9341.53,
+   "peak_mc": 9636.13,
+   "strat_take": 0,
+   "gate_rug": null
+  },
+  {
+   "token_address": "DCKmtFTGYJPPRoRRqfB2SU9C1ReTMtYZAKasSnXapump",
+   "symbol": "L3",
+   "name": "Fixture token L3",
+   "qualified_ms": 1787597237982,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 33515,
+   "last_mc": 39571.87,
+   "peak_mc": 39571.87,
+   "strat_take": 0,
+   "gate_rug": null
+  },
+  {
+   "token_address": "oMuJk5oQF7k3d3sU7Rvp8aWDzqpRymqW3PGgNr5pump",
+   "symbol": "L4",
+   "name": "Fixture token L4",
+   "qualified_ms": 1787596997980,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 2565492,
+   "last_mc": 2978610,
+   "peak_mc": 2978610,
+   "strat_take": 0,
+   "gate_rug": null
+  },
+  {
+   "token_address": "2H2Spgh62nbAted3EqauNpk2LFmxJ15NeNhVph29pump",
+   "symbol": "L5",
+   "name": "Fixture token L5",
+   "qualified_ms": 1787596937982,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 12037.67,
+   "last_mc": 10975.5,
+   "peak_mc": 16359,
+   "strat_take": 0,
+   "gate_rug": null
+  },
+  {
+   "token_address": "c5DF4WBnnPHgqjy3uU1WVjn1JEB8k5uFypc9Dnmpump",
+   "symbol": "L6",
+   "name": "Fixture token L6",
+   "qualified_ms": 1787596937982,
+   "last_tracked_ms": 1787597418132,
+   "entry_mc": 456469,
+   "last_mc": 495059,
+   "peak_mc": 495059,
+   "strat_take": 0,
+   "gate_rug": null
+  }
+ ],
+ "early": [
+  {
+   "token_address": "pEYyo323gVmYDid9FNong2Bfy9929UqGbRU8Ltdpump",
+   "symbol": "E1",
+   "name": "Fixture token E1",
+   "first_hit_ms": 1787597418132,
+   "first_hit_mc": 3714.5903235476653,
+   "peak_mc": null
+  },
+  {
+   "token_address": "HxShuyTyNZ5gZeuFqkmJiPuvxT7GRmg8DUoLRLvxpump",
+   "symbol": "E2",
+   "name": "Fixture token E2",
+   "first_hit_ms": 1787597418132,
+   "first_hit_mc": 3914.8882095729937,
+   "peak_mc": null
+  },
+  {
+   "token_address": "5HRJcPY1UpSFDJBWwyz7aKzcKVUwbSTRX2QDPJU5MJ3j",
+   "symbol": "E3",
+   "name": "Fixture token E3",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 5328.150605288892,
+   "peak_mc": 3671.72
+  },
+  {
+   "token_address": "HanHPDDX9hwHNyZ58zirktVTdrDWYTV6bBmqMhDFpump",
+   "symbol": "E4",
+   "name": "Fixture token E4",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 4739.366286044341,
+   "peak_mc": 5392.63
+  },
+  {
+   "token_address": "C4yhUYkCMY2zsZxNVfucJ89QiAQS9vC95u4319jkpump",
+   "symbol": "E5",
+   "name": "Fixture token E5",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 22027.39032934335,
+   "peak_mc": null
+  },
+  {
+   "token_address": "EB7UdZxJWhSVaJix33FSqSfZ2K7pgDzJuw6YciQHpump",
+   "symbol": "E6",
+   "name": "Fixture token E6",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 4000,
+   "peak_mc": 4000
+  },
+  {
+   "token_address": "CMsaVj4FCdtaCmCuEw2sfvGjshzMc1Ubi1n7ncYhpump",
+   "symbol": "E7",
+   "name": "Fixture token E7",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 4000,
+   "peak_mc": 4000
+  },
+  {
+   "token_address": "7eGV98ghsiPShJaSQxSGTfHyYZu9UCaLygPFv11rpump",
+   "symbol": "E8",
+   "name": "Fixture token E8",
+   "first_hit_ms": 1787597358082,
+   "first_hit_mc": 4000,
+   "peak_mc": 4000
+  },
+  {
+   "token_address": "BDQSWtgYffaFw2yPwvAVHjGWRqKgkQAqbA4qYp3rpump",
+   "symbol": "E9",
+   "name": "Fixture token E9",
+   "first_hit_ms": 1787597297981,
+   "first_hit_mc": 3510.861811950615,
+   "peak_mc": null
+  },
+  {
+   "token_address": "AS4S7tTtJzLUDNU4xNTZNFCEKzU1aoSXpuS9nvzspump",
+   "symbol": "E10",
+   "name": "Fixture token E10",
+   "first_hit_ms": 1787597297981,
+   "first_hit_mc": 4698.47,
+   "peak_mc": null
+  },
+  {
+   "token_address": "BMRT9wkjzKMN9Z81uFf64QzHeyEmtN9uWFEWnbegpump",
+   "symbol": "E11",
+   "name": "Fixture token E11",
+   "first_hit_ms": 1787597237982,
+   "first_hit_mc": 15665.426615516293,
+   "peak_mc": null
+  },
+  {
+   "token_address": "AvSC3ozoZe4jzNciquYCwLbXpZuorWqyAsNjoinHpump",
+   "symbol": "E12",
+   "name": "Fixture token E12",
+   "first_hit_ms": 1787597237982,
+   "first_hit_mc": 6536.726242689668,
+   "peak_mc": null
+  },
+  {
+   "token_address": "7qXhTC3PWy4JSXYVLQtgJXRWskJYXCr4E5guwKhGpump",
+   "symbol": "E13",
+   "name": "Fixture token E13",
+   "first_hit_ms": 1787597237982,
+   "first_hit_mc": 7894.240907115196,
+   "peak_mc": null
+  },
+  {
+   "token_address": "Hyci7kXZh1ndm2Cet7wSapiwz5VyLHJhNNcn4w89pump",
+   "symbol": "E14",
+   "name": "Fixture token E14",
+   "first_hit_ms": 1787597237982,
+   "first_hit_mc": 25721.22,
+   "peak_mc": null
+  },
+  {
+   "token_address": "8qEGc63nrTo7kFTrS1XCEm2WpYCU3CMM53cixLcDpump",
+   "symbol": "E15",
+   "name": "Fixture token E15",
+   "first_hit_ms": 1787597177986,
+   "first_hit_mc": 13370.45,
+   "peak_mc": null
+  },
+  {
+   "token_address": "BtvxERC8TyTaycmcc6KpD8WVox4cR1qyiLSUjcc2pump",
+   "symbol": "E16",
+   "name": "Fixture token E16",
+   "first_hit_ms": 1787597118262,
+   "first_hit_mc": 7051.306132340072,
+   "peak_mc": null
+  },
+  {
+   "token_address": "E7r4ptcTPdbh89nDZKdCQpZausLQjxoXGUaHQGi6pump",
+   "symbol": "E17",
+   "name": "Fixture token E17",
+   "first_hit_ms": 1787597118262,
+   "first_hit_mc": 4403.199723630169,
+   "peak_mc": 3574.02
+  },
+  {
+   "token_address": "3ehC8SVRNquaRow4pnC5ko1Z7SGszVrbPmz9BTQBpump",
+   "symbol": "E18",
+   "name": "Fixture token E18",
+   "first_hit_ms": 1787597057983,
+   "first_hit_mc": 6464.80437120945,
+   "peak_mc": null
+  },
+  {
+   "token_address": "Gtj7a8GUaX5G5MetoFptDybzDsGLUkPsBFYHXPLSpump",
+   "symbol": "E19",
+   "name": "Fixture token E19",
+   "first_hit_ms": 1787597057983,
+   "first_hit_mc": 4654.541809802133,
+   "peak_mc": null
+  },
+  {
+   "token_address": "7aDMd5kUbb6FHynsmuRegVpnijx7kPPJfbJvy2nmpump",
+   "symbol": "E20",
+   "name": "Fixture token E20",
+   "first_hit_ms": 1787597057983,
+   "first_hit_mc": 12774.001308744562,
+   "peak_mc": null
+  },
+  {
+   "token_address": "HWaooARoZ5nmbaxh5Vk8wxREYiEPELEwBQwvxURApump",
+   "symbol": "E21",
+   "name": "Fixture token E21",
+   "first_hit_ms": 1787597057983,
+   "first_hit_mc": 3991.2668617197082,
+   "peak_mc": null
+  },
+  {
+   "token_address": "A9eFt6Erx69qMUaMQVoSX3wcgvzowxyqArw47FWCpump",
+   "symbol": "E22",
+   "name": "Fixture token E22",
+   "first_hit_ms": 1787597057983,
+   "first_hit_mc": 12287.197526301938,
+   "peak_mc": null
+  }
+ ],
+ "recent": [
+  {
+   "token_address": "8qcnL1W4YozwZ2No5A4JxkZugqxanoAwdmA3kfcipump",
+   "symbol": "R1",
+   "name": "Fixture token R1",
+   "qualified_ms": 1787596757982,
+   "entry_mc": 10781.07,
+   "last_mc": 10953.58,
+   "peak_mc": 10953.58,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "22KPeWnocB6mdGrxucdMws5oxQgyycr4phBLFKU73zZY",
+   "symbol": "R2",
+   "name": "Fixture token R2",
+   "qualified_ms": 1787597118262,
+   "entry_mc": 1610491,
+   "last_mc": 571846,
+   "peak_mc": 1610491,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "8jdpL3LgVNSFp7PCiGij255bWU9bNZfRsNFvCFDbpump",
+   "symbol": "R3",
+   "name": "Fixture token R3",
+   "qualified_ms": 1787597237982,
+   "entry_mc": 7286,
+   "last_mc": 39493.8,
+   "peak_mc": 39493.8,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "gBc1EDydXxuP2S7iiyoZUAoWb8b4UeakMtEtH14pump",
+   "symbol": "R4",
+   "name": "Fixture token R4",
+   "qualified_ms": 1787596637981,
+   "entry_mc": 50930505,
+   "last_mc": 52217913,
+   "peak_mc": 52217913,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "ARSHsXEM9x2NpftpHSS78UVTZxoJ68YVgJyWfotgpump",
+   "symbol": "R5",
+   "name": "Fixture token R5",
+   "qualified_ms": 1787596637981,
+   "entry_mc": 8022.46,
+   "last_mc": 10141.32,
+   "peak_mc": 10141.32,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "9Hdbp2pjom9KJAckVsjD5q1QPfyfLDAmc15i48cCpump",
+   "symbol": "R6",
+   "name": "Fixture token R6",
+   "qualified_ms": 1787597118262,
+   "entry_mc": 3262,
+   "last_mc": 2539,
+   "peak_mc": 3262,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "3gun3ns3e4JBSpskLM9xbjGWWcjpX7PFFQFfrLDQpump",
+   "symbol": "R7",
+   "name": "Fixture token R7",
+   "qualified_ms": 1787597118262,
+   "entry_mc": 21898,
+   "last_mc": 38305,
+   "peak_mc": 38305,
+   "outcome": "target"
+  },
+  {
+   "token_address": "4FGjvcedRMfYEun8bbAgU3u9K2dhLrZE46VqZpGJpump",
+   "symbol": "R8",
+   "name": "Fixture token R8",
+   "qualified_ms": 1787597118262,
+   "entry_mc": 4757,
+   "last_mc": 4411,
+   "peak_mc": 4757,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "DLcHAkLhkxCm5zLpNP4JcWeqCWS1fJuYGuRiaRPGpump",
+   "symbol": "R9",
+   "name": "Fixture token R9",
+   "qualified_ms": 1787596457983,
+   "entry_mc": 453556,
+   "last_mc": 523810,
+   "peak_mc": 523810,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "mzyWCK2gK6LgtGUw6GmQA3pYanpXnSJsYNwpAw2pump",
+   "symbol": "R10",
+   "name": "Fixture token R10",
+   "qualified_ms": 1787596877983,
+   "entry_mc": 12990.04,
+   "last_mc": 5483.95,
+   "peak_mc": 12990.04,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "CyfNUiC7YYCr2UHCSaaJ84ym7WSHvjjJj6w5qP2Ppump",
+   "symbol": "R11",
+   "name": "Fixture token R11",
+   "qualified_ms": 1787596877983,
+   "entry_mc": 7793,
+   "last_mc": 11116,
+   "peak_mc": 11116,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "5Hm7tXPAP5XQRotGuZxt1cneKZNVDFZ1ECLGvhKfpump",
+   "symbol": "R12",
+   "name": "Fixture token R12",
+   "qualified_ms": 1787596221070,
+   "entry_mc": 11026.63,
+   "last_mc": 10405.99,
+   "peak_mc": 12771.86,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "M2ubazCxyswGhqXpJZtzrnc6uNLpeg8qgShS4HQpump",
+   "symbol": "R13",
+   "name": "Fixture token R13",
+   "qualified_ms": 1787596397981,
+   "entry_mc": 12612.9,
+   "last_mc": 28289.06,
+   "peak_mc": 28289.06,
+   "outcome": "target"
+  },
+  {
+   "token_address": "4TVsccCec1e1CUcBBfY5rArtj1oQeNieeDLCNa6wpump",
+   "symbol": "R14",
+   "name": "Fixture token R14",
+   "qualified_ms": 1787596457983,
+   "entry_mc": 98915,
+   "last_mc": 48182,
+   "peak_mc": 98915,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "8YVakcmrbeaZUJtpc1ifFjkUKNYLJvXXH6suuFSYpump",
+   "symbol": "R15",
+   "name": "Fixture token R15",
+   "qualified_ms": 1787596457983,
+   "entry_mc": 11353.6,
+   "last_mc": 18495.34,
+   "peak_mc": 18495.34,
+   "outcome": "target"
+  },
+  {
+   "token_address": "8ArsQxjaiceHMFoF4BuzpcGX5wyf9nYuxpPVGTZvpump",
+   "symbol": "R16",
+   "name": "Fixture token R16",
+   "qualified_ms": 1787596637981,
+   "entry_mc": 48766,
+   "last_mc": 28238,
+   "peak_mc": 48766,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "51Xsmcvk9PHifAh4o6MTzDNztWiEjX7fHDwXkDUzpump",
+   "symbol": "R17",
+   "name": "Fixture token R17",
+   "qualified_ms": 1787596097983,
+   "entry_mc": 9377.87,
+   "last_mc": 13280.7,
+   "peak_mc": 13280.7,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "J3oKfNotJx8MzQEzf4XfQBJX4JMbzJzKgaW6q43QdxS7",
+   "symbol": "R18",
+   "name": "Fixture token R18",
+   "qualified_ms": 1787595797983,
+   "entry_mc": 36611,
+   "last_mc": 39522.56,
+   "peak_mc": 39522.56,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "7vLciLKphmCQATWKvbQwyZFXtrcrNmtuPNYnBYRbpump",
+   "symbol": "R19",
+   "name": "Fixture token R19",
+   "qualified_ms": 1787595677984,
+   "entry_mc": 9969.35,
+   "last_mc": 6363.5,
+   "peak_mc": 11368.43,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "XbB6RhTYeyFzRZ9U7A3FnD2s7PmdT7V1skC2KYApump",
+   "symbol": "R20",
+   "name": "Fixture token R20",
+   "qualified_ms": 1787596221070,
+   "entry_mc": 101002,
+   "last_mc": 39502.02,
+   "peak_mc": 101002,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "H1we9DEET2xb631Ayai6djuTpVomhNCgzFW9igLgnTHz",
+   "symbol": "R21",
+   "name": "Fixture token R21",
+   "qualified_ms": 1787596157984,
+   "entry_mc": 8449,
+   "last_mc": 39514.35,
+   "peak_mc": 39514.35,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "XDfjbMMRdZKJePU94Co5Y4nc6Fcos3hg395kHV4pump",
+   "symbol": "R22",
+   "name": "Fixture token R22",
+   "qualified_ms": 1787595557982,
+   "entry_mc": 848238,
+   "last_mc": 896147,
+   "peak_mc": 896147,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "HfGAKBpjt7Vds9TyVeB6r9gQr2ztKoKvbWASLHFUpump",
+   "symbol": "R23",
+   "name": "Fixture token R23",
+   "qualified_ms": 1787596037986,
+   "entry_mc": 4978,
+   "last_mc": 4822,
+   "peak_mc": 4978,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "4eT6PespPWFiW6uqHxEuh6zoYKL3qV6yqtXyG6sipump",
+   "symbol": "R24",
+   "name": "Fixture token R24",
+   "qualified_ms": 1787595737981,
+   "entry_mc": 39859,
+   "last_mc": 2177,
+   "peak_mc": 39859,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "Bg5NvQGRHUdGPgoGiSkjhN3vLGqGi84Njmg15GCapump",
+   "symbol": "R25",
+   "name": "Fixture token R25",
+   "qualified_ms": 1787595917983,
+   "entry_mc": 44,
+   "last_mc": 923.7,
+   "peak_mc": 923.7,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "4uhR9U9LzZbEGknEokzW3QfixsMX4sLS1XiELfK3pump",
+   "symbol": "R26",
+   "name": "Fixture token R26",
+   "qualified_ms": 1787595377983,
+   "entry_mc": 496493,
+   "last_mc": 39333.56,
+   "peak_mc": 523880,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "GUSxHcjFJJGhEgv67c4njSwndPPz7D8UpRgfKNh4dUPo",
+   "symbol": "R27",
+   "name": "Fixture token R27",
+   "qualified_ms": 1787595737981,
+   "entry_mc": 553883,
+   "last_mc": 128536,
+   "peak_mc": 553883,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "56Fk6t5CvfG4DRXt8WTJ1W9SAhBHZXv6NL7rijHipump",
+   "symbol": "R28",
+   "name": "Fixture token R28",
+   "qualified_ms": 1787595618263,
+   "entry_mc": 9553.19,
+   "last_mc": 4912.1,
+   "peak_mc": 13414.58,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "Bw1fk7UmwP3YVDASaRLCJ6qdXtgnZroVVokBSDeWkCoV",
+   "symbol": "R29",
+   "name": "Fixture token R29",
+   "qualified_ms": 1787595557982,
+   "entry_mc": 25840,
+   "last_mc": 39432.17,
+   "peak_mc": 39432.17,
+   "outcome": "target"
+  },
+  {
+   "token_address": "PcbqcfBjoMQk5pVYPuXdbDDTfBqp4nih46z5Yjcpump",
+   "symbol": "R30",
+   "name": "Fixture token R30",
+   "qualified_ms": 1787595437983,
+   "entry_mc": 16886,
+   "last_mc": 39386.97,
+   "peak_mc": 39386.97,
+   "outcome": "target"
+  },
+  {
+   "token_address": "4Bb4Xst7mmfiJaiwma4KWug53q7imPzM51e4uLFKpump",
+   "symbol": "R31",
+   "name": "Fixture token R31",
+   "qualified_ms": 1787595437983,
+   "entry_mc": 9072.02,
+   "last_mc": 3056.73,
+   "peak_mc": 9072.02,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "BY1jXD5wqUcVUDX5bveKG4g7gJeDoQDRRoA9jitapump",
+   "symbol": "R32",
+   "name": "Fixture token R32",
+   "qualified_ms": 1787594837982,
+   "entry_mc": 13677249,
+   "last_mc": 15249162,
+   "peak_mc": 15249162,
+   "outcome": "timestop"
+  },
+  {
+   "token_address": "DneK1kTKjvgGMqckG5kW8mQJW7ZwEZW5kTNeCkXwpump",
+   "symbol": "R33",
+   "name": "Fixture token R33",
+   "qualified_ms": 1787595018564,
+   "entry_mc": 21633,
+   "last_mc": 39391.08,
+   "peak_mc": 39391.08,
+   "outcome": "target"
+  },
+  {
+   "token_address": "8iSygSheimfJ8uXhQbCNXBwKTQUNmcELsUwV55SUC1MQ",
+   "symbol": "R34",
+   "name": "Fixture token R34",
+   "qualified_ms": 1787595018564,
+   "entry_mc": 92112,
+   "last_mc": 39382.86,
+   "peak_mc": 92112,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "2u1nYWhBA2ScKcqCMLktPv5KonbvudAgqz7Na16rTqQs",
+   "symbol": "R35",
+   "name": "Fixture token R35",
+   "qualified_ms": 1787595018564,
+   "entry_mc": 4233,
+   "last_mc": 4233,
+   "peak_mc": 4233,
+   "outcome": "graduated"
+  },
+  {
+   "token_address": "JBN2qf6foM32bYTQtj1bz6AdHnHQaUebA13GwPgwpump",
+   "symbol": "R36",
+   "name": "Fixture token R36",
+   "qualified_ms": 1787594597982,
+   "entry_mc": 10515.83,
+   "last_mc": 16448.95,
+   "peak_mc": 16448.95,
+   "outcome": "target"
+  },
+  {
+   "token_address": "EgEF7Ni6q3bjCoywd4Rsumyt6eeXJDHb1PHjR9Pgpump",
+   "symbol": "R37",
+   "name": "Fixture token R37",
+   "qualified_ms": 1787594957982,
+   "entry_mc": 114112,
+   "last_mc": 450561,
+   "peak_mc": 450561,
+   "outcome": "target"
+  },
+  {
+   "token_address": "JAMbbAkeFC44rqU1jGQ9Qei7dxh3zG5HjmCjyc98pump",
+   "symbol": "R38",
+   "name": "Fixture token R38",
+   "qualified_ms": 1787594837982,
+   "entry_mc": 15916,
+   "last_mc": 39251.38,
+   "peak_mc": 39251.38,
+   "outcome": "target"
+  },
+  {
+   "token_address": "G9xWcizhsWJWrh832KaAqYPZZboXnoza2G395sfYpump",
+   "symbol": "R39",
+   "name": "Fixture token R39",
+   "qualified_ms": 1787594425354,
+   "entry_mc": 12300.6,
+   "last_mc": 4862.61,
+   "peak_mc": 14805.03,
+   "outcome": "stop"
+  },
+  {
+   "token_address": "ZPrVPCybKhzvd2zrFqdVJEs87ZB1n4pN5Q5Joumpump",
+   "symbol": "R40",
+   "name": "Fixture token R40",
+   "qualified_ms": 1787594717986,
+   "entry_mc": 16856,
+   "last_mc": 39193.86,
+   "peak_mc": 39193.86,
+   "outcome": "target"
+  }
+ ],
+ "listings": [],
+ "fastlane": [],
+ "notable": [],
+ "dexGraduates": [],
+ "newborn_rate": 0,
+ "btc": {
+  "now": 79047.71492776,
+  "at": 1787597418230,
+  "m15": 79047.71492776,
+  "h1": 79047.71492776
+ },
+ "_note": "Captured from https://possessio.io/api/radar/candidates on 2026-10-15 while the radar cron was paused (rows ~51 days old). Names/symbols replaced; only the fields the desk reads are kept."
+}

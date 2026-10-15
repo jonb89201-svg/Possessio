@@ -786,6 +786,51 @@ export async function cancelRule({ mint, ruleId = null }) {
   return r.json();
 }
 
+/// The exact TEXT the wallet signs to add a coin to, or delete it from, the
+/// desk's hand-curated trending list. MUST match trendingPreimage() in
+/// worker/desk-feed.mjs byte for byte; worker/test/desk-feed.test.mjs lifts
+/// both and compares the bytes. The worker accepts it only from a wallet on
+/// the arming allowlist, within 10 minutes of `ts`, and only once per nonce.
+function trendingMessage({ action, owner, mint, ts, nonce }) {
+  return (
+    "possessio.desk.trending.v1\n" +
+    `action:${action}\n` +
+    `owner:${owner}\n` +
+    `mint:${mint}\n` +
+    `ts:${ts}\n` +
+    `nonce:${nonce}`
+  );
+}
+
+/// Add a coin to the trending list, or delete it ("like an admin"). Signed by
+/// the connected wallet; the worker refuses anyone not on the allowlist.
+export async function trendingAction({ action, mint }) {
+  if (!provider) throw new Error("no Solana provider");
+  if (action !== "add" && action !== "remove") throw new Error("action must be add or remove");
+  const owner = pubkey.toBase58();
+  const ts = Date.now();
+  // Same alignment constraint as the rule and the cancel: grow the ASCII text
+  // to a multiple of 3 bytes so its url-safe base64 wire form has no ragged tail.
+  let nonce = `${ts}-${Math.random().toString(36).slice(2, 10)}`;
+  let text = trendingMessage({ action, owner, mint, ts, nonce });
+  while (text.length % 3 !== 0) {
+    nonce += "0";
+    text = trendingMessage({ action, owner, mint, ts, nonce });
+  }
+  const res = await provider.signMessage(toWireMessage(text));
+  const signature = sigToBase58(res?.signature ?? res);
+  const r = await fetch("/api/desk/trending", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action, owner, mint, ts, nonce, signature }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    try { window.deskReport?.("trending-rejected", (err.error || "no body") + " (" + r.status + ")", JSON.stringify({ action, mint })); } catch {}
+    throw new Error(err.error || `trending ${action} rejected (${r.status})`);
+  }
+  return r.json();
+}
+
 /// Price the exit the user is about to sign — the reverse of quoteBuy.
 export async function quoteSell({ mint, amountRaw, slippageBps = 300 }) {
   const q = await quote({

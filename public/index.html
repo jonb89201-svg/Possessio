@@ -3414,6 +3414,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     <p class="sub">Pick a network - opens DexScreener in a new tab.</p>
     <a class="mkts-choice base" href="https://dexscreener.com/base" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Base</span><span class="arw">DexScreener &#8599;</span></a>
     <a class="mkts-choice sol" href="https://dexscreener.com/solana" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Solana</span><span class="arw">DexScreener &#8599;</span></a>
+    <button class="mkts-choice" id="mkts-desk" type="button" style="cursor:pointer"><span class="net"><span class="nd" style="background:#3ddc84"></span>AI Assisted Trading</span><span class="arw">Trading desk &#8594;</span></button>
     <button class="mkts-cancel" id="mkts-cancel" type="button">Cancel</button>
   </div>
 </div>
@@ -3430,10 +3431,14 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   if(cancel)cancel.addEventListener("click",hide);
   modal.addEventListener("click",function(e){if(e.target===modal)hide();});
   Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
-  // AI Assisted Trading entry removed 2026-08-25 — the in-console desk is being
-  // spun out into its own standalone app. The #desk-view markup/JS below is left
-  // dormant (no entry point) pending extraction. To restore in-console: re-add
-  // the #mkts-desk button in the markets sheet and this listener.
+  // AI Assisted Trading entry: removed 2026-08-25 (cost freeze), restored
+  // 2026-10-15 (Architect) with keeper v2 live. Public is safe: watching is open,
+  // but opening a position is gated. Solana arming needs an allowlisted wallet
+  // (POSSESSIO_DESK_ALLOW here, enforced again by the worker's deskArmingAllowed
+  // on a signature-verified owner); the Base path needs a launched trader vault,
+  // and the launch rail is off.
+  var deskBtn=document.getElementById("mkts-desk");
+  if(deskBtn)deskBtn.addEventListener("click",function(){hide();if(window.Desk)window.Desk.open();});
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
 })();
 </script>
@@ -3510,6 +3515,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .dk-sl .rt{flex:1;text-align:right;color:var(--dink-faint);text-transform:none;letter-spacing:0;font-weight:600}
   /* coin rows */
   #desk-view .dk-list{display:flex;flex-direction:column;gap:8px}
+  /* Section labels inside the list (2026-10-15): your finds, the hand-picked
+     trending list, the verified feed, the radar. */
+  #desk-view .dk-grp{font-size:10.5px;font-weight:700;color:var(--dink-faint);letter-spacing:.05em;text-transform:uppercase;margin:6px 2px 0}
+  #desk-view .dk-grp:first-child{margin-top:0}
+  #desk-view .cabtn.trend{color:var(--dacc);border-color:color-mix(in srgb,var(--dacc) 40%,var(--dline))}
   #desk-view .coin{background:var(--card);border:1px solid var(--dline);border-radius:14px;padding:10px 11px;box-shadow:var(--dshadow);display:grid;grid-template-columns:1fr auto;gap:9px}
   /* grid-blowout guard: the 1fr info column must be allowed to shrink below its
      content (default is min-width:auto) so a long name ellipsizes instead of
@@ -3532,6 +3542,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   #desk-view .targets{display:flex;gap:5px}
   #desk-view .tbtn{font-family:var(--dmono);font-weight:700;font-size:12.5px;padding:8px 11px;border-radius:10px;border:1px solid var(--dline);background:var(--card);color:var(--dink);min-width:44px;text-align:center;transition:transform .08s,border-color .15s}
   #desk-view .tbtn:hover{border-color:var(--dacc);color:var(--dacc)}#desk-view .tbtn:active{transform:scale(.94)}
+  #desk-view .tbtn:disabled{opacity:.4;cursor:not-allowed;border-color:var(--dline);color:var(--dink-faint)}
   #desk-view .tbtn.t50{background:var(--dacc);color:var(--dacc-ink);border-color:var(--dacc)}
   #desk-view .tbtn.t25{background:var(--dacc-soft);color:var(--dacc);border-color:transparent}
   #desk-view .stopchip{font-family:var(--dmono);font-size:10px;font-weight:700;color:var(--stop);background:var(--stop-soft);padding:3px 8px;border-radius:999px}
@@ -3661,6 +3672,12 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   "use strict";
   var CHAIN_ID=8453; // the Base trader; Solana picks route to a Solana desk (not yet launched)
   var FEED_URL="/api/radar/candidates"; // same-origin proxy -> possessio-radar /radar/candidates
+  var FEED_STALE_MS=6*3600*1000;        // newer than this, or the radar is treated as paused
+  // THE DESK'S TWO LISTS (2026-10-15, Architect): an automatic VERIFIED feed and
+  // a hand-curated TRENDING list. The worker does the filtering and the gate
+  // (worker/desk-feed.mjs); this page renders and asks the wallet to sign.
+  var VERIFIED_URL="/api/desk/verified";  // Jupiter-verified Solana tokens, newest first
+  var TRENDING_URL="/api/desk/trending";  // GET the list; POST a wallet-signed add or delete
   var $=function(s){return document.querySelector(s);};
   var fmt=function(n){ if(n>=1e6) return "$"+(n/1e6).toFixed(2)+"M"; if(n>=1e3) return "$"+(n/1e3).toFixed(1)+"k"; return "$"+Number(n).toFixed(0); };
   var pctStr=function(a,b){ var p=(b-a)/a*100; return (p>=0?"+":"")+p.toFixed(0)+"%"; };
@@ -3679,8 +3696,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"WIBBIT",n:"Wibbit Wibbit",ch:"base",ico:"🐸",entry:11300,read:["slow","slow grind"]},
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
-  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
-    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[],fastRows:[],listRows:[]};
+  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"loading",
+    ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[],fastRows:[],listRows:[],
+    radar:"loading",verified:"loading",verifiedAt:0,verifiedRows:[],trending:"loading",trendRows:[],trendSet:{}};
   // POSITIONS SURVIVE THE SESSION (2026-08-10). They lived only in memory, so
   // closing the app forgot every trade — which, combined with a host wallet
   // that filters Token-2022, left a real position with no visible evidence
@@ -3734,7 +3752,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
 
   function makeCoin(){ var t=POOL[Math.floor(Math.random()*POOL.length)]; var drift=(Math.random()*1.9-0.5);
     var now=Math.max(t.entry*(1+drift),t.entry*0.15);
-    return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow"}; }
+    return {id:"demo-"+(++S.seq),s:t.s,n:t.n,ch:t.ch,ico:t.ico,entry:t.entry,now:now,peak:Math.max(now,t.entry),born:Date.now(),read:t.read,hot:t.read[0]==="go"||t.read[0]==="flow",grp:"demo"}; }
   // Map a real /radar/candidates `live` row into a desk coin. Radar screens
   // Solana/pump.fun, so ch="sol". Base coins come from the Base screen
   // (pollBase, GeckoTerminal) and merge into the same list. Every pick trades
@@ -3825,7 +3843,9 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       read:["fast","💵 on "+(c.graduation_dex||"dex")+" · paid profile"+(boost?(" · "+boost+" boost"):"")+" — not a pick"],
       hot:false, addr:c.token_address, dev:(c.creator||""), devN:null, graduate:true};
   }
-  function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000)); return s<90?s+"s":Math.round(s/60)+"m"; }
+  // Verified coins are days old, not minutes: "3300m" read as noise.
+  function ago(ms){ if(!ms)return "0s"; var s=Math.max(0,Math.round((Date.now()-ms)/1000));
+    return s<90?s+"s":s<5400?Math.round(s/60)+"m":s<86400?Math.round(s/3600)+"h":Math.round(s/86400)+"d"; }
   // The Sell button is a STANDARD control on every coin bar — greyed until a buy
   // activates it (you hold this coin). Matches the prototype: the whole button set
   // ships on the bar; only the state changes.
@@ -3961,9 +3981,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var icoHTML=c.img?('<img class="ico" src="'+esc(c.img)+'" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'ico\',textContent:\'🛰\'}))" style="object-fit:cover">'):('<div class="ico">'+c.ico+'</div>');
     return '<div class="coin'+(c.hot?' hot':'')+'"><div><div class="coin-top">'+
       icoHTML+'<div class="cn"><div class="s">'+esc(c.s)+' <span class="ctag '+c.ch+'">'+(c.ch==="sol"?"SOL":"BASE")+'</span></div><div class="n">'+esc(c.n)+'</div></div></div>'+
-      '<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
-      '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+'</span>'+
-      '<span class="age">'+ago(c.born)+'</span>'+
+      // An unpriced trending entry says so, instead of "$1 → $1 +0%".
+      (c.priced===false?'<div class="cmeta"><span class="age">no price yet · DexScreener hasn\'t priced it</span>':
+      ('<div class="cmeta"><span class="mc">'+fmt(c.entry)+' <span class="arw">→</span> '+fmt(c.now)+'</span>'+
+      '<span class="pct '+(up?"up":"down")+'">'+pctStr(c.entry,c.now)+(c.pct24?' 24h':'')+'</span>'+
+      '<span class="age">'+ago(c.born)+(c.pct24?' old':'')+'</span>'))+
       // The liq/mc ratio badge — graded 2026-08-10 against a month of
       // graduations: the ≥30% cohort produced 43 of 54 runners (+50% or
       // better); the thinner cohorts produced zero. Green when deep.
@@ -3974,6 +3996,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         '<button class="cabtn" data-ca="'+esc(c.addr)+'" onclick="Desk.copyCA(this)" title="Copy contract address">⧉ '+esc(shortAddr(c.addr))+'</button>'+
         '<a class="dexlink" href="https://dexscreener.com/'+(c.ch==="sol"?"solana":"base")+'/'+esc(c.addr)+'" target="_blank" rel="noopener">DexScreener ↗</a>'+
         (c.pinned?('<button class="cabtn" onclick="Desk.unpinMint(\''+esc(c.addr)+'\')" title="Remove your find from the screen">✕ unpin</button>'):'')+
+        curateHTML(c)+
       '</div>'):'')+
       (c.dev?('<div class="devline"><a href="https://solscan.io/account/'+esc(c.dev)+'" target="_blank" rel="noopener">👤 '+esc(shortAddr(c.dev))+'</a>'+(c.devN!=null?'<span class="devtag '+(c.devN===0?"fresh":"prior")+'">'+(c.devN===0?"fresh":c.devN+"× prior")+'</span>':'')+'</div>'):'')+
       '</div>'+
@@ -3981,7 +4004,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       // slider in the sheet with no floor and no cap (Architect ruling), so
       // preset chips would imply a menu of allowed values that does not exist.
       '<div class="act"><div class="targets">'+
-        '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">Buy · set target</button>'+
+        (c.priced===false?'<button class="tbtn t10" disabled title="No price yet">Buy · set target</button>':
+          '<button class="tbtn t10" onclick="Desk.pick(\''+qid+'\',1000)">Buy · set target</button>')+
       '</div><div class="act2">'+
         // Force Sell is the ONLY downside control there is, so it is on the
         // card itself, one tap from any position — never behind a sheet.
@@ -3990,11 +4014,25 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         (S.connected?'':'<span class="lockmini">🔒 connect to buy</span>')+
       '</div></div></div>';
   }
-  function renderList(){ $("#dk-list").innerHTML=S.live.map(coinHTML).join(""); $("#dk-livecount").textContent=S.live.length; }
+  // THE TRENDING LIST'S ADMIN BUTTONS (2026-10-15): only for a wallet that may
+  // arm the keeper (the same gate), and only on Solana coins. The worker checks
+  // the signature against the same allowlist, so a button revealed by hand
+  // does nothing.
+  function curateHTML(c){
+    if(c.ch!=="sol"||!c.addr||!canCurate())return "";
+    var a=esc(c.addr);
+    if(S.trendSet[c.addr]) return '<button class="cabtn trend" onclick="Desk.untrend(\''+a+'\')" title="Delete it from the trending list (your wallet signs)">🗑 delete</button>';
+    if(c.pinned) return '<button class="cabtn trend" onclick="Desk.trend(\''+a+'\')" title="Add it to the trending list (your wallet signs)">＋ Trending</button>';
+    return "";
+  }
+  // Section labels ride inside the list, in the order mergeRender chose.
+  var GRP_LABEL={pin:"🔎 Your finds",trending:"★ Trending · hand-picked",verified:"✓ Verified · newest Solana tokens",screen:"🛰 Radar screen",demo:"Preview · not real coins"};
+  function renderList(){ var html="", last=null;
+    S.live.forEach(function(c){ var g=c.grp||"screen"; if(g!==last){ last=g; html+='<div class="dk-grp">'+(GRP_LABEL[g]||"")+'</div>'; } html+=coinHTML(c); });
+    $("#dk-list").innerHTML=html; $("#dk-livecount").textContent=S.live.length; }
   // Preview-only drift/drop (fallback when the live feed is unreachable).
   function driftCoins(){ if(S.source!=="preview")return; S.live.forEach(function(c){ var mv=(Math.random()-0.47)*c.now*0.03; c.now=Math.max(c.now+mv,c.entry*0.1); c.peak=Math.max(c.peak,c.now); }); renderList(); }
-  function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList();
-    $("#dk-dropnote").textContent="preview · demo data · "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+  function dropCoin(){ if(S.source!=="preview")return; if(S.live.length>=7)S.live.pop(); S.live.unshift(makeCoin()); renderList(); noteFeed(); }
 
   /* THE BASE SCREEN — real Base-chain coins for the live Base desk. Source is
      GeckoTerminal's public per-network feeds (keyless, CORS-open): trending
@@ -4002,6 +4040,10 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      address, live mc, pool age) and merge into the same list as the radar's
      Solana rows. On any failure S.baseRows just stays empty — never faked. */
   var GT_BASE="https://api.geckoterminal.com/api/v2/networks/base";
+  // OFF since 2026-10-15 (Architect: the feed is "only most recent verified
+  // Solana tokens"). These are unverified Base pools; 🔎 Find still takes a
+  // Base address. Set true to bring the Base screen back.
+  var BASE_SCREEN=false;
   function mapGT(p,kind){ try{
     var a=p.attributes||{}; var rel=(p.relationships&&p.relationships.base_token&&p.relationships.base_token.data&&p.relationships.base_token.data.id)||"";
     var addr=rel.replace(/^base_/,""); if(!addr)return null;
@@ -4014,7 +4056,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       entry:entry, now:mc, peak:mc, born:a.pool_created_at?Date.parse(a.pool_created_at):Date.now(),
       read:read, hot:m5>2, addr:addr, dev:"", devN:null};
   }catch(e){ return null; } }
-  function pollBase(){
+  function pollBase(){ if(!BASE_SCREEN){ S.baseRows=[]; return; }
     var get=function(u){ return fetch(u,{cache:"no-store"}).then(function(r){return r.ok?r.json():{data:[]};}).catch(function(){return {data:[]};}); };
     Promise.all([get(GT_BASE+"/trending_pools?page=1"),get(GT_BASE+"/new_pools?page=1")]).then(function(res){
       var tr=((res[0]&&res[0].data)||[]).slice(0,8).map(function(p){return mapGT(p,"trend");});
@@ -4025,46 +4067,65 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       mergeRender();
     });
   }
-  // One list, two screens: radar's Solana rows lead (the entry window is the
-  // signal), Base rows interleave after every second Solana row. Real rows
-  // only — the demo pool appears solely when BOTH screens are unreachable.
-  // PINNED FINDS LEAD EVERYTHING: the coin the user pasted outranks the coins
-  // the radar picked, and a pinned mint is removed from the feed's own rows so
-  // it never renders twice.
+  // ORDER ON SCREEN (2026-10-15). PINNED FINDS LEAD EVERYTHING: the coin the
+  // user pasted outranks every list. Then the hand-picked TRENDING list, then
+  // the automatic VERIFIED feed, then whatever the radar screens. A coin shows
+  // once, in the first section that has it. Real rows only: the labelled demo
+  // appears solely when EVERY feed is unreachable.
   function mergeRender(){
-    var pin=S.pinned||[], seenPin={};
-    pin.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
-    var noPin=function(c){ return !seenPin[((c&&c.addr)||"").toLowerCase()]; };
-    // FAST LANE leads everything but the user's own pins: born-loaded stamps
+    var seen={};
+    var key=function(c){ return String((c&&(c.addr||c.id))||"").toLowerCase(); };
+    // take(rows, cap): the rows not already on screen, at most cap of them.
+    var take=function(rows,cap){ var out=[];
+      (rows||[]).forEach(function(c){ var k=key(c); if(out.length<cap&&k&&!seen[k]){ seen[k]=1; out.push(c); } });
+      return out; };
+    var head=take(S.pinned,3).concat(take(S.trendRows,50)).concat(take(S.verifiedRows,20));
+    // FAST LANE leads the radar's rows: born-loaded stamps
     // are minutes-old and the whole thesis is the FIRST minutes — by the time
     // the slower screens would rank them, the window is spent.
-    var fast=(S.fastRows||[]).filter(noPin).slice(0,4);
-    fast.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    var fast=take(S.fastRows,4);
     // Just-listed rows follow — the DEX-pair birth is the other hunting
     // window, and it outranks the radar's slower screens.
-    var lst=(S.listRows||[]).filter(noPin).slice(0,6);
-    lst.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    var lst=take(S.listRows,6);
     // NOTABLE, capped at 2 — deliberately small. This exists so a real
     // missed winner is provably visible somewhere, not to compete for the
     // list's real estate; fast+lst already learned that lesson once
     // (2026-08-15, the 90min fastlane window that squatted all 12 slots).
-    var notable=(S.notableRows||[]).filter(noPin).slice(0,2);
-    notable.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
+    var notable=take(S.notableRows,2);
     // DEX GRADUATES, capped at 2 — same "don't crowd the list" lesson as
     // notable. A separate signal (paid profile/boost, not peak MC), so it
     // gets its own small slice rather than being folded into notable's.
-    var grad=(S.graduateRows||[]).filter(noPin).slice(0,2);
-    grad.forEach(function(c){ seenPin[(c.addr||c.id).toLowerCase()]=1; });
-    var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
-    if(!sol.length&&!base.length){
-      if(pin.length||fast.length||lst.length||notable.length||grad.length){ S.live=pin.concat(fast).concat(lst).concat(notable).concat(grad); renderList(); return; }
-      if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
-    var out=pin.concat(fast).concat(lst).concat(notable).concat(grad), si=0, bi=0;
-    while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
+    var grad=take(S.graduateRows,2);
+    // Radar Solana rows, with any Base rows interleaved after every second
+    // one; the radar's sections share 15 slots, as before.
+    var sol=take(S.solRows,99), base=take(S.baseRows,99);
+    var out=head.concat(fast).concat(lst).concat(notable).concat(grad), cap=head.length+15, si=0, bi=0;
+    while(out.length<cap&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
       if(bi<base.length){ out.push(base[bi++]); }
     }
-    S.source="live"; S.live=out.slice(0,15+pin.length); renderList();
+    if(out.length){ S.source="live"; S.live=out.slice(0,cap); renderList(); return; }
+    if(S.radar==="down"&&S.verified==="down"&&S.trending==="down"){
+      if(S.source!=="preview"){ S.source="preview"; S.live=[]; }
+      if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
+      renderList(); return;
+    }
+    // A paused radar beside a reachable feed: an honest empty list, never demo.
+    S.source=(S.radar==="loading"&&S.verified==="loading")?"loading":"live"; S.live=[]; renderList();
+  }
+  // THE NOTE BESIDE THE LIST: where the rows came from, and what is down.
+  function noteFeed(){
+    var el=$("#dk-dropnote"); if(!el)return;
+    if(S.source==="preview"){ el.textContent="preview · demo data (live feed unreachable)"; return; }
+    var p=[], nT=(S.trendRows||[]).length, nV=(S.verifiedRows||[]).length;
+    if(nT) p.push(nT+" trending");
+    if(S.verified==="ok") p.push(nV+" verified");
+    else if(S.verified==="down") p.push(nV?"verified feed unreachable · showing the last list":"verified feed unreachable");
+    if(S.radar==="live") p.push("radar live · "+(S.inWindow||0)+" in the entry window");
+    else if(S.radar==="stale") p.push(S.live.length?"radar paused":"radar paused · newest coin is "+S.radarDays+" day"+(S.radarDays===1?"":"s")+" old");
+    else if(S.radar==="down") p.push("radar unreachable");
+    p.push(S.live.length?new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}):"use 🔎 Find to pick a coin by address");
+    el.textContent=p.join(" · ");
   }
 
   /* FIND BY MINT (2026-08-10, Architect request). Paste an address — or any
@@ -4097,11 +4158,11 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       var mc=Number(best.marketCap!=null?best.marketCap:best.fdv)||0;
       var row={id:addr,s:String(best.baseToken.symbol||"?").slice(0,10),n:String(best.baseToken.name||"").slice(0,24),
         ch:ch,ico:ch==="sol"?"🛰":"🔵",img:(best.info&&best.info.imageUrl)||null,entry:mc||1,now:mc||1,peak:mc||1,
-        born:Number(best.pairCreatedAt)||Date.now(),read:["flow","🔎 your find"],hot:false,addr:addr,dev:"",devN:null,pinned:true};
+        born:Number(best.pairCreatedAt)||Date.now(),read:["flow","🔎 your find"],hot:false,addr:addr,dev:"",devN:null,pinned:true,grp:"pin"};
       S.pinned=S.pinned.filter(function(x){return x.addr.toLowerCase()!==addr.toLowerCase();});
       S.pinned.unshift(row); S.pinned=S.pinned.slice(0,3); // three finds, newest first
       if(el)el.value="";
-      mergeRender(); toast("Pinned "+row.s+" to the top of the screen.");
+      mergeRender(); toast("Pinned "+row.s+" to the top of the screen."+(ch==="sol"&&canCurate()&&!S.trendSet[addr]?" Tap ＋ Trending to list it.":""));
     }catch(e){ toast("Lookup failed: "+String(e&&e.message||e).slice(0,80)); }
   }
   function unpinMint(addr){ S.pinned=S.pinned.filter(function(x){return x.addr.toLowerCase()!==String(addr).toLowerCase();}); mergeRender(); }
@@ -4125,6 +4186,93 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     }catch(e){}
   }
 
+  /* THE VERIFIED FEED (2026-10-15). The worker filters Jupiter's verified list
+     (Solana token programs only, no tokenized stocks, mint and freeze authority
+     off, a liquidity floor) and caches it, so a phone downloads 20 rows, not
+     5 MB. The card's % is the 24 h move: entry is the market cap 24 h ago. */
+  function mapVerified(t){
+    if(!t||typeof t.mint!=="string")return null;
+    var mc=Number(t.mcapUsd)||0, d=Number(t.change24hPct), has24=t.change24hPct!=null&&isFinite(d)&&d>-99;
+    var bits=["✓ verified"];
+    if(Number(t.holders)>0) bits.push(Number(t.holders).toLocaleString()+" holders");
+    if(t.top10Pct!=null&&isFinite(Number(t.top10Pct))) bits.push("top 10 hold "+Number(t.top10Pct)+"%");
+    return {id:String(t.mint), s:String(t.symbol||"?").slice(0,10), n:String(t.name||"").slice(0,24),
+      ch:"sol", ico:"✓", img:(typeof t.icon==="string"&&/^https:\/\//.test(t.icon))?t.icon:null,
+      entry:(has24?mc/(1+d/100):mc)||1, now:mc||1, peak:mc||1, pct24:has24,
+      born:Number(t.firstPoolAt)||Date.now(), read:["flow",bits.join(" · ")], hot:false,
+      addr:t.mint, dev:"", devN:null, liq:Number(t.liquidityUsd)||null, verified:true, grp:"verified"};
+  }
+  function pollVerified(){
+    return fetch(VERIFIED_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("verified "+r.status); return r.json(); })
+      .then(function(d){ S.verifiedRows=((d&&d.tokens)||[]).map(mapVerified).filter(Boolean); S.verified="ok"; S.verifiedAt=Date.now(); })
+      .catch(function(){ S.verified="down"; if(Date.now()-S.verifiedAt>30*60000) S.verifiedRows=[]; })   // the last good list stays 30 min
+      .then(function(){ mergeRender(); noteFeed(); rugWatch(); });
+  }
+  /* THE TRENDING LIST (2026-10-15): hand-picked, Solana only. The worker keeps
+     the mints; prices come from DexScreener like your finds, 30 per call. */
+  function trendRow(t,prev){
+    var r=prev||{id:String(t.mint), s:shortAddr(t.mint), n:"", ch:"sol", ico:"★", img:null, entry:1, now:1, peak:1,
+      born:0, read:["go","★ trending · hand-picked"], hot:false, addr:t.mint, dev:"", devN:null, trending:true, grp:"trending", priced:false};
+    r.addedAt=Number(t.addedAt)||0;
+    return r;
+  }
+  function pollTrending(){
+    return fetch(TRENDING_URL,{cache:"no-store"}).then(function(r){ if(!r.ok)throw new Error("trending "+r.status); return r.json(); })
+      .then(function(d){
+        var prev={}; (S.trendRows||[]).forEach(function(x){ prev[x.addr]=x; });
+        S.trendRows=((d&&d.trending)||[]).filter(function(t){ return t&&typeof t.mint==="string"; })
+          .map(function(t){ return trendRow(t,prev[t.mint]); });
+        S.trendSet={}; S.trendRows.forEach(function(x){ S.trendSet[x.addr]=1; });
+        S.trending="ok";
+      })
+      .catch(function(){ S.trending="down"; })   // the last list stays on screen
+      .then(function(){ mergeRender(); noteFeed(); return priceTrending(); });
+  }
+  async function priceTrending(){
+    var rows=(S.trendRows||[]).slice();
+    if(!rows.length)return;
+    for(var i=0;i<rows.length;i+=30){ var chunk=rows.slice(i,i+30);
+      try{
+        var r=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+chunk.map(function(x){return x.addr;}).join(","),{cache:"no-store"});
+        if(!r.ok)continue;
+        var d=await r.json();
+        chunk.forEach(function(row){
+          var best=bestPairFor(row.addr,(d&&d.pairs)||[]);
+          if(!best||best.chainId!=="solana")return;   // Solana only
+          var mc=Number(best.marketCap!=null?best.marketCap:best.fdv)||0; if(!(mc>0))return;
+          var pc=best.priceChange||{}, h24=Number(pc.h24), has24=pc.h24!=null&&isFinite(h24)&&h24>-99;
+          row.s=String((best.baseToken&&best.baseToken.symbol)||"?").slice(0,10); row.n=String((best.baseToken&&best.baseToken.name)||"").slice(0,24);
+          row.img=(best.info&&best.info.imageUrl)||row.img; row.now=mc; row.peak=Math.max(row.peak||0,mc);
+          row.entry=has24?mc/(1+h24/100):mc; row.pct24=has24;
+          row.liq=Number((best.liquidity&&best.liquidity.usd)||0)||null;
+          row.born=Number(best.pairCreatedAt)||row.born; row.priced=true;
+        });
+      }catch(e){}
+    }
+    mergeRender(); rugWatch();
+  }
+  // Editing the list takes a wallet that may arm the keeper: the same check as
+  // confirmOpenSolana, and the worker enforces it again on a verified signature.
+  function canCurate(){ var M=window.PossessioMiniApp; return !!(M&&M.ready&&M.address&&M.trendingAction&&deskArmingOpen(M.address)); }
+  var TREND_ERR={DESK_PRIVATE_BETA:"this wallet can't edit the trending list",TRENDING_FULL:"the list is full (50), delete one first",
+    STALE_SIGNATURE:"your device clock is more than 10 minutes off",SIGNER_MISMATCH:"the signature didn't verify",
+    NONCE_ALREADY_USED:"that signature was already used",BAD_MINT:"that isn't a Solana token address"};
+  var trendBusy=false;
+  async function trendAct(action,addr){
+    var M=window.PossessioMiniApp;
+    if(!canCurate()){ if(!M||!M.ready) toast("The trending list is edited from the Farcaster app."); else betaToast(); return; }
+    if(trendBusy)return; trendBusy=true;
+    toast(action==="add"?"Sign to add it to trending…":"Sign to delete it from trending…");
+    try{
+      var r=await M.trendingAction({action:action,mint:addr});
+      toast(action==="add"?(r&&r.added?"★ Added to trending.":"Already on the trending list."):(r&&r.removed?"🗑 Deleted from trending.":"It wasn't on the trending list."));
+      await pollTrending();
+    }catch(e){ var m=(e&&(e.shortMessage||e.message))||String(e);
+      if(/reject|denied|cancel/i.test(m)) toast("Cancelled — nothing signed.");
+      else toast("Trending "+(action==="add"?"add":"delete")+" failed: "+String(TREND_ERR[m]||m).slice(0,90)); }
+    finally{ trendBusy=false; }
+  }
+
   // THE LIVE WIRE — poll the real radar (same-origin proxy). Replaces the demo
   // pool with actual /radar/candidates `live` rows. On any failure, stays in (or
   // falls back to) preview — never a fabricated "live" state.
@@ -4145,6 +4293,25 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         S.notableRows=((d&&d.notable)||[]).map(mapNotable).filter(Boolean);
         S.graduateRows=((d&&d.dexGraduates)||[]).map(mapGraduate).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
+        // A PAUSED RADAR IS NOT A LIVE FEED (2026-10-15). The radar's cron has
+        // been paused since 2026-08-23, so the proxy keeps serving its last rows
+        // (measured 51 days old) as if current: "live · in the entry window"
+        // over dead coins. If the newest row is older than FEED_STALE_MS, show
+        // none of them, never fall back to demo coins, and say so; Find still
+        // works because it prices the pasted mint from DexScreener directly.
+        var newest=0;
+        live.concat(early).concat(recent).forEach(function(c){ var t=Number(c.last_tracked_ms||c.qualified_ms||c.first_hit_ms||0); if(t>newest)newest=t; });
+        if(d&&d.btc&&Number(d.btc.at)>newest) newest=Number(d.btc.at);
+        if(newest>0&&Date.now()-newest>FEED_STALE_MS){
+          // None of a paused radar's rows show, its side lists included.
+          S.radar="stale"; S.radarDays=Math.max(1,Math.round((Date.now()-newest)/86400000));
+          S.solRows=[]; S.listRows=[]; S.fastRows=[]; S.notableRows=[]; S.graduateRows=[]; S.inWindow=0;
+          mergeRender();
+          var rgS=$("#dk-regime"); if(rgS) rgS.innerHTML="● radar paused";
+          noteFeed();
+          return;
+        }
+        S.radar="live";
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
         S.solRows=rows; S.inWindow=live.length; mergeRender();
@@ -4152,16 +4319,14 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         var nb=(d.newborn_rate!=null)?d.newborn_rate:(d.newborn&&d.newborn.n60);
         var rg=$("#dk-regime"); if(rg&&nb!=null) rg.innerHTML="● "+(nb>=800?"active":"quiet")+" · "+nb+" newborns/hr";
         updateTide(d.btc); if(!S.wsLive&&d.btc&&d.btc.now){ setTick("BTC",Number(d.btc.now),true); }
-        var t=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-        var baseN=(S.baseRows||[]).length;
-        $("#dk-dropnote").textContent=S.live.length? ("live · "+live.length+" in the entry window · "+S.live.length+" on screen"+(baseN?(" · "+baseN+" Base"):"")+" · "+t)
-                                                   : "live · screen is quiet right now · "+t;
+        noteFeed();
       })
       .catch(function(){
-        S.solRows=[];
-        if((S.baseRows||[]).length){ mergeRender(); $("#dk-dropnote").textContent="live · Solana radar unreachable · Base screen live"; return; }
-        if(S.source!=="live"){ S.source="preview"; if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList();
-          $("#dk-dropnote").textContent="preview · demo data (live feed unreachable)"; }
+        S.radar="down"; S.solRows=[];
+        // Rows already on screen stay until the next merge. An empty screen asks
+        // mergeRender, which shows the labelled demo only if EVERY feed is down.
+        if(!S.live.length||S.source==="preview") mergeRender();
+        noteFeed();
       });
   }
 
@@ -4171,6 +4336,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
      execution leg (Base DEX at the rail, or the keeper's Solana route). */
   var pending=null;
   function pick(id,bps){ var c=S.live.filter(function(x){return x.id===id;})[0]; if(!c)return;
+    if(c.priced===false){ toast("No price yet, so it can't be bought here until DexScreener lists a Solana pair."); return; }
     // A Solana pick is self-custody: it needs the user's own Solana wallet
     // (Farcaster mini app), NOT the Base vault. Different gate entirely.
     if(c.ch==="sol"){
@@ -4560,7 +4726,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">'+(p.ch==="sol"?"SOL":"BASE")+'</span></div>'+
         '<div class="pmeta">in '+fmt(p.entry)+' · target +'+(p.bps/100)+'% · no stop</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
   function toast(m){ var t=$("#dk-toast"); t.textContent=m; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(function(){t.classList.remove("on");},2600); }
-  function setRegime(){ if(S.source==="live")return; var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
+  function setRegime(){ if(S.source!=="preview")return; /* only the labelled demo preview may invent a regime */ var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
 
   var VAULT_ABI=[
     "function trader() view returns (address)","function owner() view returns (address)",
@@ -4646,7 +4812,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     catch(e){ return false; }
   }
 
-  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000),setInterval(pollPositionPrices,15000),setInterval(renderPos,30000));
+  function startTimers(){ S.timers.push(setInterval(pollFeed,5000),setInterval(pollBase,30000),setInterval(driftPositions,650),setInterval(reconcilePositions,60000),setInterval(refreshPinned,30000),setInterval(pollPositionPrices,15000),setInterval(renderPos,30000),
+      setInterval(pollVerified,120000),setInterval(pollTrending,60000),setInterval(priceTrending,30000));
     pollPositionPrices();
     if(S.reduce)return; S.timers.push(setInterval(driftTicks,1100),setInterval(driftCoins,1400),setInterval(dropCoin,4200),setInterval(setRegime,9000)); }
   function stopTimers(){ S.timers.forEach(clearInterval); S.timers=[]; }
@@ -4655,25 +4822,28 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   document.addEventListener("visibilitychange", function(){
     if(document.hidden) return;
     var v=$("#desk-view"); if(!v||v.hidden) return;
-    pollFeed(); pollBase(); pollPositionPrices(); reconcilePositions();
+    pollFeed(); pollBase(); pollVerified(); pollTrending(); pollPositionPrices(); reconcilePositions();
   });
+  // The mini app finishes initialising after this script runs, and the admin
+  // buttons depend on it: re-render the list once it reports in.
+  window.addEventListener("possessio-miniapp", function(){ var v=$("#desk-view"); if(v&&!v.hidden) renderList(); });
 
   window.Desk={
     open:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=false; document.body.style.overflow="hidden";
       S.reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
       renderTicks(); setRegime();
-      if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
-      renderList(); renderPos();
+      renderList(); renderPos();   // no demo seed: demo coins appear only in the labelled "feed unreachable" preview
       // Stay connected: a vault verified in an earlier visit reconnects on
       // open — prefill the saved address and re-run the same verify path, so
       // the green state is re-earned from the chain, never assumed.
       try{ var savedVault=localStorage.getItem("possessio_desk_vault");
         if(savedVault&&!S.connected){ var ai=$("#dk-addr");
           if(ai&&(!ai.value||ai.value.trim().toLowerCase()===savedVault.toLowerCase())){ ai.value=savedVault; connect(); } } }catch(e){}
-      stopTimers(); startTimers(); pollFeed(); pollBase(); connectWS(); renderPos(); reconcilePositions(); },
+      stopTimers(); startTimers(); pollFeed(); pollBase(); pollVerified(); pollTrending(); connectWS(); renderPos(); reconcilePositions(); },
     close:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=true; document.body.style.overflow=""; stopTimers();
       if(S.ws){ try{ S.ws.onclose=null; S.ws.close(); }catch(e){} S.ws=null; } S.wsLive=false; },
     pick:pick, sell:sell, sellPos:sellPos, clearRule:clearRule, findMint:findMint, unpinMint:unpinMint,
+    trend:function(a){ return trendAct("add",a); }, untrend:function(a){ return trendAct("remove",a); },
     closeSheet:closeSheet, useMax: useMax, confirmOpen:confirmOpen, connect:connect,
     solanaSheet:solanaSheet, copyCA:copyCA, gain:gain
   };
@@ -4934,7 +5104,7 @@ try {
     }, {
       buyAndDelegate: M.buyAndDelegate, quoteBuy: M.quoteBuy, solBalance: M.solBalance,
       readDelegate: M.readDelegate, signRevoke: M.signRevoke,
-      sellNow: M.sellNow, cancelRule: M.cancelRule,
+      sellNow: M.sellNow, cancelRule: M.cancelRule, trendingAction: M.trendingAction,
     });
     if (window.dbgLog) window.dbgLog("[MINIAPP] " + JSON.stringify(res));
     if (!window.PossessioMiniApp.ready && window.deskReport) {
@@ -4944,6 +5114,7 @@ try {
     window.PossessioMiniApp.reason = String(e && e.message || e);
     if (window.dbgLog) window.dbgLog("[MINIAPP] unavailable: " + window.PossessioMiniApp.reason);
   }
+  try { window.dispatchEvent(new Event("possessio-miniapp")); } catch (e) {}
 </script>
 </body>
 </html>
