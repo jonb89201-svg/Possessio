@@ -37,7 +37,13 @@ class FakeBrowserRun {
     const proc = spawn(CHROME, ["--headless=new", "--no-sandbox", "--no-first-run", "--disable-gpu", "--remote-debugging-port=0",
                                 `--user-data-dir=${dir}`, "about:blank"], { stdio: "ignore" });
     const portFile = path.join(dir, "DevToolsActivePort");
-    for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) await new Promise((r) => setTimeout(r, 100));
+    // A cold Chrome on a CI runner can take more than 10 s to write this file. Twice (main after #191, and #193's
+    // first run) the first launch missed a 10 s wait, and every later test failed for want of a session. Wait up
+    // to 30 s; if it never comes, kill the process and say so, instead of a bare ENOENT and an orphaned Chrome.
+    let waited = 0;
+    for (; waited < 300 && !fs.existsSync(portFile); waited++) await new Promise((r) => setTimeout(r, 100));
+    if (!fs.existsSync(portFile)) { proc.kill("SIGKILL"); throw new Error(`Chrome did not start within 30 s (${CHROME})`); }
+    if (waited > 100) console.log(`  note: Chrome took ${(waited / 10).toFixed(1)} s to start`);
     const port = Number(fs.readFileSync(portFile, "utf8").split("\n")[0]);
     const sessionId = randomUUID();
     this.s.set(sessionId, { proc, port, dir, keepAlive, last: this.now() });
