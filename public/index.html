@@ -3414,6 +3414,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     <p class="sub">Pick a network - opens DexScreener in a new tab.</p>
     <a class="mkts-choice base" href="https://dexscreener.com/base" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Base</span><span class="arw">DexScreener &#8599;</span></a>
     <a class="mkts-choice sol" href="https://dexscreener.com/solana" target="_blank" rel="noopener noreferrer"><span class="net"><span class="nd"></span>Solana</span><span class="arw">DexScreener &#8599;</span></a>
+    <button class="mkts-choice" id="mkts-desk" type="button" style="cursor:pointer"><span class="net"><span class="nd" style="background:#3ddc84"></span>AI Assisted Trading</span><span class="arw">Trading desk &#8594;</span></button>
     <button class="mkts-cancel" id="mkts-cancel" type="button">Cancel</button>
   </div>
 </div>
@@ -3430,10 +3431,14 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   if(cancel)cancel.addEventListener("click",hide);
   modal.addEventListener("click",function(e){if(e.target===modal)hide();});
   Array.prototype.forEach.call(document.querySelectorAll(".mkts-choice"),function(a){a.addEventListener("click",hide);});
-  // AI Assisted Trading entry removed 2026-08-25 — the in-console desk is being
-  // spun out into its own standalone app. The #desk-view markup/JS below is left
-  // dormant (no entry point) pending extraction. To restore in-console: re-add
-  // the #mkts-desk button in the markets sheet and this listener.
+  // AI Assisted Trading entry: removed 2026-08-25 (cost freeze), restored
+  // 2026-10-15 (Architect) with keeper v2 live. Public is safe: watching is open,
+  // but opening a position is gated. Solana arming needs an allowlisted wallet
+  // (POSSESSIO_DESK_ALLOW here, enforced again by the worker's deskArmingAllowed
+  // on a signature-verified owner); the Base path needs a launched trader vault,
+  // and the launch rail is off.
+  var deskBtn=document.getElementById("mkts-desk");
+  if(deskBtn)deskBtn.addEventListener("click",function(){hide();if(window.Desk)window.Desk.open();});
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!modal.hidden)hide();});
 })();
 </script>
@@ -3661,6 +3666,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
   "use strict";
   var CHAIN_ID=8453; // the Base trader; Solana picks route to a Solana desk (not yet launched)
   var FEED_URL="/api/radar/candidates"; // same-origin proxy -> possessio-radar /radar/candidates
+  var FEED_STALE_MS=6*3600*1000;        // newer than this, or the radar is treated as paused
   var $=function(s){return document.querySelector(s);};
   var fmt=function(n){ if(n>=1e6) return "$"+(n/1e6).toFixed(2)+"M"; if(n>=1e3) return "$"+(n/1e3).toFixed(1)+"k"; return "$"+Number(n).toFixed(0); };
   var pctStr=function(a,b){ var p=(b-a)/a*100; return (p>=0?"+":"")+p.toFixed(0)+"%"; };
@@ -3679,7 +3685,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     {s:"WIBBIT",n:"Wibbit Wibbit",ch:"base",ico:"🐸",entry:11300,read:["slow","slow grind"]},
     {s:"TREGUNA",n:"treguna mekoides",ch:"sol",ico:"🪄",entry:3500,read:["go","◆ GO"]}
   ];
-  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"preview",
+  var S={live:[],seq:0,positions:[],connected:false,trader:"",reduce:false,timers:[],source:"loading",
     ws:null,wsLive:false,wsRetry:0,vault:null,wallet:"",exits:{},solRows:[],baseRows:[],pinned:[],fastRows:[],listRows:[]};
   // POSITIONS SURVIVE THE SESSION (2026-08-10). They lived only in memory, so
   // closing the app forgot every trade — which, combined with a host wallet
@@ -4058,7 +4064,8 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     var sol=(S.solRows||[]).filter(noPin), base=(S.baseRows||[]).filter(noPin);
     if(!sol.length&&!base.length){
       if(pin.length||fast.length||lst.length||notable.length||grad.length){ S.live=pin.concat(fast).concat(lst).concat(notable).concat(grad); renderList(); return; }
-      if(S.source!=="live"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
+      if(S.source==="stale"){ S.live=[]; renderList(); return; } // honest empty list, never demo
+      if(S.source==="preview"){ if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); } renderList(); } return; }
     var out=pin.concat(fast).concat(lst).concat(notable).concat(grad), si=0, bi=0;
     while(out.length<15+pin.length&&(si<sol.length||bi<base.length)){
       if(si<sol.length){ out.push(sol[si++]); if(si<sol.length){ out.push(sol[si++]); } }
@@ -4145,6 +4152,23 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
         S.notableRows=((d&&d.notable)||[]).map(mapNotable).filter(Boolean);
         S.graduateRows=((d&&d.dexGraduates)||[]).map(mapGraduate).filter(Boolean);
         var live=(d&&d.live)||[], early=(d&&d.early)||[], recent=(d&&d.recent)||[], seen={}, picks=[];
+        // A PAUSED RADAR IS NOT A LIVE FEED (2026-10-15). The radar's cron has
+        // been paused since 2026-08-23, so the proxy keeps serving its last rows
+        // (measured 51 days old) as if current: "live · in the entry window"
+        // over dead coins. If the newest row is older than FEED_STALE_MS, show
+        // none of them, never fall back to demo coins, and say so; Find still
+        // works because it prices the pasted mint from DexScreener directly.
+        var newest=0;
+        live.concat(early).concat(recent).forEach(function(c){ var t=Number(c.last_tracked_ms||c.qualified_ms||c.first_hit_ms||0); if(t>newest)newest=t; });
+        if(d&&d.btc&&Number(d.btc.at)>newest) newest=Number(d.btc.at);
+        if(newest>0&&Date.now()-newest>FEED_STALE_MS){
+          S.feedStale=true; S.solRows=[]; S.inWindow=0; S.source="stale"; mergeRender();
+          var rgS=$("#dk-regime"); if(rgS) rgS.innerHTML="● radar paused";
+          var days=Math.max(1,Math.round((Date.now()-newest)/86400000));
+          $("#dk-dropnote").textContent="radar paused · newest coin is "+days+" day"+(days===1?"":"s")+" old · use 🔎 Find to pick a coin by address";
+          return;
+        }
+        S.feedStale=false;
         live.concat(early).concat(recent).forEach(function(c){ var a=(c.token_address||c.symbol||"").toLowerCase(); if(a&&!seen[a]){ seen[a]=1; picks.push(c); } });
         var rows=picks.slice(0,15).map(mapRow);
         S.solRows=rows; S.inWindow=live.length; mergeRender();
@@ -4560,7 +4584,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
       return '<div class="prow'+(armed?'':' done')+'"><div><div class="psym">'+esc(p.s)+' <span class="ctag '+p.ch+'" style="vertical-align:1px">'+(p.ch==="sol"?"SOL":"BASE")+'</span></div>'+
         '<div class="pmeta">in '+fmt(p.entry)+' · target +'+(p.bps/100)+'% · no stop</div></div><div class="ptarget">'+mid+'</div><div class="pstate '+stCls+'">'+stTxt+'</div></div>'; }).join(""); }
   function toast(m){ var t=$("#dk-toast"); t.textContent=m; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(function(){t.classList.remove("on");},2600); }
-  function setRegime(){ if(S.source==="live")return; var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
+  function setRegime(){ if(S.source!=="preview")return; /* only the labelled demo preview may invent a regime */ var el=$("#dk-regime"); if(el) el.innerHTML="● "+(chains[0].d24>=0?"risk-on":"risk-off")+" · "+Math.round(900+Math.random()*300)+" newborns/hr"; }
 
   var VAULT_ABI=[
     "function trader() view returns (address)","function owner() view returns (address)",
@@ -4662,8 +4686,7 @@ if (__lrLaunch) __lrLaunch.addEventListener("click",function(){LaunchRail.askEnv
     open:function(){ var v=$("#desk-view"); if(!v)return; v.hidden=false; document.body.style.overflow="hidden";
       S.reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
       renderTicks(); setRegime();
-      if(!S.live.length){ for(var i=0;i<4;i++)S.live.push(makeCoin()); }
-      renderList(); renderPos();
+      renderList(); renderPos();   // no demo seed: demo coins appear only in the labelled "feed unreachable" preview
       // Stay connected: a vault verified in an earlier visit reconnects on
       // open — prefill the saved address and re-run the same verify path, so
       // the green state is re-earned from the chain, never assumed.
