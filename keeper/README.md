@@ -30,19 +30,61 @@ Two more, from operating it:
 - An unreadable account fails **closed**. An RPC hiccup stands one position down;
   it does not crash the loop and leave the others unwatched.
 
+## v2 (2026-10-15): push, not poll
+
+v1 had no way to retire a rule. Its loop re-read the chain for every rule every 5 seconds, forever. On
+2026-08-25 we measured about 245M reads in three weeks: the whole Solana RPC bill, spent re-confirming there
+was nothing to do. MEASURED 2026-10-15 against the live desk: 48 open rules, all 60–66 days old. Every token
+account was at 0 balance, with a dangling delegate. Not one of those rules could ever fire, and v1 would have
+read all 48 every cycle.
+
+v2 changes how the keeper learns, never what it may do. The five rules above hold unchanged, and so does the
+exit.
+
+| | v1 | v2 |
+|---|---|---|
+| Rules that can't fire | Re-read forever | **Retired** (`lifecycle.js`): `expired` (30 days), `never-armed` (no delegate after a 30-min grace, confirmed twice), `empty`, `revoked`, `exited`, `dry-run-fired`, `cancelled` |
+| Watching an armed rule | A chain read every tick | **One account subscription.** The chain pushes revokes, transfers and fills. |
+| Prices | Jupiter | Jupiter (HTTP, no RPC), for armed rules only |
+| Before an exit | — | **Fresh chain read** (rule 1 at the moment it matters) |
+| Cost control | None | Every RPC request is **metered** (`budget.js`) against `RPC_DAILY_LIMIT`. Past it: no RPC until 00:00 UTC. |
+| Endpoint | Whatever `SOLANA_RPC_URL` said | Defaults to the **public** Solana RPC. **QuickNode is refused** (Architect directive 2026-10-15). |
+| DRY_RUN trigger | Printed every tick | Logged once, then retired |
+
+**Measured offline** (`keeper-v2.test.js`), on the same 58 rules (48 stale, 5 armed, 5 never armed):
+
+| | RPC calls |
+|---|---|
+| v1 | **41,818 in one hour**, about 1.0M a day |
+| v2 | **90 in the first hour, then none for the rest of the day** |
+
+### v2 settings
+
+| Env | Default | Meaning |
+|---|---|---|
+| `SOLANA_RPC_URL` | public mainnet RPC | QuickNode hosts are refused |
+| `RPC_DAILY_LIMIT` | `2000` | Hard ceiling on RPC requests per UTC day |
+| `MAX_ARMED` | `25` | Armed rules watched at once. Beyond this, new rules wait, unread. |
+| `ARM_GRACE_MIN` | `30` | How long a new rule may wait for its delegate |
+| `MAX_RULE_AGE_DAYS` | `30` | Every rule retires after this |
+| `RULES_MS` / `PRICE_MS` | 5 min / 1 min | Desk refresh (our worker, no RPC) and price check (Jupiter, no RPC) |
+
+`POLL_MS` is v1's and no longer drives the loop.
+
 ## Running it
 
 ```bash
 # Watch only — builds exits and prints them, signs nothing. This is the default.
-SOLANA_RPC_URL=<rpc> KEEPER_PUBKEY=<pubkey> node keeper/index.js
+# With no SOLANA_RPC_URL it uses the public Solana RPC.
+KEEPER_PUBKEY=<pubkey> node keeper/index.js
 
 # Live. Requires the keypair, and DRY_RUN turned off by hand.
-SOLANA_RPC_URL=<rpc> SOLANA_KEEPER_KEY=<bs58-or-json-array> DRY_RUN=0 node keeper/index.js
+SOLANA_KEEPER_KEY=<bs58-or-json-array> DRY_RUN=0 node keeper/index.js
 ```
 
 | Env | Default | Meaning |
 |-----|---------|---------|
-| `SOLANA_RPC_URL` | — | required |
+| `SOLANA_RPC_URL` | public RPC | optional; QuickNode refused |
 | `DRY_RUN` | `1` | anything but `"0"` means sign nothing |
 | `SOLANA_KEEPER_KEY` | — | bs58 string or JSON byte array; required only for live |
 | `KEEPER_PUBKEY` | — | public key alone, enough for a dry run |
@@ -50,7 +92,7 @@ SOLANA_RPC_URL=<rpc> SOLANA_KEEPER_KEY=<bs58-or-json-array> DRY_RUN=0 node keepe
 | `DESK_URL` | `https://possessio.io` | rules, when the source is `desk` — polls `/api/desk/rules` |
 | `LEDGER_FILE` | `./keeper/positions.json` | rules, when the source is `ledger` |
 | `AUTOTARGET_ADDRESS`, `BASE_RPC_URL` | — | rules, when the source is `onchain` |
-| `POLL_MS` | `5000` | tick interval |
+| `POLL_MS` | — | v1 only; unused by the v2 loop |
 | `SLIPPAGE_BPS` | `300` | quote and exit band |
 
 The key is never logged and never written — startup prints the **public** key,
@@ -70,7 +112,9 @@ not block on it:
 ## Testing
 
 ```bash
-node keeper/test/keeper.test.js                            # offline: 19 checks
+node keeper/test/keeper.test.js                            # offline: 23 checks (the five rules)
+node keeper/test/keeper-v2.test.js                         # offline: 17 checks (life cycle, push, budget, cost)
+node keeper/test/keeper-v2-mutants.js                      # planted breaks: every v2 safeguard must be caught
 SOLANA_RPC_URL=<rpc> node keeper/test/keeper-live.js       # live mainnet: 8 checks
 ```
 

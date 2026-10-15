@@ -226,8 +226,17 @@ async function cycle({ connection, keeper, source, readDelegate = readLiveDelega
 }
 
 async function main() {
-  if (!RPC) throw new Error("need SOLANA_RPC_URL");
-  const connection = new Connection(RPC, "confirmed");
+  // v2 (2026-10-15): push, not poll. See engine.js and lifecycle.js.
+  const B = require("./budget");
+  const { createEngine } = require("./engine");
+  const { decide } = require("./positions");
+  const { unpackAccount } = require("@solana/spl-token");
+  const rpcUrl = B.assertAllowedRpc(RPC || B.PUBLIC_RPC);   // refuses QuickNode
+  const budget = B.createBudget({
+    dailyLimit: Number(env("RPC_DAILY_LIMIT", "2000")),
+    onExhausted: ({ used, limit }) => log(`RPC BUDGET EXHAUSTED: ${used}/${limit} today. No RPC until 00:00 UTC.`),
+  });
+  const connection = B.meteredConnection(new Connection(rpcUrl, "confirmed"), budget);
   const keeper = loadKeeper();
   if (!DRY_RUN && !keeper) throw new Error("live mode needs SOLANA_KEEPER_KEY");
 
@@ -236,20 +245,50 @@ async function main() {
     : SOURCE_KIND === "ledger" ? ledgerSource({ file: LEDGER_FILE })
     : deskSource({ base: DESK_URL });
 
-  log("Model B keeper starting", JSON.stringify({
-    mode: DRY_RUN ? "DRY_RUN (signs nothing)" : "LIVE",
-    source: source.name,
-    keeper: keeper ? keeper.publicKey.toBase58() : env("KEEPER_PUBKEY", "(none)"),
-    slippageBps: SLIPPAGE_BPS,
-  }));
-  if (DRY_RUN) log("DRY_RUN is ON — exits are built and printed, never signed.");
+  const keeperPk = keeper ? keeper.publicKey.toBase58() : env("KEEPER_PUBKEY", "");
+  if (!keeperPk) throw new Error("need SOLANA_KEEPER_KEY, or KEEPER_PUBKEY for a dry run");
+  const MIN = 60000;
+  const cfg = {
+    armGraceMs: Number(env("ARM_GRACE_MIN", "30")) * MIN,
+    absentConfirmations: 2,
+    maxAgeMs: Number(env("MAX_RULE_AGE_DAYS", "30")) * 1440 * MIN,
+    recheckMs: 2 * MIN,
+  };
+  const RULES_MS = Number(env("RULES_MS", String(5 * MIN)));
+  const PRICE_MS = Number(env("PRICE_MS", String(MIN)));
+  const TICK_MS = 15000;
 
+  const engine = createEngine({
+    connection, budget, source, keeperPk, dryRun: DRY_RUN, cfg, log,
+    maxArmed: Number(env("MAX_ARMED", "25")),
+    readDelegate: readLiveDelegate,
+    decodeAccount: (address, info, programId) => unpackAccount(address, info, programId),
+    decide, triggerFor,
+    priceOf: (pos, live) => executablePrice({ mint: pos.mint, amount: live.delegatedAmount, decimals: pos.decimals ?? 9 }),
+    fire: ({ pos, live, kind }) => fireExit({ connection, keeper, keeperPk, pos, live, kind }),
+  });
+
+  log("Model B keeper starting (v2: push, not poll)", JSON.stringify({
+    mode: DRY_RUN ? "DRY_RUN (signs nothing)" : "LIVE",
+    source: source.name, rpc: new URL(rpcUrl).host,
+    keeper: keeper ? keeper.publicKey.toBase58() : env("KEEPER_PUBKEY", "(none)"),
+    rpcDailyLimit: budget.report().limit, slippageBps: SLIPPAGE_BPS,
+  }));
+  if (DRY_RUN) log("DRY_RUN is ON — a triggered rule is logged once and retired; nothing is signed.");
+
+  let nextRules = 0, nextPrice = 0;
   for (;;) {
+    const now = Date.now();
     try {
-      const s = await cycle({ connection, keeper, source });
-      if (s.watching) log(`  watching ${s.watching} ruled position(s); ${s.authorised} with live authority on chain`);
-    } catch (e) { log(`cycle failed: ${e.message}`); }
-    await sleep(POLL_MS);
+      if (now >= nextRules) {
+        nextRules = now + RULES_MS;
+        const s = await engine.syncRules();
+        log(`  desk: ${s.listed} listed · ${s.pending} pending · ${s.armed} armed · ${s.retired} retired · rpc ${JSON.stringify(budget.report())}`);
+      }
+      await engine.checkPending();
+      if (now >= nextPrice) { nextPrice = now + PRICE_MS; await engine.priceTick(); }
+    } catch (e) { log(`tick failed: ${e.message}`); }
+    await sleep(TICK_MS);
   }
 }
 

@@ -13,7 +13,8 @@
     "tweetnacl": "^1.0.3"
   },
   "scripts": {
-    "test:keeper": "node keeper/test/keeper.test.js",
+    "test:keeper": "node keeper/test/keeper.test.js && node keeper/test/keeper-v2.test.js",
+    "test:keeper-mutants": "node keeper/test/keeper-v2-mutants.js",
     "test:rule": "node keeper/test/rule-signature.test.js",
     "test:live": "node keeper/test/keeper-live.js",
     "test:secret": "node keeper/test/secret-resolve.test.js",
@@ -23,6 +24,6 @@
     "test:rail": "node worker/test/launch-rail.test.mjs",
     "scrub": "node tools/scrub.mjs --check",
     "hooks:install": "git config core.hooksPath .githooks && echo 'pre-commit scrub armed (CI enforces it regardless)'",
-    "test": "node keeper/test/keeper.test.js && node keeper/test/rule-signature.test.js && node keeper/test/secret-resolve.test.js && node keeper/test/scrub.test.mjs && node keeper/test/desk-match.test.js && node tape/test/engine.test.js && node tape/test/ingest.test.mjs && node worker/test/act-approval.test.mjs && node worker/test/mirror.test.mjs && node --experimental-strip-types --no-warnings worker/test/mcp-e2e.test.mjs && node --no-warnings worker/test/cobrowse.test.mjs"
+    "test": "node keeper/test/keeper.test.js && node keeper/test/keeper-v2.test.js && node keeper/test/rule-signature.test.js && node keeper/test/secret-resolve.test.js && node keeper/test/scrub.test.mjs && node keeper/test/desk-match.test.js && node tape/test/engine.test.js && node tape/test/ingest.test.mjs && node worker/test/act-approval.test.mjs && node worker/test/mirror.test.mjs && node --experimental-strip-types --no-warnings worker/test/mcp-e2e.test.mjs && node --no-warnings worker/test/cobrowse.test.mjs"
   }
 }
