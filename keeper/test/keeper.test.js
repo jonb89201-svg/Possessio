@@ -209,7 +209,9 @@ t("an unreadable account fails CLOSED rather than throwing the loop over", () =>
   const s = SRC("positions.js");
   const tail = s.slice(s.indexOf("const REFUSED"));
   assert.ok(/authorised: false/.test(tail), "the refusal path must deny authority");
-  assert.ok(/catch \{\s*return REFUSED\(owner, mint\);/.test(tail),
+  // v2: the catch still refuses; it now also says whether the chain answered
+  // (keeper-v2.test.js proves both branches behaviourally).
+  assert.ok(/catch \(e\) \{\s*return REFUSED\(owner, mint, /.test(tail),
     "a failed read must stand this position down, not crash the other positions");
 });
 

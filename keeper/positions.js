@@ -217,8 +217,13 @@ async function tokenProgramInfo(connection, mintPk) {
 /// Refused: no account, no authority. Every failure to READ must land here
 /// rather than throwing, because an RPC hiccup must stand the keeper down, not
 /// crash the loop and leave other positions unwatched.
-const REFUSED = (owner, mint) =>
-  ({ ata: null, owner, mint, amount: "0", delegate: null, delegatedAmount: "0", authorised: false });
+const REFUSED = (owner, mint, readError = false) =>
+  ({ ata: null, owner, mint, amount: "0", delegate: null, delegatedAmount: "0", authorised: false, readError });
+
+// A missing or foreign account IS a reading (the chain answered); anything else
+// thrown on the way is an RPC failure and says nothing. The lifecycle retires
+// on readings and never on failures (keeper/lifecycle.js).
+const CONFIRMED_ABSENT = new Set(["TokenAccountNotFoundError", "TokenInvalidAccountOwnerError"]);
 
 /// The live, on-chain delegate state for ONE position. Re-read every cycle, so
 /// a user's revoke takes effect immediately rather than at the next restart.
@@ -253,9 +258,9 @@ async function readLiveDelegate({ connection, owner, mint, keeper }) {
       mintPk, new PublicKey(owner), false, programId
     );
     const acc = await getAccount(connection, ata, undefined, programId);
-    return decide({ ata, owner, mint, acc, keeper });
-  } catch {
-    return REFUSED(owner, mint);
+    return { ...decide({ ata, owner, mint, acc, keeper }), programId: programId.toBase58(), readError: false };
+  } catch (e) {
+    return REFUSED(owner, mint, !CONFIRMED_ABSENT.has(e && e.name));
   }
 }
 
