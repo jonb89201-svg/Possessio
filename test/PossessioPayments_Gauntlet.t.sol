@@ -545,14 +545,16 @@ contract PossessioPaymentsGauntlet is Test {
             // sandwich. With daiCeiling=0 and cbEthBps=5000, the cbETH leg
             // receives sweepAmount/2 USDC; at $3000/ETH that is
             // (sweepAmount/2)*1e12/3000 wei of WETH. Return ~100% of expected
-            // (above the 90% floor) so an HONEST swap clears it. Dust is still
+            // (above the 98% floor, K-2) so an HONEST swap clears it. Dust is still
             // measured from the contract's USDC integer-division split, not the
             // swap return, so the invariant remains valid.
             uint256 cbEthAlloc = sweepAmount / 2;                  // 6-dec USDC
             uint256 expectedWeth = (cbEthAlloc * 1e12) / 3000;     // 18-dec WETH at $3000
             router.setWethOut(expectedWeth);
-            // WETH->cbETH at 0.98 rate; return ~equal so it clears its own floor.
-            aeroRouter.setCbEthOut((expectedWeth * 98) / 100);
+            // WETH->cbETH: the feed reads 0.98 ETH per cbETH, so an honest fill
+            // is wethOut / 0.98. (The old 0.98x fixture was a 4% short fill that
+            // only cleared the loose 90% floor; K-2's 98% floor rejects it.)
+            aeroRouter.setCbEthOut((expectedWeth * 100) / 98);
 
             vm.prank(MERCHANT);
             payments.sweep(0, 0, 1);
@@ -1200,17 +1202,18 @@ contract PossessioPaymentsGauntlet is Test {
         // v2.4.2 — cbETH delivered by the Aerodrome leg; set it there.
         // P-1 — with the WETH-leg floor now live (feeds fresh), the USDC→WETH
         // output must clear the ~0.375 ETH oracle floor for 1250 USDC @ $3000,
-        // and the WETH→cbETH output must clear its own ~0.386 ETH Aero floor.
-        // The old 0.31/0.31 values were only valid while the floor was off.
+        // and the WETH→cbETH output must clear its own Aero floor: 0.42 / 0.98
+        // = 0.4286 cbETH expected, 98% of that ~0.42 (K-2). The old 0.31/0.31
+        // values were only valid while the floor was off.
         router.setWethOut(0.42 ether);
-        aeroRouter.setCbEthOut(0.40 ether);
+        aeroRouter.setCbEthOut(0.43 ether);
 
         vm.prank(MERCHANT);
         payments.sweep(2400 * 1e18, 0, 0.31 ether);
 
         // Final state checks
         assertEq(dai.balanceOf(address(payments)), 5000 * 1e18, "DAI at ceiling");
-        assertEq(cbeth.balanceOf(address(payments)), 0.40 ether, "cbETH accumulated");
+        assertEq(cbeth.balanceOf(address(payments)), 0.43 ether, "cbETH accumulated");
 
         assertEq(payments.dailyRemaining(), DAILY_LIMIT, "Window rolled, full limit available");
 

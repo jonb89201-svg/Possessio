@@ -90,6 +90,23 @@ contract PaymentsForkTest is Test {
         }
     }
 
+    // K-3 (external review, KupiaSec 2026-10-15): on Base the template refuses
+    // non-canonical wiring, so the official factory cannot ship a hostile router.
+    // setUp above is the positive half: the canonical set deploys on the fork.
+    function test_fork_K3_hostileRouterRefused() public {
+        if (!forked) { vm.skip(true); return; }
+        PossessioPayments.DeployParams memory p = PossessioPayments.DeployParams({
+            owner: OWNER, usdc: USDC, cbeth: CBETH, dai: DAI, weth: WETH,
+            router: address(0xBAD), aeroRouter: AERO_ROUTER, morphoVault: MORPHO_VAULT,
+            chainlink: CHAINLINK_CBETH, chainlinkDai: CHAINLINK_DAI, chainlinkUsdcUsd: CHAINLINK_USDC,
+            chainlinkEthUsd: CHAINLINK_ETH, lstRates: LST_RATES, minSwapBatch: MIN_SWAP_BATCH,
+            daiCeiling: DAI_CEILING, dailyLimit: DAILY_LIMIT, usdcDailyLimit: USDC_DAILY_LIMIT,
+            cbEthDailyLimit: CBETH_DAILY_LIMIT
+        });
+        vm.expectRevert(abi.encodeWithSelector(PossessioPayments.NonCanonicalWiring.selector, address(0xBAD), ROUTER));
+        deployPayments(p);
+    }
+
     // 1. The CORE proof: Payments deploys against real mainnet venues. The
     //    constructor validates all 4 feed decimals - a successful deploy proves
     //    every feed address is correct and live on mainnet.

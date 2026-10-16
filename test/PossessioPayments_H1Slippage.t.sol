@@ -17,7 +17,7 @@ import {deployPayments} from "./PaymentsDeployHelper.sol";
 //
 // Ratified fix (hybrid floor): each leg's effective min-out is
 //   max(callerSuppliedMin, oracleFloor)
-// where oracleFloor = 90% (SWEEP_SLIPPAGE_BPS = 9000) of the oracle-expected
+// where oracleFloor = 98% (SWEEP_SLIPPAGE_BPS = 9800 since K-2; was 9000) of the oracle-expected
 // output. A caller can TIGHTEN but never LOOSEN below the oracle-derived floor.
 //
 // THESE TESTS PROVE THE FIX HAS TEETH:
@@ -284,8 +284,8 @@ contract PossessioPaymentsH1SlippageTest is Test {
         usdc.mint(address(payments), 1000 * 1e6);
 
         router.setDaiOut(500 * 1e18);
-        router.setWethOut(0.16 ether);  // ~= oracle-expected, above 90% floor
-        aero.setCbEthOut(0.16 ether);
+        router.setWethOut(0.1667 ether);  // ~= oracle-expected (0.16667), above the 98% floor
+        aero.setCbEthOut(0.1701 ether);   // ~= 0.1667 / 0.98, the oracle-expected cbETH
 
         vm.warp(block.timestamp + 7 days);
 
@@ -310,8 +310,8 @@ contract PossessioPaymentsH1SlippageTest is Test {
         usdc.mint(address(payments), 1000 * 1e6);
 
         router.setDaiOut(500 * 1e18);
-        router.setWethOut(0.16 ether);  // above oracle floor...
-        aero.setCbEthOut(0.16 ether);
+        router.setWethOut(0.1667 ether);  // above the 98% oracle floor...
+        aero.setCbEthOut(0.1701 ether);
 
         // ...but caller demands 0.20 ETH on the WETH leg, tighter than floor.
         vm.warp(block.timestamp + 7 days);
@@ -320,7 +320,7 @@ contract PossessioPaymentsH1SlippageTest is Test {
         clUsdcUsd.setUpdatedAt(block.timestamp);
         clEthUsd.setUpdatedAt(block.timestamp);
         vm.prank(MERCHANT);
-        // 0.16 < caller's 0.20 -> WETH slippage require fires (not staleness).
+        // 0.1667 < caller's 0.20 -> WETH slippage require fires (not staleness).
         vm.expectRevert("V3: slippage WETH");
         payments.sweep(0, 0.20 ether, 0);
     }
@@ -346,5 +346,63 @@ contract PossessioPaymentsH1SlippageTest is Test {
         // scaled floor catches the proportionally-large sandbag on the WETH leg.
         vm.expectRevert("V3: slippage WETH");
         payments.sweep(0, 0, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // K-2 (external review, KupiaSec 2026-10-15): the floor is 98%, not 90%.
+    // 1000 USDC with no DAI leg puts 500 USDC on the cbETH leg; the oracle
+    // expects 500e6 * 1e12 * 1e8 / 3000e8 = 166666666666666666 wei of WETH, and
+    // wethOut * 1e18 / 0.98e18 cbETH for it.
+    // -----------------------------------------------------------------------
+    uint256 constant K2_WETH = 166666666666666666;
+
+    function _k2Honest(uint256 wethOut) internal pure returns (uint256) {
+        return (wethOut * 1e18) / 980_000_000_000_000_000;
+    }
+
+    function _k2Prepare(uint256 wethOut, uint256 cbEthOut) internal {
+        vm.prank(MERCHANT);
+        payments.setDaiCeiling(0);
+        usdc.mint(address(payments), 1000 * 1e6);
+        router.setWethOut(wethOut);
+        aero.setCbEthOut(cbEthOut);
+        vm.warp(block.timestamp + 7 days);
+        clEth.setUpdatedAt(block.timestamp);
+        clDai.setUpdatedAt(block.timestamp);
+        clUsdcUsd.setUpdatedAt(block.timestamp);
+        clEthUsd.setUpdatedAt(block.timestamp);
+    }
+
+    /// 97.9% on the WETH leg cleared the old 90% floor; the 98% floor refuses it.
+    function test_K2_WethLegAt979_Reverts() public {
+        uint256 w = (K2_WETH * 979) / 1000;
+        _k2Prepare(w, _k2Honest(w) + 1);
+        vm.prank(MERCHANT);
+        vm.expectRevert("V3: slippage WETH");
+        payments.sweep(0, 0, 0);
+    }
+
+    function test_K2_WethLegAt981_Clears() public {
+        uint256 w = (K2_WETH * 981) / 1000;
+        uint256 c = _k2Honest(w) + 1;
+        _k2Prepare(w, c);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+        assertEq(cbeth.balanceOf(address(payments)), c, "an honest 98.1% fill clears");
+    }
+
+    function test_K2_CbEthLegAt979_Reverts() public {
+        _k2Prepare(K2_WETH, (_k2Honest(K2_WETH) * 979) / 1000);
+        vm.prank(MERCHANT);
+        vm.expectRevert("Aero: slippage cbETH");
+        payments.sweep(0, 0, 0);
+    }
+
+    function test_K2_CbEthLegAt981_Clears() public {
+        uint256 c = (_k2Honest(K2_WETH) * 981) / 1000;
+        _k2Prepare(K2_WETH, c);
+        vm.prank(MERCHANT);
+        payments.sweep(0, 0, 0);
+        assertEq(cbeth.balanceOf(address(payments)), c, "a 98.1% cbETH fill clears");
     }
 }

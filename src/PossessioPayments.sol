@@ -394,11 +394,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///         caller may TIGHTEN protection but can never loosen it below the
     ///         oracle-derived bound — closing the zero-default H-1 hole and the
     ///         forwarder-supplied-zeros H-1b hole in a single place (_sweep).
-    ///         9000 = accept down to 90% of oracle-expected (10% adverse). This
-    ///         matches PossessioHook's SLIPPAGE convention; tighten toward
-    ///         9700–9900 if pool liquidity supports it (Grok L-1). Floor only;
-    ///         operators retain the ability to set a stricter per-sweep min.
-    uint256 public constant SWEEP_SLIPPAGE_BPS = 9000;
+    ///         9800 = accept down to 98% of oracle-expected (2% adverse per leg).
+    ///         K-2 (external review, KupiaSec 2026-10-15; Grok L-1): 9000 let a
+    ///         bad sweep lose ~19% over the two legs. MEASURED 2026-10-16 on
+    ///         Base: fills sit within 0.25% of the oracle on USDC→WETH (fee 500)
+    ///         and 0.02% on WETH→cbETH (tickSpacing 1) up to $100k a leg; the
+    ///         feeds can lag by their deviation thresholds (≤0.5%). 2% leaves
+    ///         ~1.3% spare; a sweep that misses it reverts and retries. Floor
+    ///         only; operators retain the ability to set a stricter per-sweep min.
+    uint256 public constant SWEEP_SLIPPAGE_BPS = 9800;
     uint256 private constant SWEEP_SLIPPAGE_DENOM = 10000;
 
     /// @notice Legacy staleness window retained for the DAI/USD price feed
@@ -414,6 +418,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @notice P-H1 (re-audit 2026-09-01): disabling an armed guardian is a
     ///         timelocked, guardian-cancellable act (see disableGuardian).
     uint256 public constant GUARDIAN_DISABLE_DELAY = 7 days;
+    /// @notice K-1 (external review, KupiaSec 2026-10-15): once the guardian is
+    ///         disarmed, the owner may lift a freeze it left behind, after this
+    ///         delay and only if no guardian cancels (see queueFreezeRelease).
+    uint256 public constant FREEZE_RELEASE_DELAY = 30 days;
     /// @notice P-H1: a queued limit increase may at most double the reference
     ///         limit (the highest limit set by the constructor or an executed
     ///         increase). A stolen key can no longer queue "infinity".
@@ -465,6 +473,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     //      limit and the guardian can cancel a queued increase.
     uint256 public guardianCount;
     uint256 public guardianDisableExecuteAfter;   // 0 = nothing queued
+    uint256 public freezeReleaseExecuteAfter;     // K-1: 0 = nothing queued
     uint256 public dailyLimitRef;                 // highest DAI limit set by ctor / executed increase
     mapping(uint8 => uint256) public assetLimitRef;
     bool    public guardianEnabled;     // merchant-controlled Guardian opt-in
@@ -619,6 +628,9 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event DAIRefillSkipped(uint8 reason, uint256 daiGap);
     event GuardianDisableQueued(address indexed by, uint256 executeAfter);
     event GuardianDisableCancelled(address indexed by);
+    event FreezeReleaseQueued(address indexed by, uint256 executeAfter);
+    event FreezeReleaseCancelled(address indexed by);
+    event FreezeReleased(address indexed by);
     event GuardianCancelledDailyLimitIncrease(address indexed guardian);
     event GuardianCancelledAssetLimitIncrease(address indexed guardian, uint8 asset);
 
@@ -669,6 +681,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     error ExchangeRateInvalid();
     error GuardianNotEnabled();
     error GuardianDisableNotReady();
+    error GuardianStillArmed();
+    error NotFrozen();
+    error FreezeReleaseNotReady();
+    error NonCanonicalWiring(address got, address want);   // K-3
     error IncreaseTooLarge(uint256 requested, uint256 maxAllowed);
     error NothingQueued();
     error NothingToWithdraw();
@@ -803,6 +819,14 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (p.chainlinkEthUsd  == address(0)) revert InvalidAddress();
         if (p.lstRates         == address(0)) revert InvalidAddress();
 
+        // K-3 (external review, KupiaSec 2026-10-15): PossessioFactory pins this
+        // template's code, not the wiring inside initArgs, so the official
+        // factory would deploy, and announce, an Account wired to a hostile
+        // router, vault or feed. On Base mainnet the template now accepts only
+        // the canonical wiring (the DeployPayments.s.sol constants). Other
+        // chains (tests, testnets) keep the non-zero checks above.
+        if (block.chainid == 8453) _requireBaseWiring(p);
+
         // ─── Decimal-class validation (v2.3 defense-in-depth + v2.4.2 extension) ───
         // cbETH/ETH must be 18-decimal exchange-rate feed (Chainlink yield-bearing-asset class).
         // DAI/USD must be 8-decimal price feed (Chainlink standard price-feed class; freshness-only read).
@@ -851,6 +875,27 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         _setRoleAdmin(OPERATOR_ROLE, OWNER_ROLE);
         _setRoleAdmin(GUARDIAN_ROLE, GUARDIAN_ROLE);   // P-H1: self-administered after the seed
         _setRoleAdmin(OWNER_ROLE, OWNER_ROLE);
+    }
+
+    /// @dev K-3: the canonical Base mainnet wiring (script/DeployPayments.s.sol).
+    ///      Constructor-only, so it adds no runtime code.
+    function _requireBaseWiring(DeployParams memory p) private pure {
+        _pin(p.usdc,             0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);  // USDC
+        _pin(p.cbeth,            0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22);  // cbETH
+        _pin(p.dai,              0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb);  // DAI
+        _pin(p.weth,             0x4200000000000000000000000000000000000006);  // WETH
+        _pin(p.router,           0x2626664c2603336E57B271c5C0b26F421741e481);  // Uniswap V3 SwapRouter02
+        _pin(p.aeroRouter,       0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5);  // Aerodrome Slipstream router
+        _pin(p.morphoVault,      0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100);  // Morpho USDC vault
+        _pin(p.chainlink,        0x806b4Ac04501c29769051e42783cF04dCE41440b);  // cbETH/ETH
+        _pin(p.chainlinkDai,     0x591e79239a7d679378eC8c847e5038150364C78F);  // DAI/USD
+        _pin(p.chainlinkUsdcUsd, 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B);  // USDC/USD
+        _pin(p.chainlinkEthUsd,  0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70);  // ETH/USD
+        _pin(p.lstRates,         0xDDb75e974d99FcF95E241adbFD376861c47a8548);  // LST rates (certified)
+    }
+
+    function _pin(address got, address want) private pure {
+        if (got != want) revert NonCanonicalWiring(got, want);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1390,6 +1435,50 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (guardianDisableExecuteAfter == 0) revert NothingQueued();
         guardianDisableExecuteAfter = 0;
         emit GuardianDisableCancelled(msg.sender);
+    }
+
+    /// @notice K-1 (external review, KupiaSec 2026-10-15): the way out for a
+    ///         lost guardian key. A disarm leaves withdrawalsFrozen on, and
+    ///         only an armed guardian can clear it, so a guardian that froze
+    ///         withdrawals and then lost its key locked the merchant out for
+    ///         good. With the guardian disarmed and withdrawals frozen, the
+    ///         owner may queue a release that executes after
+    ///         FREEZE_RELEASE_DELAY. Any guardian can cancel it, armed or not.
+    ///         Stated cost: a stolen owner key now lifts the freeze if every
+    ///         guardian stays silent through the 7-day disarm AND the 30-day
+    ///         release. Before K-1 the freeze never lifted at all.
+    function queueFreezeRelease() external onlyRole(OWNER_ROLE) {
+        if (guardianEnabled) revert GuardianStillArmed();
+        if (!withdrawalsFrozen) revert NotFrozen();
+        uint256 readyAt = block.timestamp + FREEZE_RELEASE_DELAY;
+        freezeReleaseExecuteAfter = readyAt;
+        emit FreezeReleaseQueued(msg.sender, readyAt);
+    }
+
+    /// @notice K-1: cancel a queued release. Owner (changed their mind) or any
+    ///         guardian, armed or not (a release the merchant did not queue is
+    ///         the signature of a stolen owner key).
+    function cancelFreezeRelease() external {
+        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
+        }
+        if (freezeReleaseExecuteAfter == 0) revert NothingQueued();
+        freezeReleaseExecuteAfter = 0;
+        emit FreezeReleaseCancelled(msg.sender);
+    }
+
+    /// @notice K-1: lift the freeze once the release delay has passed. Reverts
+    ///         if the guardian was re-armed meanwhile: an armed guardian
+    ///         decides the freeze itself.
+    function executeFreezeRelease() external onlyRole(OWNER_ROLE) {
+        uint256 readyAt = freezeReleaseExecuteAfter;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (readyAt == 0 || block.timestamp < readyAt) revert FreezeReleaseNotReady();
+        if (guardianEnabled) revert GuardianStillArmed();
+        freezeReleaseExecuteAfter = 0;
+        withdrawalsFrozen = false;
+        emit FreezeReleased(msg.sender);
+        emit WithdrawalsFrozenSet(msg.sender, false, block.timestamp);
     }
 
     /// @notice P-H1: the owner may only SEED the first guardian. Once one is

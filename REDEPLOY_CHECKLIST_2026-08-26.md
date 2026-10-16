@@ -19,9 +19,15 @@ Anchor deployer: `0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC` (salts are sender-
 ## Pre-flight (do these once, in order)
 
 1. **Merge the audit PR** (P-1 / L-1 / G-1 + fork proofs).
-2. **`TEMPLATE_CODEHASH` (production, solc 0.8.35) — MEASURED in CI:**
+2. **`TEMPLATE_CODEHASH` (production, solc 0.8.35). RE-MEASURE IT; the value below is stale.**
+   - `0x7dd017f4…7130` was measured at `7d1d7c2`. Since then, `f0e545e` (the 09-01 re-audit) and K-1/K-2/K-3 (the
+     2026-10-16 external-review fixes) have both changed `PossessioPayments`.
+   - Local measure, solc 0.8.35, with K-1..K-3:
+     `0xb5889618a1dfb32a18150da03c6314fa4eae7b220af4af33266849f5641c8582`.
+   - Take the deploy value from `test/TemplateCodehashProbe.t.sol` in CI on the deploy commit, and regenerate the
+     Taproot console's template artifact to match.
    ```
-   TEMPLATE_CODEHASH=0x7dd017f4b4ba788b0002b78c0d933dde57a03c31a1a1f81ab5f51b329d337130
+   TEMPLATE_CODEHASH=0x7dd017f4b4ba788b0002b78c0d933dde57a03c31a1a1f81ab5f51b329d337130   # STALE, do not use
    ```
    `keccak256(type(PossessioPayments).creationCode)` for the FIXED (P-1) `PossessioPayments`,
    compiled with the production toolchain (solc 0.8.35, via_ir, runs=200). Measured by

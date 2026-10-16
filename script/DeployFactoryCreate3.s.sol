@@ -48,6 +48,8 @@ contract DeployFactoryCreate3 is Script {
     // toolchain (solc 0.8.35) before running; do not reuse a value from another compiler.
     //   MEASURED (solc 0.8.35, CI run #173, commit 7d1d7c2, via test/TemplateCodehashProbe.t.sol):
     //   TEMPLATE_CODEHASH=0x7dd017f4b4ba788b0002b78c0d933dde57a03c31a1a1f81ab5f51b329d337130
+    //   STALE since f0e545e (09-01) and K-1/K-2/K-3 (2026-10-16); local 0.8.35 with K-1..K-3 is
+    //   0xb5889618a1dfb32a18150da03c6314fa4eae7b220af4af33266849f5641c8582. Re-measure in CI before deploying.
     //   (local 0.8.27 control was 0x94df70b2…3e50 — DO NOT USE. See REDEPLOY_CHECKLIST_2026-08-26.md §2.)
     address constant ANCHOR_EOA        = 0xed5c1F69E9778A2243f9E5aF663C9A18e03261eC;
     bytes32 constant FACTORY_SALT      = 0xed5c1f69e9778a2243f9e5af663c9a18e03261ec003b32c63f7efcd69736d863;
