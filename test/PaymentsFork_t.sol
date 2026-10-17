@@ -265,7 +265,9 @@ contract PaymentsForkTest is Test {
     function test_fork_referenceTaker_firstProfitableMoment() public {
         if (!forked) { vm.skip(true); return; }
         uint256[5] memory lots = [uint256(50e6), 500e6, 5_000e6, 50_000e6, 100_000e6];
+        uint256 forkTime = vm.getBlockTimestamp();
         for (uint256 i = 0; i < lots.length; i++) {
+            vm.warp(forkTime);                           // a static fork: rewind so the feeds stay within their windows
             PossessioPayments p = deployPayments(_params(0));
             vm.prank(OWNER);
             p.setMinSwapBatch(1);
