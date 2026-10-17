@@ -101,8 +101,10 @@ contract MockVault_V3 {
     bool    public depositReverts;
     bool    public leakageMode;
     bool    public convertReverts;
+    bool    public mintNothing;      // consumes the USDC but mints no shares
     constructor(address usdc_) { usdc = MockUSDC_V3(usdc_); }
     function setDepositReverts(bool b) external { depositReverts = b; }
+    function setMintNothing(bool b) external { mintNothing = b; }
     function setLeakageMode(bool b) external { leakageMode = b; }
     function setConvertReverts(bool b) external { convertReverts = b; }
     function addYield(uint256 usdcAmt) external { usdc.mint(address(this), usdcAmt); totalAssets_ += usdcAmt; }
@@ -112,6 +114,7 @@ contract MockVault_V3 {
         uint256 consumeAmt = leakageMode ? (assets - 1) : assets;
         // forge-lint: disable-next-line(erc20-unchecked-transfer)
         usdc.transferFrom(msg.sender, address(this), consumeAmt);
+        if (mintNothing) { totalAssets_ += consumeAmt; return 0; }
         shares = totalShares == 0 ? consumeAmt : (consumeAmt * totalShares) / totalAssets_;
         _shares[receiver] += shares; totalShares += shares; totalAssets_ += consumeAmt;
     }

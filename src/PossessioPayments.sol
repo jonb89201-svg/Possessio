@@ -293,7 +293,6 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     error ZeroOutput();
     error LeakageDetected();
     error MorphoDepositFailed();
-    error ExchangeRateInvalid();
     error InvalidAddress();
     error InvalidBpsRange();
     error OutOfRange();
@@ -501,11 +500,13 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         // 4. Oracle, fail closed: both the cbETH/ETH rate and the USDC→ETH path
         //    must be fresh, or nothing is priced and nothing moves (P-1 rule).
         _oracleCbEth(1e6);
-        // 5. The Morpho share, deposited now: a deposit has no price risk.
-        uint256 morphoAlloc = (kickAmount * (10000 - cbEthBps)) / 10000;
+        // 5. The split, as in v2.4: the lot (cbETH side) is cbEthBps of the
+        //    kick and the integer-division residue goes to the Morpho leg by
+        //    construction. The Morpho share is deposited now: no price risk.
+        uint256 lotUsdc = (kickAmount * cbEthBps) / 10000;
+        uint256 morphoAlloc = kickAmount - lotUsdc;
         if (morphoAlloc > 0) _depositMorpho(morphoAlloc);
         // 6. The lot.
-        uint256 lotUsdc = kickAmount - morphoAlloc;
         uint256 endsAt;
         if (lotUsdc > 0) {
             endsAt = block.timestamp + auctionLength;
