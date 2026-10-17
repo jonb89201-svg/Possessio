@@ -16,21 +16,26 @@ import {
 contract PossessioPaymentsK3 is Test {
     address constant HOSTILE = address(0xBAD);
 
+    /// The canonical wiring is read from BaseWiring (review 2026-10-17, F-8), the
+    /// same library the template pins on chainid 8453. This test proves the PIN
+    /// (each field is checked, a hostile value is refused, the canonical set
+    /// deploys); the independent check of the VALUES is test/PaymentsFork_t.sol,
+    /// which deploys against the live Base contracts from its own constants.
     function _canonical() internal pure returns (PossessioPayments.DeployParams memory) {
         return PossessioPayments.DeployParams({
             owner:            address(0xA11CE),
-            usdc:             0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
-            cbeth:            0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22,
-            dai:              0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb,
-            weth:             0x4200000000000000000000000000000000000006,
-            router:           0x2626664c2603336E57B271c5C0b26F421741e481,
-            aeroRouter:       0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5,
-            morphoVault:      0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100,
-            chainlink:        0x806b4Ac04501c29769051e42783cF04dCE41440b,
-            chainlinkDai:     0x591e79239a7d679378eC8c847e5038150364C78F,
-            chainlinkUsdcUsd: 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B,
-            chainlinkEthUsd:  0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70,
-            lstRates:         0xDDb75e974d99FcF95E241adbFD376861c47a8548,
+            usdc:             BaseWiring.USDC,
+            cbeth:            BaseWiring.CBETH,
+            dai:              BaseWiring.DAI,
+            weth:             BaseWiring.WETH,
+            router:           BaseWiring.ROUTER,
+            aeroRouter:       BaseWiring.AERO_ROUTER,
+            morphoVault:      BaseWiring.MORPHO_VAULT,
+            chainlink:        BaseWiring.CHAINLINK_CBETH,
+            chainlinkDai:     BaseWiring.CHAINLINK_DAI,
+            chainlinkUsdcUsd: BaseWiring.CHAINLINK_USDC,
+            chainlinkEthUsd:  BaseWiring.CHAINLINK_ETH,
+            lstRates:         BaseWiring.LST_RATES,
             minSwapBatch:     100 * 1e6,
             daiCeiling:       5_000 * 1e18,
             dailyLimit:       1_000 * 1e18,

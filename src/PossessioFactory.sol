@@ -225,21 +225,12 @@ contract PossessioFactory is ReentrancyGuard {
         // (a high-level call to a no-code address reverts on return-decode
         // OUTSIDE try/catch); the try/catch then catches has-code-but-wrong and
         // an explicit `false`.
-        if (_feeSink.code.length == 0) revert FeeSinkInterfaceMismatch();
-        try IPossessioPool(_feeSink).isInfraSink() returns (bool ok) {
-            if (!ok) revert FeeSinkInterfaceMismatch();
-        } catch {
-            revert FeeSinkInterfaceMismatch();
-        }
-        // F-L3 (re-audit 2026-09-01): the marker proves "a Pool"; this proves
-        // "a Pool that accepts THIS factory". The Pool bakes our predicted
-        // CREATE3 address into its source set at its own deploy, so a correctly
-        // sequenced constellation passes; a mis-wired one refuses to exist.
-        try IPossessioPool(_feeSink).isAuthorizedSource(address(this)) returns (bool authorized) {
-            if (!authorized) revert FeeSinkSourceNotAuthorized();
-        } catch {
-            revert FeeSinkInterfaceMismatch();
-        }
+        // F-L3 (re-audit 2026-09-01): the marker proves "a Pool"; the source
+        // check proves "a Pool that accepts THIS factory". The Pool bakes our
+        // predicted CREATE3 address into its source set at its own deploy, so a
+        // correctly sequenced constellation passes; a mis-wired one refuses to
+        // exist. (One helper for both sinks: review 2026-10-17, F-10.)
+        _requireLivePool(_feeSink, false);
 
         // PARTNER SHARE: both set or both unset; the partner pool passes the same
         // live-pool and authorized-source checks as feeSink, so a mis-wired
@@ -249,17 +240,7 @@ contract PossessioFactory is ReentrancyGuard {
         if (_partnerSink != address(0)) {
             if (_partnerSink == _feeSink) revert PartnerConfigInvalid();
             if ((_deploymentFee * _partnerBps) / 10_000 == 0) revert PartnerConfigInvalid();
-            if (_partnerSink.code.length == 0) revert PartnerSinkInterfaceMismatch();
-            try IPossessioPool(_partnerSink).isInfraSink() returns (bool ok) {
-                if (!ok) revert PartnerSinkInterfaceMismatch();
-            } catch {
-                revert PartnerSinkInterfaceMismatch();
-            }
-            try IPossessioPool(_partnerSink).isAuthorizedSource(address(this)) returns (bool authorized) {
-                if (!authorized) revert PartnerSinkSourceNotAuthorized();
-            } catch {
-                revert PartnerSinkInterfaceMismatch();
-            }
+            _requireLivePool(_partnerSink, true);
         }
 
         DEPLOYMENT_FEE = _deploymentFee;
@@ -270,6 +251,33 @@ contract PossessioFactory is ReentrancyGuard {
         feeSink = _feeSink;
         partnerSink = _partnerSink;
         PARTNER_BPS = _partnerBps;
+    }
+
+    /// @dev A sink must be a live Pool that lists this factory as a source. The
+    ///      code-length pre-check catches the EOA/undeployed case explicitly (a
+    ///      high-level call to a no-code address reverts on return-decode OUTSIDE
+    ///      try/catch); the try/catch then catches has-code-but-wrong and an
+    ///      explicit `false`. `partner` selects the error family.
+    function _requireLivePool(address sink, bool partner) private view {
+        if (sink.code.length == 0) _interfaceMismatch(partner);
+        try IPossessioPool(sink).isInfraSink() returns (bool ok) {
+            if (!ok) _interfaceMismatch(partner);
+        } catch {
+            _interfaceMismatch(partner);
+        }
+        try IPossessioPool(sink).isAuthorizedSource(address(this)) returns (bool authorized) {
+            if (!authorized) {
+                if (partner) revert PartnerSinkSourceNotAuthorized();
+                revert FeeSinkSourceNotAuthorized();
+            }
+        } catch {
+            _interfaceMismatch(partner);
+        }
+    }
+
+    function _interfaceMismatch(bool partner) private pure {
+        if (partner) revert PartnerSinkInterfaceMismatch();
+        revert FeeSinkInterfaceMismatch();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -370,6 +378,12 @@ contract PossessioFactory is ReentrancyGuard {
     ///      push-payment DoS class as a refund to an address that can no longer
     ///      receive USDC. So the cut is held in partnerOwed instead, and the
     ///      dangling approval is cleared.
+    ///      Accepted (review 2026-10-17, F-3): a caller can size the outer gas
+    ///      so this inner call runs out of gas while the retained 1/64 still
+    ///      completes the deploy, which defers the cut into partnerOwed. That
+    ///      delays the partner, it never takes from them: the cut is held here
+    ///      and anyone can flushPartner() it. A fixed stipend would turn an
+    ///      honest refusal into a bricked launch, which is the worse trade.
     function _payPartner(uint256 amount) private {
         payTokenERC20.forceApprove(partnerSink, amount);
         try IPossessioPool(partnerSink).receiveInfraFunds(amount) {

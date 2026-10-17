@@ -145,7 +145,11 @@ contract PossessioPaymentsK1 is Test {
         payments.queueFreezeRelease();
     }
 
-    /// Re-arming the guardian hands the decision back to it.
+    /// Re-arming the guardian hands the decision back to it. Since the review
+    /// of 2026-10-17 (F-1) the re-arm VOIDS the queue, so the release fails as
+    /// "nothing queued", not as "guardian armed": the stale queue no longer
+    /// exists to be blocked. GuardianStillArmed in executeFreezeRelease stays
+    /// as defence in depth.
     function test_K1_rearmedGuardianBlocksTheRelease() public {
         _K1_freezeThenLoseGuardianAndDisarm();
         vm.prank(MERCHANT);
@@ -154,9 +158,12 @@ contract PossessioPaymentsK1 is Test {
         payments.enableGuardian();
         vm.warp(block.timestamp + payments.FREEZE_RELEASE_DELAY() + 1);
         vm.prank(MERCHANT);
-        vm.expectRevert(PossessioPayments.GuardianStillArmed.selector);
+        vm.expectRevert(PossessioPayments.FreezeReleaseNotReady.selector);
         payments.executeFreezeRelease();
         assertTrue(payments.withdrawalsFrozen());
+        vm.prank(MERCHANT);
+        vm.expectRevert(PossessioPayments.GuardianStillArmed.selector);
+        payments.queueFreezeRelease();                      // and it cannot be re-queued while armed
     }
 
     function test_K1_strangersCannotQueueCancelOrExecute() public {
@@ -174,5 +181,56 @@ contract PossessioPaymentsK1 is Test {
         vm.expectRevert();
         payments.executeFreezeRelease();
         assertTrue(payments.withdrawalsFrozen());
+    }
+
+    /// Review 2026-10-17 (F-1): a release queued while disarmed is void the
+    /// moment the guardian is re-armed. Before the fix the stale queue outlived
+    /// the re-arm and lifted a LATER freeze as soon as the next 7-day disarm
+    /// completed, cutting K-1's stated 37-day cost to 7 days.
+    function test_K1_rearmVoidsTheQueuedRelease() public {
+        _K1_freezeThenLoseGuardianAndDisarm();
+        vm.prank(MERCHANT);
+        payments.queueFreezeRelease();
+        assertGt(payments.freezeReleaseExecuteAfter(), 0, "queued");
+        vm.prank(MERCHANT);
+        vm.expectEmit(address(payments));
+        emit PossessioPayments.FreezeReleaseCancelled(MERCHANT);
+        payments.enableGuardian();
+        assertEq(payments.freezeReleaseExecuteAfter(), 0, "the re-arm voids the queue");
+        // The guardian lifts the freeze, freezes again 40 days on (past the old
+        // readyAt), and the owner disarms: only a FRESH 30-day queue may release.
+        vm.prank(GUARDIAN);
+        payments.setWithdrawalsFrozen(false);
+        vm.warp(block.timestamp + 40 days);
+        vm.prank(GUARDIAN);
+        payments.setWithdrawalsFrozen(true);
+        vm.prank(MERCHANT);
+        payments.queueGuardianDisable();
+        vm.warp(block.timestamp + payments.GUARDIAN_DISABLE_DELAY() + 1);
+        vm.prank(MERCHANT);
+        payments.disableGuardian();
+        vm.prank(MERCHANT);
+        vm.expectRevert(PossessioPayments.FreezeReleaseNotReady.selector);
+        payments.executeFreezeRelease();                    // the stale queue is gone
+        assertTrue(payments.withdrawalsFrozen(), "the later freeze holds");
+        vm.prank(MERCHANT);
+        payments.queueFreezeRelease();                      // the honest path still exists
+        assertEq(payments.freezeReleaseExecuteAfter(), block.timestamp + payments.FREEZE_RELEASE_DELAY());
+    }
+
+    /// A re-arm with nothing queued cancels nothing and says nothing.
+    function test_K1_rearmWithNoQueueCancelsNothing() public {
+        bytes32 gRole = payments.GUARDIAN_ROLE();
+        vm.prank(MERCHANT);
+        payments.grantRole(gRole, GUARDIAN);
+        vm.recordLogs();
+        vm.prank(MERCHANT);
+        payments.enableGuardian();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != PossessioPayments.FreezeReleaseCancelled.selector, "no phantom cancel");
+        }
+        assertEq(payments.freezeReleaseExecuteAfter(), 0);
+        assertTrue(payments.guardianEnabled());
     }
 }

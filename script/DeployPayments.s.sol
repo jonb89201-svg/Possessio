@@ -56,26 +56,28 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
-import {PossessioPayments} from "../src/PossessioPayments.sol";
+import {PossessioPayments, BaseWiring} from "../src/PossessioPayments.sol";
 import {deployPayments} from "../test/PaymentsDeployHelper.sol";
 
 contract DeployPayments is Script {
     /// @notice EXPECTED_DEPLOYER was set and the signing key resolves elsewhere.
     error DeployerMismatch(address actual, address expected);
 
-    // ---- cast-verified Base mainnet addresses ----
-    address constant USDC             = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant CBETH            = 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22;
-    address constant DAI              = 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb;
-    address constant WETH             = 0x4200000000000000000000000000000000000006;
-    address constant ROUTER          = 0x2626664c2603336E57B271c5C0b26F421741e481; // V3 SwapRouter02
-    address constant AERO_ROUTER     = 0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5;
-    address constant MORPHO_VAULT     = 0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100;
-    address constant CHAINLINK_CBETH = 0x806b4Ac04501c29769051e42783cF04dCE41440b; // cbETH/ETH 18-dec
-    address constant CHAINLINK_DAI   = 0x591e79239a7d679378eC8c847e5038150364C78F; // DAI/USD 8-dec (cast-verified)
-    address constant CHAINLINK_USDC  = 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B; // USDC/USD 8-dec
-    address constant CHAINLINK_ETH   = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70; // ETH/USD 8-dec
-    address constant LST_RATES        = 0xDDb75e974d99FcF95E241adbFD376861c47a8548; // deployed + certified
+    // ---- cast-verified Base mainnet addresses: ONE source of truth, BaseWiring ----
+    // (review 2026-10-17, F-8). The template pins the same library on chainid
+    // 8453 (K-3), so a value edited here alone can no longer deploy on Base.
+    address constant USDC             = BaseWiring.USDC;
+    address constant CBETH            = BaseWiring.CBETH;
+    address constant DAI              = BaseWiring.DAI;
+    address constant WETH             = BaseWiring.WETH;
+    address constant ROUTER           = BaseWiring.ROUTER;          // V3 SwapRouter02
+    address constant AERO_ROUTER      = BaseWiring.AERO_ROUTER;
+    address constant MORPHO_VAULT     = BaseWiring.MORPHO_VAULT;
+    address constant CHAINLINK_CBETH  = BaseWiring.CHAINLINK_CBETH; // cbETH/ETH 18-dec
+    address constant CHAINLINK_DAI    = BaseWiring.CHAINLINK_DAI;   // DAI/USD 8-dec (cast-verified)
+    address constant CHAINLINK_USDC   = BaseWiring.CHAINLINK_USDC;  // USDC/USD 8-dec
+    address constant CHAINLINK_ETH    = BaseWiring.CHAINLINK_ETH;   // ETH/USD 8-dec
+    address constant LST_RATES        = BaseWiring.LST_RATES;       // deployed + certified
 
     // ---- config (units verified against contract) ----
     uint256 constant MIN_SWAP_BATCH = 100_000000;   // 100 USDC (6-dec)

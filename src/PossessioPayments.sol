@@ -318,6 +318,28 @@ interface ILSTExchangeRate {
     function cbEthToEth(uint256 cbEthAmount) external view returns (uint256);
 }
 
+/// @notice The canonical Base mainnet wiring (chainid 8453). One source of
+///         truth for the template's K-3 pin, script/DeployPayments.s.sol and
+///         the K-3 unit test (review 2026-10-17, F-8). It lives in this file so
+///         the template keeps zero Possessio imports; internal constants are
+///         inlined, so the library adds no runtime code and is never deployed.
+///         test/PaymentsFork_t.sol keeps its own copy on purpose: deploying
+///         against the live contracts is the independent check of these values.
+library BaseWiring {
+    address internal constant USDC              = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address internal constant CBETH             = 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22;
+    address internal constant DAI               = 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb;
+    address internal constant WETH              = 0x4200000000000000000000000000000000000006;
+    address internal constant ROUTER            = 0x2626664c2603336E57B271c5C0b26F421741e481; // Uniswap V3 SwapRouter02
+    address internal constant AERO_ROUTER       = 0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5; // Aerodrome Slipstream router
+    address internal constant MORPHO_VAULT      = 0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100; // Morpho USDC vault
+    address internal constant CHAINLINK_CBETH   = 0x806b4Ac04501c29769051e42783cF04dCE41440b; // cbETH/ETH, 18-dec
+    address internal constant CHAINLINK_DAI     = 0x591e79239a7d679378eC8c847e5038150364C78F; // DAI/USD, 8-dec
+    address internal constant CHAINLINK_USDC    = 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B; // USDC/USD, 8-dec
+    address internal constant CHAINLINK_ETH     = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70; // ETH/USD, 8-dec
+    address internal constant LST_RATES         = 0xDDb75e974d99FcF95E241adbFD376861c47a8548; // LSTExchangeRate (certified)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //                        POSSESSIO PAYMENTS CONTRACT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -402,6 +424,14 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///         feeds can lag by their deviation thresholds (≤0.5%). 2% leaves
     ///         ~1.3% spare; a sweep that misses it reverts and retries. Floor
     ///         only; operators retain the ability to set a stricter per-sweep min.
+    ///         The measurement (QuoterV2 and Slipstream quotes, $50 to $100k,
+    ///         feeds at the time) is `evidence/slippage.json`, re-run by
+    ///         `evidence/slippage.py`, in the council's external-review folder
+    ///         for 2026-10-15; it ships with this patch when it goes public.
+    ///         The USDC→DAI refill leg shares the floor but sits inside a
+    ///         try/catch: a miss skips the refill (DAIRefillSkipped), it never
+    ///         blocks the sweep. Measured the same day: $100 fills 99.99 DAI at
+    ///         fee 500, and the pool holds only ~191 DAI (`evidence/dai_leg_quotes.txt`).
     uint256 public constant SWEEP_SLIPPAGE_BPS = 9800;
     uint256 private constant SWEEP_SLIPPAGE_DENOM = 10000;
 
@@ -725,6 +755,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         _;
     }
 
+    /// @dev The veto gate shared by cancelGuardianDisable and cancelFreezeRelease
+    ///      (review 2026-10-17, F-11): the owner, or any guardian, armed or not.
+    modifier onlyOwnerOrGuardian() {
+        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
+            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
+        }
+        _;
+    }
+
     modifier notPaused() {
         if (routingPaused) revert RoutingPaused();
         _;
@@ -880,18 +919,18 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @dev K-3: the canonical Base mainnet wiring (script/DeployPayments.s.sol).
     ///      Constructor-only, so it adds no runtime code.
     function _requireBaseWiring(DeployParams memory p) private pure {
-        _pin(p.usdc,             0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);  // USDC
-        _pin(p.cbeth,            0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22);  // cbETH
-        _pin(p.dai,              0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb);  // DAI
-        _pin(p.weth,             0x4200000000000000000000000000000000000006);  // WETH
-        _pin(p.router,           0x2626664c2603336E57B271c5C0b26F421741e481);  // Uniswap V3 SwapRouter02
-        _pin(p.aeroRouter,       0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5);  // Aerodrome Slipstream router
-        _pin(p.morphoVault,      0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100);  // Morpho USDC vault
-        _pin(p.chainlink,        0x806b4Ac04501c29769051e42783cF04dCE41440b);  // cbETH/ETH
-        _pin(p.chainlinkDai,     0x591e79239a7d679378eC8c847e5038150364C78F);  // DAI/USD
-        _pin(p.chainlinkUsdcUsd, 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B);  // USDC/USD
-        _pin(p.chainlinkEthUsd,  0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70);  // ETH/USD
-        _pin(p.lstRates,         0xDDb75e974d99FcF95E241adbFD376861c47a8548);  // LST rates (certified)
+        _pin(p.usdc,             BaseWiring.USDC);
+        _pin(p.cbeth,            BaseWiring.CBETH);
+        _pin(p.dai,              BaseWiring.DAI);
+        _pin(p.weth,             BaseWiring.WETH);
+        _pin(p.router,           BaseWiring.ROUTER);
+        _pin(p.aeroRouter,       BaseWiring.AERO_ROUTER);
+        _pin(p.morphoVault,      BaseWiring.MORPHO_VAULT);
+        _pin(p.chainlink,        BaseWiring.CHAINLINK_CBETH);
+        _pin(p.chainlinkDai,     BaseWiring.CHAINLINK_DAI);
+        _pin(p.chainlinkUsdcUsd, BaseWiring.CHAINLINK_USDC);
+        _pin(p.chainlinkEthUsd,  BaseWiring.CHAINLINK_ETH);
+        _pin(p.lstRates,         BaseWiring.LST_RATES);
     }
 
     function _pin(address got, address want) private pure {
@@ -1397,6 +1436,16 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
      */
     function enableGuardian() external onlyRole(OWNER_ROLE) {
         guardianEnabled = true;
+        // Review 2026-10-17 (F-1): a re-arm hands the freeze decision back to
+        // the guardian, so a release queued while disarmed (K-1) is void. Left
+        // in place, it would outlive the re-arm and lift a LATER freeze the
+        // moment the next disarm completed, cutting K-1's stated 37-day cost
+        // to 7 days. queueFreezeRelease requires the guardian disarmed, so no
+        // queue can exist while it is armed.
+        if (freezeReleaseExecuteAfter != 0) {
+            freezeReleaseExecuteAfter = 0;
+            emit FreezeReleaseCancelled(msg.sender);
+        }
         emit GuardianEnabled(msg.sender, block.timestamp);
     }
 
@@ -1428,10 +1477,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @notice P-H1: cancel a queued disarm. Owner (changed their mind) or
     ///         guardian (the veto — a disarm the merchant did not queue is the
     ///         signature of a stolen owner key).
-    function cancelGuardianDisable() external {
-        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
-        }
+    function cancelGuardianDisable() external onlyOwnerOrGuardian {
         if (guardianDisableExecuteAfter == 0) revert NothingQueued();
         guardianDisableExecuteAfter = 0;
         emit GuardianDisableCancelled(msg.sender);
@@ -1458,10 +1504,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     /// @notice K-1: cancel a queued release. Owner (changed their mind) or any
     ///         guardian, armed or not (a release the merchant did not queue is
     ///         the signature of a stolen owner key).
-    function cancelFreezeRelease() external {
-        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
-        }
+    function cancelFreezeRelease() external onlyOwnerOrGuardian {
         if (freezeReleaseExecuteAfter == 0) revert NothingQueued();
         freezeReleaseExecuteAfter = 0;
         emit FreezeReleaseCancelled(msg.sender);

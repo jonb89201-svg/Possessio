@@ -22,9 +22,19 @@
 // factory address below MUST be in Pool.authorizedSources, or every deployTemplate
 // reverts NotAuthorizedSource.
 //
+// PRE-FLIGHT (review 2026-10-17, F-2 / F-6 / F-7): before any gas, the script runs the
+// factory constructor's own checks against BOTH pools from the outside (live code, the
+// isInfraSink door, this factory's PREDICTED address in the source set) and checks that
+// each pool's per-launch cut clears its FLOOR_PER_UNIT dust gate. A mis-wired
+// constellation fails HERE with a named error, not as an opaque CreateX revert, and
+// never as a partner-less factory at the permanent address. The partner is an explicit
+// yes or no (WITH_PARTNER), never a default.
+//
 // RUN (Base FORK first — proves everything, spends no real ETH):
 //   DEPLOYER_PK=<anchor EOA key> DEPLOYMENT_FEE=1000000 TEMPLATE_CODEHASH=0x... \
+//   WITH_PARTNER=true PARTNER_SINK_ADDR=0x<partner pool> PARTNER_BPS=5000 \
 //   forge script script/DeployFactoryCreate3.s.sol --rpc-url $BASE_RPC_URL -vvv
+// (WITH_PARTNER=false deploys without a partner; unset refuses to run.)
 // then add --broadcast ONLY after the fork constellation test is green.
 
 pragma solidity ^0.8.26;
@@ -35,6 +45,14 @@ import {PossessioFactory} from "../src/PossessioFactory.sol";
 interface ICreateX {
     function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address newContract);
     function computeCreate3Address(bytes32 guardedSalt) external view returns (address);
+}
+
+/// The slice of PossessioPool the pre-flight reads. Declared here so the script
+/// speaks the deployed pool's ABI, exactly as the factory's constructor does.
+interface IPoolProbe {
+    function isInfraSink() external view returns (bool);
+    function isAuthorizedSource(address source) external view returns (bool);
+    function FLOOR_PER_UNIT() external view returns (uint256);
 }
 
 contract DeployFactoryCreate3 is Script {
@@ -63,6 +81,11 @@ contract DeployFactoryCreate3 is Script {
     error PredictionMismatch(address computed, address pinned);
     error DeployedMismatch(address deployed, address predicted);
     error FeeSinkPoolNotLive(address pool);
+    // Pre-flight errors (review 2026-10-17). Each names the pool it is about.
+    error PartnerConfigIncomplete(address sink, uint256 bps);
+    error PoolInterfaceMismatch(address pool);
+    error PoolRefusesFactory(address pool, address factory);
+    error CutBelowFloorUnit(address pool, uint256 cut, uint256 floorPerUnit);
 
     function run() external returns (address factoryAddr) {
         if (block.chainid != 8453) revert WrongChain(block.chainid); // Base (fork or mainnet)
@@ -70,9 +93,7 @@ contract DeployFactoryCreate3 is Script {
         uint256 pk               = vm.envUint("DEPLOYER_PK");
         uint256 deploymentFee    = vm.envUint("DEPLOYMENT_FEE");        // Architect's price (interim 1_000000 = $1)
         bytes32 templateCodehash = vm.envBytes32("TEMPLATE_CODEHASH");  // pinned template creation-code hash
-        // Optional security-partner share (PARTNER SHARE in PossessioFactory). Both unset = no partner.
-        address partnerSink      = vm.envOr("PARTNER_SINK_ADDR", address(0)); // the partner's PossessioPool
-        uint256 partnerBps       = vm.envOr("PARTNER_BPS", uint256(0));        // e.g. 5000 = half of each fee
+        (address partnerSink, uint256 partnerBps) = _partnerConfig();   // PARTNER SHARE, explicit yes or no
 
         // The broadcasting key MUST be the anchor EOA — the salt is sender-locked to it,
         // so any other caller is rejected by CreateX's guard. Fail early and readably.
@@ -93,11 +114,28 @@ contract DeployFactoryCreate3 is Script {
         // pool.isInfraSink() and reverts if absent. This is why the REVISED deploy
         // order is POOL -> x402Core -> factory -> saltPool (RUNBOOK §2). If the
         // pool is not live, stop here rather than let CreateX wrap the brick-guard
-        // revert in an opaque failure.
-        if (POOL.code.length == 0) revert FeeSinkPoolNotLive(POOL);
-        // Same gate for the partner's pool: it must be live, with this factory's
-        // predicted address in its source set, before the factory deploys.
-        if (partnerSink != address(0) && partnerSink.code.length == 0) revert FeeSinkPoolNotLive(partnerSink);
+        // revert in an opaque failure. The same three checks the constructor makes
+        // (code, door, source set) run here against the PREDICTED factory address,
+        // for the fee sink and, when set, the partner's pool.
+        uint256 partnerCut = (deploymentFee * partnerBps) / 10_000;
+        uint256 ownCut     = deploymentFee - partnerCut;
+        _requireLivePool(POOL);
+        _requireCutClearsFloor(POOL, ownCut);
+        if (partnerSink != address(0)) {
+            _requireLivePool(partnerSink);
+            _requireCutClearsFloor(partnerSink, partnerCut);
+        }
+
+        // Say what is about to be frozen into the permanent address, before any gas.
+        console2.log("=== PossessioFactory CREATE3 pre-flight (Base) ===");
+        console2.log("  deploymentFee         :", deploymentFee);
+        console2.log("  templateCodehash      :");
+        console2.logBytes32(templateCodehash);
+        console2.log("  feeSink = POOL (A)    :", POOL);
+        console2.log("  own cut per launch    :", ownCut);
+        console2.log("  partnerSink           :", partnerSink);
+        console2.log("  partnerBps            :", partnerBps);
+        console2.log("  partner cut per launch:", partnerCut);
 
         // initCode = factory creation bytecode ++ abi.encode(constructor args).
         // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink,
@@ -123,6 +161,8 @@ contract DeployFactoryCreate3 is Script {
         console2.log("  feeSink = POOL (A)   :", POOL);
         console2.log("  deploymentFee        :", deploymentFee);
         console2.log("  payToken (USDC)      :", PAY_TOKEN);
+        console2.log("  partnerSink          :", partnerSink);
+        console2.log("  partnerBps           :", partnerBps);
         console2.log("");
         console2.log("REMINDER: this deploys PossessioFactory AS COMPILED. If the line-211");
         console2.log("A-edit is not in the source, this is the fund-stranding factory at the");
@@ -130,5 +170,46 @@ contract DeployFactoryCreate3 is Script {
         console2.log("");
         console2.log("NEXT (verify-before-wire): deploy salt pool -> x402Core -> pool, each");
         console2.log("extcodehash-gated; the pool's authorizedSources MUST include this factory.");
+    }
+
+    /// WITH_PARTNER is an explicit yes or no (review 2026-10-17, F-2). With the
+    /// old envOr defaults a typo in a variable NAME deployed a partner-less
+    /// factory at the permanent CREATE3 address, silently. Now: unset refuses to
+    /// run, `false` ignores the partner variables, `true` requires both of them
+    /// to be set and non-zero.
+    function _partnerConfig() internal view returns (address sink, uint256 bps) {
+        if (!vm.envBool("WITH_PARTNER")) return (address(0), 0);
+        sink = vm.envAddress("PARTNER_SINK_ADDR"); // the partner's PossessioPool
+        bps  = vm.envUint("PARTNER_BPS");          // e.g. 5000 = half of each fee
+        if (sink == address(0) || bps == 0) revert PartnerConfigIncomplete(sink, bps);
+    }
+
+    /// The factory constructor's own sink checks (PossessioFactory
+    /// `_requireLivePool`), run from the outside against the PREDICTED factory
+    /// address (review 2026-10-17, F-7). The code-length pre-check catches the
+    /// EOA/undeployed case explicitly; the try/catch catches has-code-but-wrong
+    /// and an explicit `false`.
+    function _requireLivePool(address pool) internal view {
+        if (pool.code.length == 0) revert FeeSinkPoolNotLive(pool);
+        try IPoolProbe(pool).isInfraSink() returns (bool ok) {
+            if (!ok) revert PoolInterfaceMismatch(pool);
+        } catch {
+            revert PoolInterfaceMismatch(pool);
+        }
+        try IPoolProbe(pool).isAuthorizedSource(PREDICTED_FACTORY) returns (bool authorized) {
+            if (!authorized) revert PoolRefusesFactory(pool, PREDICTED_FACTORY);
+        } catch {
+            revert PoolInterfaceMismatch(pool);
+        }
+    }
+
+    /// A pool counts an inflow toward its velocity floor only when the inflow is
+    /// at least FLOOR_PER_UNIT (the X-H1 dust gate). A per-launch cut below that
+    /// is credited but never raises the floor, so the pool's protection would
+    /// not grow with launches at all. Price, split and both pools' calibration
+    /// must agree before the one-shot deploy (review 2026-10-17, F-6).
+    function _requireCutClearsFloor(address pool, uint256 cut) internal view {
+        uint256 floorPerUnit = IPoolProbe(pool).FLOOR_PER_UNIT();
+        if (cut < floorPerUnit) revert CutBelowFloorUnit(pool, cut, floorPerUnit);
     }
 }
