@@ -66,27 +66,23 @@ contract DeployPayments is Script {
     // ---- cast-verified Base mainnet addresses: ONE source of truth, BaseWiring ----
     // (review 2026-10-17, F-8). The template pins the same library on chainid
     // 8453 (K-3), so a value edited here alone can no longer deploy on Base.
+    // v3.0: seven addresses. The routers, WETH and DAI left with the swap sweep.
     address constant USDC             = BaseWiring.USDC;
     address constant CBETH            = BaseWiring.CBETH;
-    address constant DAI              = BaseWiring.DAI;
-    address constant WETH             = BaseWiring.WETH;
-    address constant ROUTER           = BaseWiring.ROUTER;          // V3 SwapRouter02
-    address constant AERO_ROUTER      = BaseWiring.AERO_ROUTER;
     address constant MORPHO_VAULT     = BaseWiring.MORPHO_VAULT;
     address constant CHAINLINK_CBETH  = BaseWiring.CHAINLINK_CBETH; // cbETH/ETH 18-dec
-    address constant CHAINLINK_DAI    = BaseWiring.CHAINLINK_DAI;   // DAI/USD 8-dec (cast-verified)
     address constant CHAINLINK_USDC   = BaseWiring.CHAINLINK_USDC;  // USDC/USD 8-dec
     address constant CHAINLINK_ETH    = BaseWiring.CHAINLINK_ETH;   // ETH/USD 8-dec
     address constant LST_RATES        = BaseWiring.LST_RATES;       // deployed + certified
 
     // ---- config (units verified against contract) ----
-    uint256 constant MIN_SWAP_BATCH = 100_000000;   // 100 USDC (6-dec)
-    uint256 constant DAI_CEILING    = 10000e18;      // 10,000 DAI (18-dec)
-    uint256 constant DAILY_LIMIT    = 50000e18;      // 50,000 DAI/24h (18-dec)
-    // C-2 (audit 2026-07-14) — per-asset exit caps, USD-parity with DAILY_LIMIT:
+    uint256 constant MIN_SWAP_BATCH = 100_000000;   // 100 USDC above the float before a kick (6-dec)
+    uint256 constant USDC_FLOAT     = 10000e6;       // 10,000 USDC kept liquid, never auctioned (v3.0; was the DAI ceiling)
+    uint256 constant MAX_KICK_USDC  = 0;             // no cap per kick; the owner can set one later
+    // C-2 (audit 2026-07-14) — per-asset exit caps:
     //   USDC:  50,000 USDC/24h covers sendUSDC + redeemMorpho's USDC output.
     //   cbETH: 20 cbETH/24h (~$50k at ~$2.5k/ETH-equivalent) covers sendCbETH.
-    // Larger exits go through the 7-day emergency-withdraw timelock.
+    // Larger exits go through the 7-day emergency-withdraw timelock, to a payee.
     uint256 constant USDC_DAILY_LIMIT  = 50000e6;    // 50,000 USDC/24h (6-dec)
     uint256 constant CBETH_DAILY_LIMIT = 20e18;      // 20 cbETH/24h (18-dec)
 
@@ -103,26 +99,28 @@ contract DeployPayments is Script {
         }
         console2.log("  deployer (signing key resolves to):", deployer);
 
+        // v3.0: the payees active at deployment. The deployer (the owner) is
+        // the first; the console's launch flow collects the merchant's others.
+        // An empty list is refused by the constructor (NoPayees).
+        address[] memory payees = new address[](1);
+        payees[0] = deployer;
+
         // Field order MUST match the struct exactly.
         PossessioPayments.DeployParams memory p = PossessioPayments.DeployParams({
             owner:            deployer,
             usdc:             USDC,
             cbeth:            CBETH,
-            dai:              DAI,
-            weth:             WETH,
-            router:           ROUTER,
-            aeroRouter:       AERO_ROUTER,
             morphoVault:      MORPHO_VAULT,
             chainlink:        CHAINLINK_CBETH,
-            chainlinkDai:     CHAINLINK_DAI,
             chainlinkUsdcUsd: CHAINLINK_USDC,
             chainlinkEthUsd:  CHAINLINK_ETH,
             lstRates:         LST_RATES,
             minSwapBatch:     MIN_SWAP_BATCH,
-            daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT,
+            usdcFloat:        USDC_FLOAT,
+            maxKickUsdc:      MAX_KICK_USDC,
             usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
-            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT,  // C-2
+            payees:           payees
         });
 
         vm.startBroadcast(pk);
@@ -135,14 +133,14 @@ contract DeployPayments is Script {
         console2.log("  Payments address:", paymentsAddr);
         console2.log("  owner           :", deployer);
         console2.log("  minSwapBatch    :", MIN_SWAP_BATCH);
-        console2.log("  daiCeiling      :", DAI_CEILING);
-        console2.log("  dailyLimit      :", DAILY_LIMIT);
+        console2.log("  usdcFloat       :", USDC_FLOAT);
+        console2.log("  maxKickUsdc     :", MAX_KICK_USDC);
         console2.log("  usdcDailyLimit  :", USDC_DAILY_LIMIT);
         console2.log("  cbEthDailyLimit :", CBETH_DAILY_LIMIT);
+        console2.log("  payee[0]        :", deployer);
         console2.log("");
         console2.log("NEXT: point the console at this address, test reads,");
-        console2.log("      send a small USDC amount, confirm balance shows.");
-        console2.log("      (Sweep path is NOT yet fork-tested - the $1 sweep");
-        console2.log("       is the live confirmation of the unproven path.)");
+        console2.log("      send a small USDC amount, confirm balance shows,");
+        console2.log("      then kick() once the float is covered and watch the lot.");
     }
 }

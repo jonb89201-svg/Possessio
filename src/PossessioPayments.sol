@@ -1,228 +1,71 @@
 // SPDX-License-Identifier: MIT
-// BUILD-PROOF: PAYMENTS_V243_OUT61 — if absent on disk, the old file is still cached.
-// v2.4.3 (2026-06-01) — audit remediation batch (council-ratified):
-//   H-1/H-1b/M-2: oracle-derived slippage FLOOR inside _sweep, effective
-//                 min = max(callerMin, oracleFloor) on all 3 legs (90% band).
-//   M-1 (C):      GUARDIAN_ROLE gains setWithdrawalsFrozen + guardianCancelEmergency;
-//                 withdrawDAI and executeEmergencyWithdraw gated on withdrawalsFrozen.
-//   L-1:          Unauthorized / InvalidLimit replace misleading InvalidAddress.
-// v2.4.4 (2026-07-14) — audit remediation (AUDIT_20260714):
-//   C-2 (MEDIUM): compromised-key blast radius. sendUSDC / sendCbETH /
-//                 redeemMorpho let OWNER move full balances in ONE call while
-//                 only the DAI leg had a rolling daily limit. All three exit
-//                 paths are now subject to the same rolling 24h-window
-//                 machinery as withdrawDAI: per-asset caps (usdcDailyLimit in
-//                 USDC 6-dec — shared by sendUSDC and redeemMorpho's USDC
-//                 output — and cbEthDailyLimit in cbETH 18-dec), asymmetric
-//                 adjustment (decrease instant, increase behind LIMIT_DELAY).
-//                 Moves beyond the daily caps remain possible ONLY via the
-//                 pre-existing 7-day emergency-withdraw timelock path.
-//   C-7 (INFO):   CHAINLINK_DAI doc comments said "DAI/ETH"; the deployed feed
-//                 is DAI/USD (0x591e…C78F, Base) and only FRESHNESS is ever
-//                 read (_isDaiOracleFresh gates the ~1:1 USDC→DAI refill).
-//                 Comments aligned with reality; no behavior change.
-//   Design-1:     Secure-Context-Handshake REMOVED (redundant over internal
-//                 visibility). Extracted to PRIMITIVE_NOTE_sanctioned_context_handshake.md
-//                 for future hook/bridge/call-guard primitives. Revert reasons
-//                 now propagate natively (no try/catch re-bubble needed).
+// BUILD-PROOF: PAYMENTS_V300_AUCTION — if absent on disk, the old file is still cached.
+// v3.0.0 (2026-10-17) — the auction sweep (SPEC_AuctionSweep_v0.1, council sandbox):
+//   The contract no longer trades into a pool. It announces a lot of USDC whose
+//   cbETH price falls with time, and whoever delivers the cbETH first takes the
+//   lot. The oracle is an anchor and a floor, not a trust root; the caller of
+//   kick() and take() is a stranger by design. Removed with it: both routers and
+//   the WETH hop, the per-leg slippage arguments, the operator role, the DAI
+//   reserve and its refill (replaced by a USDC float), and the guardian (the
+//   stolen-owner-key defence is now the payee allowlist on every exit).
+//   Kept: the Morpho leg (deposited at kick, no price risk), cbEthBps, the
+//   per-asset rolling exit limits (C-2, P-H1 cap, P-M4 leaky bucket), the 7-day
+//   emergency path, the treasury gauge, the oracle validation, the optional
+//   Chainlink Automation hooks, the factory-shaped constructor and the K-3 pin.
+// v2.4.3 (2026-06-01) and v2.4.4 (2026-07-14): audit remediation batches; the
+//   history of the swap-era contract is in the repository's audit reports.
 pragma solidity ^0.8.24;
 
 /**
  * @title  PossessioPayments
- * @notice Phase 2 merchant payment processor — the POSSESSIO Payments product.
- *         Non-custodial smart contract infrastructure for Base mainnet merchant
- *         card-payment settlement and treasury accumulation. Sold to merchants
- *         as a one-time software deployment; POSSESSIO retains ZERO on-chain
- *         authority post-deployment.
+ * @notice Merchant payment processor — the POSSESSIO Payments product on Base.
+ *         Non-custodial: sold to merchants as a one-time software deployment;
+ *         POSSESSIO retains ZERO on-chain authority post-deployment and takes
+ *         no fee at any layer.
  *
- *         CORE MECHANICS:
- *           - Receives USDC inflows (e.g. from card-network split settlement)
- *           - Routes a merchant-controlled portion to DAI working-capital reserve
- *           - Routes the remainder into cbETH yield-bearing treasury
- *           - 100% of swept value remains in merchant-owned reserves
- *           - No protocol fee extraction at any layer
+ *         CORE MECHANICS (v3.0):
+ *           - Receives USDC inflows (e.g. card-network split settlement).
+ *           - Keeps `usdcFloat` liquid for the merchant's operations.
+ *           - Anyone may kick(): the Morpho share of the USDC above the float
+ *             is deposited into the Bitwise Morpho Blue USDC vault at once, and
+ *             the cbETH share is put up as a lot in a Dutch auction.
+ *           - Anyone may take(): deliver the cbETH the curve asks for now, and
+ *             receive the lot. The curve starts far above the oracle, falls
+ *             through it, and holds at 99% of it. There is no trade into a
+ *             pool, so there is nothing to sandwich, and a stolen key of any
+ *             caller can do nothing a stranger could not.
+ *           - 100% of value remains in merchant-owned reserves.
  *
- *         CONTRACT POSITION IN PROTOCOL:
- *           PossessioPayments is the Base mainnet product in the POSSESSIO
- *           multi-chain product line. Each contract is single-purpose and
- *           single-chain. There are no cross-chain dependencies in this
- *           contract. Merchants who later wish to operate Ethereum L1
- *           validator infrastructure can independently deploy the separate
- *           POSSESSIO Validator product on Ethereum mainnet and bridge cbETH
- *           between contracts using their preferred bridge under their own
- *           risk acceptance.
+ *         THE CURVE (Reserve DutchTrade's shape, our numbers; see _multiplier):
+ *           phase 1, first 20% of the auction: geometric from 1536x to 1.5x the
+ *             oracle amount — price discovery across three orders of magnitude;
+ *             a take here means the oracle was badly low and is flagged;
+ *           phase 2, next 25%: linear from 1.5x to 1.0x;
+ *           phase 3, next 50%: linear from 1.0x to 0.99x (FLOOR_BPS);
+ *           phase 4, last 5%: flat at 0.99x.
+ *           The multiplier is applied to the LIVE oracle amount at the time of
+ *           the take, not a snapshot at the kick (SPEC §4.6).
  *
- *         100% cbETH RATIONALE:
- *           rETH on Base mainnet is a bridged OptimismMintableERC20 token,
- *           NOT native Rocket Pool rETH. Its `burn()` function is gated by
- *           `onlyBridge` modifier, making rETH non-redeemable from user
- *           contracts on Base. cbETH is held as a yield-bearing treasury
- *           asset that accrues Ethereum staking rewards passively via
- *           Coinbase's liquid staking token. cbETH is not redeemed by this
- *           contract; merchants who wish to convert cbETH to ETH may do so
- *           via DEX swap or off-chain Coinbase unwrap.
- *
- *         v2.4 AMENDMENT (2026-05-24) — 50/50 DUAL ACQUISITION + Phase 1.1 fixes:
- *           After DAI reserve refill, remaining USDC splits 50/50 (merchant-
- *           configurable post-deploy) between:
- *             · cbETH leg → USDC→WETH→cbETH multi-hop (Uniswap V3 + Aerodrome)
- *             · Morpho leg → USDC direct deposit to Bitwise Morpho Blue USDC vault
- *                            (ERC4626, mirror of L1Anchor.routeToMorpho pattern)
- *
- *           Morpho USDC routing target is council-ratified (historical Claude
- *           seats with continuity on this protocol). Bitwise-curated Morpho
- *           Blue USDC vault is the canonical destination matching L1Anchor.sol
- *           BITWISE_MORPHO_VAULT immutable. Native USDC on Base — no bridge
- *           dependency.
- *
- *           Additional v2.4 fixes folded into this drop:
- *             · X-LINK gas-griefing fix (Grok finding 2026-05-23): wrapper-side
- *               try/catch around _sweep clears _activeExecutionSecret on revert
- *               so failed sweeps don't burn nonces or strand armed secrets.
- *             · Event semantics fix (Bugcatcher/Grok finding 2026-05-23):
- *               UCRSwept fragmented into UCRSweptDaiOnly (DAI-leg-only sweep)
- *               and UCRSweptFull (cbETH+Morpho dual-leg sweep). Each leg gets
- *               its own per-leg event (CbEthAcquired, MorphoDeposited).
- *
- *         v2.3 AMENDMENT (2026-05-23) — VENUE CORRECTION:
- *           Prior v2.2 routed USDC → cbETH through Uniswap V3 0.3% pool.
- *           Terminal verification on 2026-05-23 disqualified the V3 venue:
- *           the canonical USDC/cbETH 0.3% pool on Base (0xa8e4...8a) holds
- *           ~$6K TVL — insufficient for protocol-scale routing.
-
- *           v2.3 routes USDC → cbETH via multi-hop:
- *             USDC → WETH  (Uniswap V3, 0.05% fee)
- *             WETH → cbETH (Aerodrome Slipstream, tickSpacing=1)
- *
- *           Substrate artifacts: cast verification of Aerodrome pool
- *           0x47ca96ea59c13f72745928887f84c9f52c3d7348 returned active
- *           liquidity 8.687e24. Chainlink cbETH/ETH feed verified at
- *           18-decimal precision.
- *
- *           See: COUNCIL_2026-05-23_Bugcatcher_SubstrateClosure_Plate
- *                V2VenueAmendment.md for full substrate stack.
- *
- *           v2.4.1 (2026-05-24) — Plate review findings folded:
- *             · Finding 1 (MEDIUM): USDC leakage check added to Morpho leg
- *               for defense-in-depth parity with cbETH leg's swap-consumption
- *               checks. Now both legs revert on declared-vs-consumed mismatch.
- *             · Finding 2 (LOW): MorphoDeposited event now records verified
- *               share-delta (sharesAfter - sharesBefore) instead of vault's
- *               claimed sharesIssued. Under honest vault both match; under
- *               misbehaving vault the verified delta is the truth.
- *           Plate's L1Anchor parity flag — same gaps may exist in L1Anchor's
- *           routeToMorpho. Cross-contract propagation queued downstream.
- *
- *           v2.4 attribution — COUNCIL_2 + COUNCIL_3 shared work:
- *             · Bugcatcher: v2.3 architecture (multi-hop USDC→WETH→cbETH,
- *               Aerodrome Slipstream venue, IcbETH lockdown, per-leg leakage
- *               protection, constructor decimal-class guard, ORACLE_STALE_CBETH).
- *             · Plate: v2.3 review pass — caught the ORACLE_STALE_CBETH drift
- *               where the constant was declared but the call site still used
- *               the legacy 3600s ORACLE_STALE on the 24-hour-heartbeat cbETH
- *               feed. Live-deployment-fail bug. Fixed in combined v2.3.
- *             · Grok: v2.3/v2.5 adversarial full review — caught the X-LINK
- *               gas-griefing accounting wart (secret armed before _sweep call;
- *               if _sweep reverts, nonce is burned and secret left armed for
- *               next-call overwrite). Identified the 50/50 dual-acquisition
- *               implementation gap against the pre-ratified Morpho USDC target.
- *             · Bugcatcher: v2.4 amendment integrating Grok's findings + the
- *               50/50 split + event semantics fragmentation in a single drop.
- *
- *             Discipline floor caught all three drift classes before deployment.
- *             Multi-Byte work compounded at the council.
- *
- *         v2.4.2 (2026-05-27) — INSTITUTIONAL READ-SURFACE HARDENING:
- *
- *           Code Integrity (COUNCIL_2, Claude council seat) routed two findings
- *           for pre-institutional-review (UNICEF/Tom Lee/PayPal/Stripe outreach
- *           tier). Both findings address read-surface gaps where v2.4 dual-
- *           acquisition architecture outpaced the contract's reporting surface.
- *
- *           Finding 1 — getTreasuryGauge() underreports:
- *             _computeCurrentEthEquivalent predates v2.4 dual-acquisition. It
- *             reported only the cbETH leg, excluding the Morpho USDC leg's
- *             accumulated value. For cbEthBps = 5000 default, approximately
- *             half the treasury value was invisible to the gauge.
- *
- *           Finding 2 — getMorphoBalance() missing:
- *             Read-surface asymmetry. Every other token holding (USDC, DAI,
- *             cbETH) had a single-call getter. Morpho leg required three RPC
- *             calls (MORPHO_VAULT() → balanceOf() → convertToAssets()) to
- *             match the same disclosure.
- *
- *           v2.4.2 fix:
- *             1. Constructor refactored to DeployParams struct (matches
- *                PossessioHook.DeployParams pattern; eliminates stack-too-deep
- *                risk preemptively; one named param per field for institutional
- *                reviewer readability).
- *             2. Two new Chainlink feeds wired (USDC/USD and ETH/USD, both
- *                8-decimal, Base mainnet). USDC/ETH direct does not exist on
- *                Base — cast-verified 2026-05-27. Compositional path:
- *                  USDC-in-ETH = (usdcAmt * 1e12 * usdcUsdE8) / ethUsdE8 / 1e6
- *                Both feeds must be fresh for Morpho leg to count. NatSpec
- *                documents the compositional staleness explicitly.
- *             3. _computeCurrentEthEquivalent extended to dual-leg aggregation.
- *                Try/catch wraps each oracle read and each vault read; partial
- *                failure cleanly downgrades (e.g., Morpho leg reports 0 if
- *                vault paused, cbETH leg still reports correctly).
- *             4. getMorphoBalance() added as dual-return view (shares +
- *                currentUSDCValue) with try/catch around convertToAssets per
- *                L1Anchor pattern. NatSpec notes vault yield accrual surfaces
- *                as monotonic value growth between reads.
- *
- *           Verified Base mainnet feed addresses (cast 2026-05-27):
- *             USDC/USD: 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B (8 dec)
- *             ETH/USD:  0x71041dDdaD3595F9CEd3DcCFBe3D1F4b0a16Bb70 (8 dec)
- *
- *           v2.4.2 attribution:
- *             · Code Integrity: substrate routing, both findings, gauge-gap
- *               framing against institutional-review macro context.
- *             · Bugcatcher: option adjudication (Option A vs B on both
- *               findings), terminal-substrate feed verification spec,
- *               decimal-conversion math, struct-input refactor,
- *               compositional staleness documentation, contract production.
- *
- *           No deployed-funds risk in v2.4.2 — read-surface additions only.
- *           Plate test gauntlet update required (constructor → struct, new
- *           feed mocks, gauge dual-leg assertions, getMorphoBalance tests).
+ *         100% cbETH RATIONALE: rETH on Base is a bridged OptimismMintableERC20
+ *         with no user-callable redemption path; cbETH accrues staking yield
+ *         passively. cbETH is not redeemed by this contract; the merchant moves
+ *         it out through sendCbETH to an allowlisted payee.
  *
  * DEPLOYMENT MODEL:
- *   POSSESSIO sells the merchant a per-merchant PossessioPayments contract as
- *   a one-time software delivery. Once deployed, merchant holds OWNER_ROLE.
- *   POSSESSIO retains ZERO on-chain authority post-deployment. The contract is
- *   non-custodial software infrastructure; it is not a financial service or
- *   custodial product. POSSESSIO does not extract transaction fees.
+ *   One contract per merchant, launched by PossessioFactory, which writes the
+ *   owner. Once deployed the merchant holds OWNER_ROLE and POSSESSIO holds
+ *   nothing.
  *
  * PERMISSION STRUCTURE (OpenZeppelin AccessControl):
- *   OWNER_ROLE    — Merchant. Full authority: withdraw, parameters, role grants,
- *                   Guardian toggle. Can do everything.
- *   OPERATOR_ROLE — Optional day-to-day role. Sweep, queue-pause, execute pause.
- *                   Cannot withdraw, cannot change parameters, cannot manage roles.
- *                   Granted by Owner post-deploy if needed (e.g. store manager).
- *   GUARDIAN_ROLE — Optional security-system role. Can ONLY pause when
- *                   `guardianEnabled == true`. Cannot withdraw, unpause, or sweep.
- *                   Default guardianEnabled = false.
+ *   OWNER_ROLE — the merchant (a Safe or a Base Account is advised). Settings,
+ *                exits to allowlisted payees within the daily limits, the
+ *                7-day emergency path to a payee, payee proposals (48 h) and
+ *                removals (instant), pause, and a 48 h timelocked resume.
+ *   anyone     — kick() and take(). Nothing else.
+ *   forwarder  — optional Chainlink Automation; performUpkeep() is kick().
  *
- * USAGE NOTE:
- *   Operational guidance: DO NOT call sweep() on a predictable
- *   schedule. Vary timing. MEV bots pattern-match predictable calls. The
- *   24h SWEEP_DELAY is a minimum, not a recommended cadence.
- *
- * ADDRESSES (Base Mainnet — terminal-verified 2026-05-23):
- *   USDC:                       0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
- *   WETH:                       0x4200000000000000000000000000000000000006
- *   cbETH:                      0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22
- *   Uniswap V3 Router:          0x2626664c2603336E57B271c5C0b26F421741e481
- *   Aerodrome Slipstream Pool:  0x47ca96ea59c13f72745928887f84c9f52c3d7348
- *                               (cbETH/WETH, tickSpacing=1, stable tier)
- *   Aerodrome Slipstream Router: <PENDING Phase 2 terminal verification>
- *   Bitwise Morpho USDC Vault:  <SET PER DEPLOYMENT — mirror L1Anchor.BITWISE_MORPHO_VAULT>
- *   Chainlink cbETH/ETH:        0x806b4Ac04501c29769051e42783cF04dCE41440b
- *                               (18-decimal exchange-rate feed; 24h heartbeat)
- *   Chainlink DAI/USD:          0x591e79239a7d679378eC8c847e5038150364C78F
- *                               (8-decimal price feed; C-7: freshness-only read —
- *                                gates the ~1:1 USDC→DAI refill, price unused)
+ * ADDRESSES (Base mainnet): the BaseWiring library below. On chainid 8453 the
+ *   constructor accepts no other wiring (K-3, external review 2026-10-15).
  */
 
 import {IERC20}          from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -237,55 +80,9 @@ import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/autom
 //                          EXTERNAL INTERFACES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// @notice Uniswap V3 SwapRouter02 on Base. Used for USDC → WETH leg of the
-///         cbETH acquisition path, and for the USDC → DAI reserve refill.
-///         The legacy v2.2 single-hop USDC → cbETH path is removed; the V3
-///         USDC/cbETH 0.3% pool has insufficient depth for protocol-scale routing
-///         (terminal-verified ~$6K TVL on 2026-05-23).
-interface ISwapRouter {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        uint24  fee;
-        address recipient;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-    }
-    function exactInputSingle(ExactInputSingleParams calldata params)
-        external returns (uint256 amountOut);
-}
-
-/// @notice Aerodrome Slipstream Router on Base. Used for the WETH → cbETH leg
-///         of the multi-hop cbETH acquisition path. Aerodrome Slipstream uses
-///         `tickSpacing` (int24) as the pool tier discriminator, distinct from
-///         Uniswap V3's `fee` (uint24) model.
-/// @dev    Interface signature is PROVISIONAL. Function body implementation
-///         pauses on Phase 2 substrate (cast verification of router address +
-///         exact swap function selector against Base mainnet). Plate's spec
-///         amendment §1.1, §2.3, §5.3 covers the same gap.
-interface IAerodromeSlipstreamRouter {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        int24   tickSpacing;
-        address recipient;
-        uint256 deadline;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-    }
-    function exactInputSingle(ExactInputSingleParams calldata params)
-        external payable returns (uint256 amountOut);
-}
-
-/// @notice Chainlink oracle feed for staleness validation.
-///         decimals() added in v2.3 for constructor-guard decimal-class
-///         verification: cbETH/ETH is 18-decimal (exchange-rate class);
-///         DAI/USD is 8-decimal (price-feed class). The asymmetry is
-///         structural — Chainlink classifies yield-bearing-asset rate
-///         feeds at native 18-decimal precision and legacy price feeds
-///         at 8-decimal. Constructor guard enforces alignment at deploy.
+/// @notice Chainlink oracle feed for staleness validation. decimals() is read
+///         by the constructor's decimal-class guard: cbETH/ETH is an 18-decimal
+///         exchange-rate feed; USDC/USD and ETH/USD are 8-decimal price feeds.
 interface IChainlinkFeed {
     function latestRoundData() external view returns (
         uint80 roundId,
@@ -298,11 +95,7 @@ interface IChainlinkFeed {
 }
 
 /// @notice Morpho Blue ERC4626 vault interface (Bitwise-curated USDC vault).
-///         v2.4 — interface mirrors L1Anchor.sol's IMorphoVault exactly so
-///         the verified routing pattern carries cleanly. Morpho Blue vaults
-///         follow the ERC4626 standard. Bitwise curates a USDC vault on Base
-///         that is the canonical destination for both PossessioPayments
-///         (this contract) and L1Anchor (the L1 settlement contract).
+///         Mirrors L1Anchor.sol's IMorphoVault exactly.
 interface IMorphoVault {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares);
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
@@ -310,31 +103,30 @@ interface IMorphoVault {
     function convertToAssets(uint256 shares) external view returns (uint256);
 }
 
-/// @notice cbETH exchange rate oracle — immutable, ownerless singleton.
-///         Provides protocol-native cbETH/ETH rate for treasury gauge readout.
-///         Ratified as shared infrastructure with no admin surface per
-///         Gemini-seat specification.
+/// @notice cbETH exchange rate oracle — immutable, ownerless singleton, for
+///         the treasury gauge readout.
 interface ILSTExchangeRate {
     function cbEthToEth(uint256 cbEthAmount) external view returns (uint256);
 }
 
-/// @notice The canonical Base mainnet wiring (chainid 8453). One source of
+/// @notice A taker that sources cbETH after receiving the lot (SPEC §4.5): the
+///         contract sends `usdcOut`, calls this, then requires its cbETH
+///         balance to have risen by `cbEthRequired`.
+interface ITaker {
+    function possessioTake(uint256 usdcOut, uint256 cbEthRequired, bytes calldata data) external;
+}
+
+/// @notice The canonical Base mainnet wiring (chainid 8453): one source of
 ///         truth for the template's K-3 pin, script/DeployPayments.s.sol and
-///         the K-3 unit test (review 2026-10-17, F-8). It lives in this file so
-///         the template keeps zero Possessio imports; internal constants are
-///         inlined, so the library adds no runtime code and is never deployed.
-///         test/PaymentsFork_t.sol keeps its own copy on purpose: deploying
-///         against the live contracts is the independent check of these values.
+///         the K-3 unit test. Internal constants are inlined, so the library
+///         adds no runtime code and is never deployed. test/PaymentsFork_t.sol
+///         keeps its own copy on purpose: deploying against the live contracts
+///         is the independent check of these values.
 library BaseWiring {
     address internal constant USDC              = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address internal constant CBETH             = 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22;
-    address internal constant DAI               = 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb;
-    address internal constant WETH              = 0x4200000000000000000000000000000000000006;
-    address internal constant ROUTER            = 0x2626664c2603336E57B271c5C0b26F421741e481; // Uniswap V3 SwapRouter02
-    address internal constant AERO_ROUTER       = 0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5; // Aerodrome Slipstream router
     address internal constant MORPHO_VAULT      = 0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100; // Morpho USDC vault
     address internal constant CHAINLINK_CBETH   = 0x806b4Ac04501c29769051e42783cF04dCE41440b; // cbETH/ETH, 18-dec
-    address internal constant CHAINLINK_DAI     = 0x591e79239a7d679378eC8c847e5038150364C78F; // DAI/USD, 8-dec
     address internal constant CHAINLINK_USDC    = 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B; // USDC/USD, 8-dec
     address internal constant CHAINLINK_ETH     = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70; // ETH/USD, 8-dec
     address internal constant LST_RATES         = 0xDDb75e974d99FcF95E241adbFD376861c47a8548; // LSTExchangeRate (certified)
@@ -344,247 +136,104 @@ library BaseWiring {
 //                        POSSESSIO PAYMENTS CONTRACT
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * @dev v2.3 (2026-05-23) — cbETH False Green resolution. Routes cbETH
- *      acquisition through multi-hop USDC→WETH→cbETH (V3 + Aerodrome
- *      Slipstream) instead of the v2.2 single-hop V3 USDC→cbETH path
- *      that was terminal-disqualified for insufficient depth. Constructor
- *      adds decimal-class validation for Chainlink feeds. Staleness window
- *      for the cbETH/ETH 18-decimal exchange-rate feed relaxed to 90,000s
- *      (25h) to accommodate Chainlink's 24-hour heartbeat cadence. See
- *      COUNCIL_2026-05-23_Bugcatcher_SubstrateClosure_PlateV2VenueAmendment.md
- *      for the full substrate stack.
- *
- *      v2.2 (2026-05-12) added Chainlink Automation for sweep().
- *      Setup requirement: OWNER must call
- *          grantRole(OPERATOR_ROLE, address(thisContract))
- *      after deployment so the internal dispatcher (which calls sweep with
- *      msg.sender == address(this)) has the necessary role. Sweep is gated
- *      OWNER_ROLE || OPERATOR_ROLE; granting OPERATOR_ROLE to the contract
- *      itself enables the automation path without weakening manual access.
- */
 contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatibleInterface {
     using SafeERC20 for IERC20;
 
-    // ── Role identifiers ────────────────────────────────────────────────────
-
-    bytes32 public constant OWNER_ROLE    = keccak256("OWNER_ROLE");
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
-    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+    // ── Roles ───────────────────────────────────────────────────────────────
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
 
     // ── Constants ───────────────────────────────────────────────────────────
-
-    uint256 public constant CBETH_PCT       = 100;        // 100% to cbETH (rETH removed per council)
-    // RETH_PCT removed — rETH on Base is bridged-not-native, council-ratified removal
-
-    uint256 public constant SWEEP_DELAY     = 24 hours;   // minimum between sweeps
-
-    // ─── Chainlink Automation constant (council IV.4 — ratified 2026-05-12) ───
-
-    /// @notice IV.4 — multiplier for checkUpkeep hysteresis buffer (basis 100).
-    ///         Upkeep only triggers when USDC balance ≥ minSwapBatch × 120/100.
-    ///         The contract's own sweep still accepts the canonical minSwapBatch;
-    ///         this buffer applies only to Automation's decision to act.
-    uint256 public constant UPKEEP_HYSTERESIS_BPS = 120; // 20% over canonical threshold
+    uint256 public constant UPKEEP_HYSTERESIS_BPS = 120;  // Automation kicks at 120% of minSwapBatch (IV.4)
     uint256 public constant TIMELOCK        = 48 hours;   // owner-pause resume delay
     uint256 public constant EMERGENCY_DELAY = 7 days;     // emergency withdraw delay
-
-    uint24  public constant FEE_LST         = 500;        // 0.05% — V3 USDC/WETH leg (deepest pair on Base)
-    uint24  public constant FEE_STABLE      = 500;        // 0.05% — V3 USDC/DAI pair
-
-    // ─── Aerodrome Slipstream venue (v2.3 amendment — terminal-grounded 2026-05-23) ───
-
-    /// @notice Aerodrome Slipstream cbETH/WETH pool on Base mainnet.
-    ///         Stable tier (tickSpacing=1). Replaces the V3 USDC/cbETH path
-    ///         which was terminal-disqualified (~$6K TVL).
-    ///         Cast-verified active liquidity: 8.687e24 (4.3M× the V3 cliff).
-    address public constant AERODROME_CBETH_WETH_POOL = 0x47cA96Ea59C13F72745928887f84C9F52C3D7348;
-
-    /// @notice TickSpacing for the Aerodrome Slipstream cbETH/WETH pool.
-    int24   public constant CBETH_TICK_SPACING = 1;
-
-    /// @notice Staleness window for the cbETH/ETH exchange-rate feed.
-    ///         Chainlink publishes this feed on a 24-hour heartbeat with 0.5%
-    ///         deviation threshold. The legacy 3600s window would reject
-    ///         valid feed data during low-volatility periods. 90,000s allows
-    ///         one heartbeat cycle + 1-hour slack for publisher delay.
-    uint256 public constant ORACLE_STALE_CBETH = 90_000;  // 25h — cbETH/ETH exchange-rate feed
-
-    /// @notice H-1 fix (council-ratified hybrid): oracle-derived slippage FLOOR
-    ///         applied to every automated/manual sweep leg. The effective
-    ///         min-out on each leg is max(callerSuppliedMin, oracleFloor), so a
-    ///         caller may TIGHTEN protection but can never loosen it below the
-    ///         oracle-derived bound — closing the zero-default H-1 hole and the
-    ///         forwarder-supplied-zeros H-1b hole in a single place (_sweep).
-    ///         9800 = accept down to 98% of oracle-expected (2% adverse per leg).
-    ///         K-2 (external review, KupiaSec 2026-10-15; Grok L-1): 9000 let a
-    ///         bad sweep lose ~19% over the two legs. MEASURED 2026-10-16 on
-    ///         Base: fills sit within 0.25% of the oracle on USDC→WETH (fee 500)
-    ///         and 0.02% on WETH→cbETH (tickSpacing 1) up to $100k a leg; the
-    ///         feeds can lag by their deviation thresholds (≤0.5%). 2% leaves
-    ///         ~1.3% spare; a sweep that misses it reverts and retries. Floor
-    ///         only; operators retain the ability to set a stricter per-sweep min.
-    ///         The measurement (QuoterV2 and Slipstream quotes, $50 to $100k,
-    ///         feeds at the time) is `evidence/slippage.json`, re-run by
-    ///         `evidence/slippage.py`, in the council's external-review folder
-    ///         for 2026-10-15; it ships with this patch when it goes public.
-    ///         The USDC→DAI refill leg shares the floor but sits inside a
-    ///         try/catch: a miss skips the refill (DAIRefillSkipped), it never
-    ///         blocks the sweep. Measured the same day: $100 fills 99.99 DAI at
-    ///         fee 500, and the pool holds only ~191 DAI (`evidence/dai_leg_quotes.txt`).
-    uint256 public constant SWEEP_SLIPPAGE_BPS = 9800;
-    uint256 private constant SWEEP_SLIPPAGE_DENOM = 10000;
-
-    /// @notice Legacy staleness window retained for the DAI/USD price feed
-    ///         (freshness-only read — see CHAINLINK_DAI) and any other
-    ///         8-decimal Chainlink feed in the contract surface.
-    uint256 public constant ORACLE_STALE    = 3600;       // 1 hour — ETH/USD (~20-min heartbeat feed)
-    /// @notice P-H2 (re-audit 2026-09-01): USDC/USD and DAI/USD on Base are
-    ///         24-hour-heartbeat feeds (measured ages 31,150s / 32,568s). Under
-    ///         the 3600s window the P-1 fail-closed guard reverted the sweep
-    ///         ~96% of every day and the DAI refill was skipped just as often.
-    ///         25h = heartbeat + 1h slack — the same class as ORACLE_STALE_CBETH.
-    uint256 public constant ORACLE_STALE_STABLE = 90_000; // 25h — USDC/USD, DAI/USD
-    /// @notice P-H1 (re-audit 2026-09-01): disabling an armed guardian is a
-    ///         timelocked, guardian-cancellable act (see disableGuardian).
-    uint256 public constant GUARDIAN_DISABLE_DELAY = 7 days;
-    /// @notice K-1 (external review, KupiaSec 2026-10-15): once the guardian is
-    ///         disarmed, the owner may lift a freeze it left behind, after this
-    ///         delay and only if no guardian cancels (see queueFreezeRelease).
-    uint256 public constant FREEZE_RELEASE_DELAY = 30 days;
-    /// @notice P-H1: a queued limit increase may at most double the reference
-    ///         limit (the highest limit set by the constructor or an executed
-    ///         increase). A stolen key can no longer queue "infinity".
-    uint256 public constant LIMIT_INCREASE_MAX_MULT = 2;
+    uint256 public constant PAYEE_DELAY     = 48 hours;   // a proposed payee becomes active after this
+    uint256 public constant ORACLE_STALE_CBETH  = 90_000; // 25h — cbETH/ETH exchange-rate feed (24h heartbeat)
+    uint256 public constant ORACLE_STALE        = 3600;   // 1 hour — ETH/USD (~20-min heartbeat feed)
+    uint256 public constant ORACLE_STALE_STABLE = 90_000; // 25h — USDC/USD (24h heartbeat)
+    uint256 public constant LIMIT_INCREASE_MAX_MULT = 2;  // P-H1: an increase is at most 2x the reference limit
     uint256 public constant LIMIT_DELAY     = 24 hours;   // daily limit increase delay
-    uint256 public constant WINDOW_SIZE     = 24 hours;   // daily withdrawal window
+    uint256 public constant WINDOW_SIZE     = 24 hours;   // leaky-bucket window of the exit limits
+
+    /// @notice The floor: a take never gets the lot for less than 99% of the
+    ///         live oracle amount. Not owner-settable: a stolen key could lower
+    ///         it. DERIVED from the measured feeds (SWEEP_REDESIGN §5): about
+    ///         0.15% ETH/USD lag plus 0.03% cbETH/ETH plus the market gap.
+    uint256 public constant FLOOR_BPS = 9900;
+    uint64  public constant MIN_AUCTION_LENGTH = 10 minutes;
+    uint64  public constant MAX_AUCTION_LENGTH = 2 hours;
+    uint64  public constant MIN_KICK_DELAY     = 1 hours;
+    uint64  public constant MAX_KICK_DELAY     = 7 days;
+    uint256 private constant ONE = 1e18;
+    uint256 private constant PHASE1_END_MULT = 15e17;     // 1.5x: a take above this is flagged
 
     // ── Immutables ──────────────────────────────────────────────────────────
-
     IERC20           public immutable USDC;
     IERC20           public immutable CBETH;
-    IERC20           public immutable DAI;
-    IERC20           public immutable WETH;  // v2.3 — added for USDC→WETH→cbETH multi-hop
-    ISwapRouter      public immutable ROUTER;  // Uniswap V3 SwapRouter02 (USDC→WETH, USDC→DAI)
-    IAerodromeSlipstreamRouter public immutable AERO_ROUTER;  // v2.3 — Aerodrome Slipstream (WETH→cbETH)
-    IMorphoVault     public immutable MORPHO_VAULT;  // v2.4 — Bitwise Morpho Blue USDC vault
-    IChainlinkFeed   public immutable CHAINLINK;       // cbETH/ETH — 18-decimal exchange-rate feed
-    /// @notice C-7 fix (audit 2026-07-14): this is the DAI/USD 8-decimal feed
-    ///         (Base mainnet 0x591e…C78F, per DeployPayments.s.sol) — earlier
-    ///         comments said "DAI/ETH". Only FRESHNESS is consumed: the answer
-    ///         never enters any math; _isDaiOracleFresh uses a healthy round as
-    ///         the go/no-go signal for the ~1:1-peg USDC→DAI reserve refill.
-    IChainlinkFeed   public immutable CHAINLINK_DAI;   // DAI/USD — 8-decimal price feed (freshness-only)
-    IChainlinkFeed   public immutable CHAINLINK_USDC_USD; // v2.4.2 — USDC/USD — 8-decimal price feed (Base mainnet 0x7e86…2bc6B)
-    IChainlinkFeed   public immutable CHAINLINK_ETH_USD;  // v2.4.2 — ETH/USD — 8-decimal price feed (Base mainnet 0x7104…Bb70)
+    IMorphoVault     public immutable MORPHO_VAULT;        // Bitwise Morpho Blue USDC vault
+    IChainlinkFeed   public immutable CHAINLINK;           // cbETH/ETH — 18-decimal exchange-rate feed
+    IChainlinkFeed   public immutable CHAINLINK_USDC_USD;  // USDC/USD — 8-decimal price feed
+    IChainlinkFeed   public immutable CHAINLINK_ETH_USD;   // ETH/USD — 8-decimal price feed
     ILSTExchangeRate public immutable LST_RATES;
 
-    // ── Mutable state ───────────────────────────────────────────────────────
+    // ── Auction state ───────────────────────────────────────────────────────
+    /// @notice The open lot. usdc == 0 means no lot. One lot at a time.
+    struct Lot {
+        uint128 usdc;        // 6-dec, the USDC the taker receives
+        uint64  startedAt;
+        uint64  endsAt;
+    }
+    Lot     public lot;
+    uint256 public lastKickAt;         // last kick timestamp
+    uint256 public minSwapBatch;       // minimum USDC above the float before a kick is allowed
+    uint256 public usdcFloat;          // USDC the merchant keeps liquid; a kick sells only the balance above it
+    uint256 public maxKickUsdc;        // cap per kick, both legs together; 0 = no cap
+    uint64  public auctionLength;      // seconds a lot stays open, [MIN_AUCTION_LENGTH, MAX_AUCTION_LENGTH]
+    uint64  public kickDelay;          // seconds between kicks, [MIN_KICK_DELAY, MAX_KICK_DELAY]
+    bool    public auctionsPaused;     // owner circuit breaker: no kick, no take
 
-    bool    public routingPaused;       // pause flag for sweep
-    // M-1 (council-ratified C, 2026-06-01): independent withdrawal freeze,
-    // controlled by GUARDIAN_ROLE. Separate from routingPaused so freezing the
-    // exfiltration paths (withdrawDAI, executeEmergencyWithdraw) does not also
-    // halt sweeps and vice versa. Defends against a compromised OWNER_ROLE key:
-    // the Guardian can freeze the out-paths AND cancel a queued emergency
-    // withdrawal, neither of which a compromised owner can override.
-    bool    public withdrawalsFrozen;
-
-    // ─── P-H1 (re-audit 2026-09-01): the guardian must bound the owner ──────
-    // The guardian was owner-administered: a compromised OWNER key could
-    // disableGuardian → grant itself GUARDIAN_ROLE → enable → unfreeze → queue
-    // uncapped limit increases → drain 100% at T+24h. Three changes close it:
-    //   1. GUARDIAN_ROLE administers itself. The owner may only SEED the first
-    //      guardian (guardianCount == 0); after that only guardians grant/revoke.
-    //   2. disableGuardian (while a guardian exists) is a 7-day timelock the
-    //      guardian can cancel. Stated cost: a rogue guardian can keep the
-    //      merchant frozen (griefing, not theft); guardians can revoke each other.
-    //   3. Limit increases are capped at LIMIT_INCREASE_MAX_MULT x the reference
-    //      limit and the guardian can cancel a queued increase.
-    uint256 public guardianCount;
-    uint256 public guardianDisableExecuteAfter;   // 0 = nothing queued
-    uint256 public freezeReleaseExecuteAfter;     // K-1: 0 = nothing queued
-    uint256 public dailyLimitRef;                 // highest DAI limit set by ctor / executed increase
-    mapping(uint8 => uint256) public assetLimitRef;
-    bool    public guardianEnabled;     // merchant-controlled Guardian opt-in
-    uint256 public lastSweepTime;       // last successful sweep timestamp
-    uint256 public minSwapBatch;        // minimum USDC before sweep allowed
-
-    /// @notice v2.4 — Dual-acquisition split ratio. Basis points (10000 = 100%).
-    ///         5000 = 50% to cbETH leg, 50% to Morpho USDC leg. Merchant default.
-    ///         Range bounds enforced by setCbEthBps: [1000, 9000] (10%–90%).
+    /// @notice Dual-acquisition split ratio, basis points: cbEthBps to the
+    ///         auction (cbETH), the rest to the Morpho USDC vault. Range
+    ///         [1000, 9000]. Merchant default 5000.
     uint16  public cbEthBps;
 
-    /// @notice v2.4 — Cumulative USDC principal deposited to Morpho.
-    ///         Tracks deposits, not current value (which fluctuates with vault yield).
+    /// @notice Cumulative USDC principal deposited to Morpho (deposits, not value).
     uint256 public morphoDepositedPrincipal;
 
-    // ─── Chainlink Automation state (council IV.3, IV.7, IV.8, IV.9 — ratified 2026-05-12) ───
+    // ── Payees (the stolen-owner-key defence) ───────────────────────────────
+    /// @notice When a payee became, or becomes, active. 0 = not a payee. Every
+    ///         exit (sendUSDC, sendCbETH, redeemMorpho, executeEmergencyWithdraw)
+    ///         goes only to an active payee. Proposing takes PAYEE_DELAY;
+    ///         removing is instant.
+    mapping(address => uint64) public payeeActiveAt;
 
-    /// @notice Chainlink Automation Forwarder address. Only this address may call performUpkeep.
-    ///         Initially address(0); set by OWNER once at registration via setForwarder.
-    ///         Updatable thereafter only via OWNER 48h timelock.
-    address public automationForwarder;
-
-    /// @notice Pending forwarder update queued via 48h timelock (IV.8).
+    // ── Chainlink Automation state (council IV.3, IV.7, IV.8, IV.9) ─────────
+    address public automationForwarder;     // only this address may call performUpkeep
     address private _pendingForwarder;
-
-    /// @notice Chainlink Automation Upkeep ID. Set after registration.
     uint256 public upkeepID;
-
-    /// @notice IV.7 Position A for Payments — but a cheap pause flag still useful here.
-    ///         Independent of routingPaused flag (which is what notPaused checks).
-    bool public upkeepPaused;
-
-    /// @notice IV.9 — replay protection. Same-block re-execution guard + audit trail.
-    ///         Primary cross-block protection: SWEEP_DELAY (24h) inside sweep itself.
-    mapping(bytes32 => bool) public executedUpkeeps;
-
-    /// @notice Monotonic counter of automated executions. For console dashboard.
+    bool    public upkeepPaused;
+    mapping(bytes32 => bool) public executedUpkeeps;   // IV.9 replay protection
     uint256 public executedUpkeepCount;
 
-    // ─── Secure-Context-Handshake state (council-ratified 2026-05-14) ───
-    // DAI reserve state — stable-asset balance for merchant's operational use
-    uint256 public daiCeiling;          // merchant-set target reserve
-    uint256 public dailyLimit;          // max DAI withdrawal per 24h window
-    uint256 public dailyWithdrawn;      // DAI withdrawn in current window
-    uint256 public windowStart;         // start timestamp of current 24h window
+    // ── Per-asset rolling exit limits (C-2, P-M4 leaky bucket) ──────────────
+    uint256 public usdcDailyLimit;       // max USDC out per 24h window (6-dec); 0 = lockdown
+    uint256 public usdcDailyWithdrawn;   // spent, as of usdcWindowStart
+    uint256 public usdcWindowStart;      // last accounting timestamp
+    uint256 public cbEthDailyLimit;      // max cbETH out per 24h window (18-dec); 0 = lockdown
+    uint256 public cbEthDailyWithdrawn;
+    uint256 public cbEthWindowStart;
 
-    // Asymmetric daily limit adjustment — decrease instant, increase 24h delay
+    enum DailyLimitAsset { USDC, CBETH }
+
     struct QueuedLimit {
         uint256 newLimit;
         uint256 executeAfter;
     }
-    QueuedLimit public queuedLimitIncrease;
-
-    // ─── C-2 (audit 2026-07-14): per-asset rolling exit limits ─────────────
-    // The daily-limit protection used to cover ONLY the DAI leg; sendUSDC,
-    // sendCbETH and redeemMorpho let a compromised OWNER key drain their full
-    // balances in one call. Each exit path now consumes a per-asset rolling
-    // 24h window (WINDOW_SIZE), mirroring dailyLimit/dailyWithdrawn/windowStart
-    // exactly. USDC-denominated exits — sendUSDC AND redeemMorpho's USDC
-    // output — share usdcDailyLimit; sendCbETH consumes cbEthDailyLimit.
-    // 0 = lockdown (same semantics as dailyLimit). Moves beyond a daily cap
-    // remain possible ONLY via the 7-day emergency-withdraw timelock path.
-    uint256 public usdcDailyLimit;       // max USDC out per 24h window (6-dec)
-    uint256 public usdcDailyWithdrawn;   // USDC out in current window
-    uint256 public usdcWindowStart;      // start of current USDC 24h window
-    uint256 public cbEthDailyLimit;      // max cbETH out per 24h window (18-dec)
-    uint256 public cbEthDailyWithdrawn;  // cbETH out in current window
-    uint256 public cbEthWindowStart;     // start of current cbETH 24h window
-
-    /// @notice C-2 — asset selector for the per-asset limit-adjustment
-    ///         machinery (the DAI leg keeps its original dedicated functions
-    ///         for ABI stability).
-    enum DailyLimitAsset { USDC, CBETH }
-
-    /// @notice C-2 — queued per-asset limit increases, keyed by
-    ///         uint8(DailyLimitAsset). Same asymmetric pattern as
-    ///         queuedLimitIncrease: decrease instant, increase behind
-    ///         LIMIT_DELAY so a stolen key cannot raise a cap and drain.
+    /// @notice Queued per-asset limit increases, keyed by uint8(DailyLimitAsset).
     mapping(uint8 => QueuedLimit) public queuedAssetLimitIncrease;
+    /// @notice P-H1: the highest limit set by the constructor or an executed increase.
+    mapping(uint8 => uint256) public assetLimitRef;
 
-    // Timelock queues — matching UCR pattern
+    // Timelock queues
     mapping(bytes32 => uint256) public timelockQueue;
     uint256 private queueNonce;
 
@@ -596,99 +245,35 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     mapping(address => EmergencyWithdraw) public emergencyQueue;
 
     // ── Events ──────────────────────────────────────────────────────────────
-
-    // Sweep mechanism events — v2.4: fragmented from UCRSwept for indexer clarity.
-    // Each distinct sweep outcome gets its own event; each routing leg emits
-    // its own per-leg event. UCRSwept retained as a deprecated alias for
-    // backwards-compat with v2.3 indexers; new code should subscribe to the
-    // specific events below.
-
-    /// @notice Emitted when sweep completes with DAI refill but no leftover USDC.
-    ///         No cbETH or Morpho leg ran this cycle (DAI reserve consumed all USDC).
-    event UCRSweptDaiOnly(uint256 usdcIn, uint256 daiOut, uint256 timestamp);
-
-    /// @notice Emitted when sweep completes with both DAI refill (if any) and
-    ///         dual-leg routing (cbETH + Morpho USDC). Per-leg detail in
-    ///         CbEthAcquired and MorphoDeposited events emitted in same tx.
-    event UCRSweptFull(
-        uint256 usdcIn,
-        uint256 cbEthOut,
-        uint256 morphoSharesOut,
-        uint256 ethEquivalentAdded,
-        uint256 timestamp
-    );
-
-    /// @notice Per-leg: cbETH leg of dual-acquisition completed.
-    event CbEthAcquired(uint256 usdcIn, uint256 wethIntermediate, uint256 cbEthOut);
-
-    /// @notice Per-leg: Morpho USDC leg of dual-acquisition completed.
+    event Kicked(address indexed by, uint256 sellable, uint256 morphoIn, uint256 lotUsdc, uint256 endsAt);
+    event LotTaken(address indexed taker, uint256 usdcOut, uint256 cbEthIn, uint256 multiplier);
+    event LotExpired(uint256 usdc);
+    /// @notice A take happened while the curve was still above 1.5x the oracle
+    ///         amount: the oracle said cbETH was far cheaper than the market did.
+    event ParOvershoot(address indexed taker, uint256 multiplier);
     event MorphoDeposited(uint256 usdcIn, uint256 sharesIssued);
-
-    /// @notice Emitted when sweep cycle ratio changes (Owner-controlled).
+    event TreasuryGaugeUpdated(uint256 totalEthEquivalent);
     event CbEthBpsUpdated(uint16 oldBps, uint16 newBps, uint256 timestamp);
-
-    /// @notice DEPRECATED in v2.4 — retained for v2.3 indexer backwards-compat.
-    ///         New code should subscribe to UCRSweptDaiOnly / UCRSweptFull.
-    event UCRSwept(
-        uint256 usdcIn,
-        uint256 cbEthOut,
-        uint256 ethEquivalentAdded,
-        uint256 timestamp
-    );
-
-    event UCRPaused(address indexed by, uint256 timestamp);
-    event UCRResumed(address indexed by, uint256 timestamp);
-    event UCRResumeQueued(bytes32 indexed id, uint256 executeAfter);
-
-    // DAI reserve events — merchant-controlled stable-asset balance
-    event DAIReserveFilled(uint256 usdcIn, uint256 daiOut, uint256 newReserve);
-    event DAIWithdrawn(address indexed by, uint256 amount, address indexed to, uint256 timestamp);
+    event MinSwapBatchUpdated(uint256 amount);
+    event UsdcFloatUpdated(uint256 amount);
+    event MaxKickUpdated(uint256 amount);
+    event AuctionLengthUpdated(uint64 seconds_);
+    event KickDelayUpdated(uint64 seconds_);
+    event AuctionsPaused(address indexed by, uint256 timestamp);
+    event AuctionsResumed(address indexed by, uint256 timestamp);
+    event AuctionsResumeQueued(bytes32 indexed id, uint256 executeAfter);
+    event PayeeProposed(address indexed payee, uint256 activeAt);
+    event PayeeRemoved(address indexed payee);
     event USDCSent(address indexed by, uint256 amount, address indexed to, uint256 timestamp);
     event CbETHSent(address indexed by, uint256 amount, address indexed to, uint256 timestamp);
     event MorphoRedeemed(address indexed by, uint256 shares, uint256 usdcOut, address indexed to, uint256 timestamp);
-    event DAICeilingUpdated(uint256 newCeiling);
-    event DailyLimitDecreased(uint256 newLimit);
-    event DailyLimitIncreaseQueued(uint256 newLimit, uint256 executeAfter);
-    event DailyLimitIncreaseExecuted(uint256 newLimit);
-    event DailyLimitIncreaseCancelled();
-    /// @notice P-M3 (re-audit 2026-09-01): the DAI refill used to fail silently
-    ///         (stale feed, or a venue too thin to clear the 90% floor — Base
-    ///         USDC/DAI 0.05% held ~97 USDC against a 10,000 DAI ceiling).
-    ///         reason: 1 = DAI/USD oracle not fresh, 2 = swap reverted.
-    event DAIRefillSkipped(uint8 reason, uint256 daiGap);
-    event GuardianDisableQueued(address indexed by, uint256 executeAfter);
-    event GuardianDisableCancelled(address indexed by);
-    event FreezeReleaseQueued(address indexed by, uint256 executeAfter);
-    event FreezeReleaseCancelled(address indexed by);
-    event FreezeReleased(address indexed by);
-    event GuardianCancelledDailyLimitIncrease(address indexed guardian);
-    event GuardianCancelledAssetLimitIncrease(address indexed guardian, uint8 asset);
-
-    // C-2 — per-asset exit-limit events (asset = uint8(DailyLimitAsset))
     event AssetDailyLimitDecreased(uint8 indexed asset, uint256 newLimit);
     event AssetDailyLimitIncreaseQueued(uint8 indexed asset, uint256 newLimit, uint256 executeAfter);
     event AssetDailyLimitIncreaseExecuted(uint8 indexed asset, uint256 newLimit);
     event AssetDailyLimitIncreaseCancelled(uint8 indexed asset);
-
-    // Treasury Gauge events
-    event TreasuryGaugeUpdated(uint256 totalEthEquivalent);
-
-    // Guardian events
-    event GuardianEnabled(address indexed by, uint256 timestamp);
-    event GuardianDisabled(address indexed by, uint256 timestamp);
-    event GuardianPaused(address indexed guardian, uint256 timestamp);
-    event WithdrawalsFrozenSet(address indexed guardian, bool frozen, uint256 timestamp);
-    event GuardianCancelledEmergency(address indexed guardian, address indexed token);
-
-    // Emergency withdrawal events
     event EmergencyQueued(address indexed token, uint256 amount, uint256 executeAfter);
     event EmergencyExecuted(address indexed token, uint256 amount, address to);
     event EmergencyCancelled(address indexed token);
-
-    // Parameter events
-    event MinSwapBatchUpdated(uint256 amount);
-
-    // Chainlink Automation events (council-ratified 2026-05-12)
     event UpkeepPerformed(uint256 gasUsed, uint256 valueMoved);
     event AutomationForwarderSet(address forwarder, uint256 timestamp);
     event ForwarderUpdateQueued(bytes32 indexed id, address newForwarder, uint256 executeAfter);
@@ -697,51 +282,43 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event UpkeepPausedSet(bool paused, uint256 timestamp);
 
     // ── Errors ──────────────────────────────────────────────────────────────
-
-    error RoutingPaused();
-    error SweepTooEarly();
+    error Paused();
+    error LotOpen();
+    error NoLot();
+    error KickTooEarly();
     error BatchTooSmall();
+    error ShortDelivery();
     error OracleStale();
     error OracleInvalid();
     error ZeroOutput();
     error LeakageDetected();
+    error MorphoDepositFailed();
+    error ExchangeRateInvalid();
     error InvalidAddress();
+    error InvalidBpsRange();
+    error OutOfRange();
     error TimelockNotPassed();
     error NotQueued();
-    error ExchangeRateInvalid();
-    error GuardianNotEnabled();
-    error GuardianDisableNotReady();
-    error GuardianStillArmed();
-    error NotFrozen();
-    error FreezeReleaseNotReady();
-    error NonCanonicalWiring(address got, address want);   // K-3
-    error IncreaseTooLarge(uint256 requested, uint256 maxAllowed);
     error NothingQueued();
     error NothingToWithdraw();
     error ZeroAmount();
     error DailyLimitExceeded();
     error NoIncreaseQueued();
-
-    // ─── v2.4 — Morpho dual-acquisition errors ───
-    error MorphoDepositFailed();
-    error InvalidBpsRange();
-
-    // ─── Chainlink Automation errors (council-ratified 2026-05-12) ───
+    error IncreaseTooLarge(uint256 requested, uint256 maxAllowed);
+    error InvalidLimit();
+    error NotAPayee(address to);
+    error AlreadyPayee();
+    error NoPayees();
+    error NonCanonicalWiring(address got, address want);   // K-3
     error NotForwarder();
     error ForwarderNotSet();
     error ForwarderAlreadySet();
-
     error UpkeepAlreadyExecuted();
     error UpkeepIsPaused();
-    error Unauthorized();          // L-1: distinct from InvalidAddress for auth failures
-    error InvalidLimit();          // L-1: distinct from InvalidAddress for value-range failures
-    error WithdrawalsFrozen();     // M-1: Guardian has frozen the exfiltration paths
 
     // ── Modifiers ───────────────────────────────────────────────────────────
-
     modifier tlPassed(bytes32 id) {
         if (timelockQueue[id] == 0)              revert NotQueued();
-        // Timelock comparison against 48h TIMELOCK; validator's ~12s manipulation window is immaterial.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < timelockQueue[id]) revert TimelockNotPassed();
         delete timelockQueue[id];
@@ -755,88 +332,37 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         _;
     }
 
-    /// @dev The veto gate shared by cancelGuardianDisable and cancelFreezeRelease
-    ///      (review 2026-10-17, F-11): the owner, or any guardian, armed or not.
-    modifier onlyOwnerOrGuardian() {
-        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert AccessControlUnauthorizedAccount(msg.sender, GUARDIAN_ROLE);
-        }
-        _;
-    }
-
     modifier notPaused() {
-        if (routingPaused) revert RoutingPaused();
+        if (auctionsPaused) revert Paused();
         _;
     }
 
     // ── Constructor ─────────────────────────────────────────────────────────
 
-    /**
-     * @notice Deploy a merchant's PossessioPayments contract.
-     * @param owner           Merchant wallet address — receives OWNER_ROLE
-     * @param usdc_           USDC token address on Base
-     * @param cbeth_          cbETH token address on Base
-     * @param dai_            DAI token address on Base
-     * @param weth_           WETH token address on Base (v2.3 — multi-hop intermediate)
-     * @param router_         Uniswap V3 SwapRouter02 address on Base
-     * @param aeroRouter_     Aerodrome Slipstream Router address on Base (v2.3)
-     * @param morphoVault_    Bitwise Morpho Blue USDC vault address on Base (v2.4)
-     * @param chainlink_      Chainlink cbETH/ETH feed address on Base (18-decimal)
-     * @param chainlinkDai_   Chainlink DAI/USD feed address on Base (8-decimal, freshness-only)
-     * @param lstRates_       Immutable LSTExchangeRate singleton address
-     * @param minSwapBatch_   Minimum USDC required before sweep allowed
-     * @param daiCeiling_     Target DAI reserve (merchant's operating buffer). 0 = opt out.
-     * @param dailyLimit_     Max DAI withdrawable per 24h window. 0 = lockdown.
-     * @param usdcDailyLimit_  C-2 — Max USDC exit per 24h window (sendUSDC +
-     *                         redeemMorpho USDC output, 6-dec). 0 = lockdown.
-     * @param cbEthDailyLimit_ C-2 — Max cbETH exit per 24h window (sendCbETH,
-     *                         18-dec). 0 = lockdown.
-     */
-    /// @notice v2.4.2 — Struct-input deployment parameters.
-    ///         Matches PossessioHook.DeployParams pattern; eliminates stack-too-deep
-    ///         risk preemptively; one named field per param for institutional reviewer
-    ///         readability. All address fields must be non-zero; constructor reverts
-    ///         InvalidAddress otherwise. All Chainlink feed addresses validated for
-    ///         decimal-class correctness.
+    /// @notice Struct-input deployment parameters, abi-encoded into initArgs.
     struct DeployParams {
-        address owner;
+        address owner;              // written by the factory; the encoded value is discarded
         address usdc;
         address cbeth;
-        address dai;
-        address weth;
-        address router;
-        address aeroRouter;
         address morphoVault;
         address chainlink;          // cbETH/ETH 18-dec exchange-rate feed
-        address chainlinkDai;       // DAI/USD 8-dec price feed (C-7: freshness-only read)
-        address chainlinkUsdcUsd;   // v2.4.2 — USDC/USD 8-dec price feed
-        address chainlinkEthUsd;    // v2.4.2 — ETH/USD 8-dec price feed
+        address chainlinkUsdcUsd;   // USDC/USD 8-dec price feed
+        address chainlinkEthUsd;    // ETH/USD 8-dec price feed
         address lstRates;
-        uint256 minSwapBatch;
-        uint256 daiCeiling;
-        uint256 dailyLimit;
+        uint256 minSwapBatch;       // minimum USDC above the float before a kick
+        uint256 usdcFloat;          // USDC kept liquid, never auctioned
+        uint256 maxKickUsdc;        // cap per kick, 0 = no cap
         uint256 usdcDailyLimit;     // C-2 — 24h cap on USDC exits (sendUSDC + redeemMorpho), 6-dec
         uint256 cbEthDailyLimit;    // C-2 — 24h cap on cbETH exits (sendCbETH), 18-dec
+        address[] payees;           // active at deployment; at least one, or the merchant is locked out
     }
 
     /**
      * @notice FACTORY-SHAPED constructor. PossessioFactory appends
-     *         `abi.encode(owner, initArgs)` to the pinned template initCode
-     *         (PossessioFactory.sol:256), so any launchable template MUST take
-     *         exactly `(address, bytes)`. This is what makes the Account
-     *         deployable from the console's launch rail by someone who will
-     *         never see an ABI.
-     *
-     *         THE FACTORY WRITES THE OWNER. `_factoryOwner` overrides whatever
-     *         `p.owner` is carried inside `initArgs`, so a caller cannot
-     *         deploy an instance owned by anyone but the launcher — the
-     *         factory's anti-spoofing guarantee, which the previous
-     *         struct-only constructor could not participate in.
-     *
-     *         Runtime bytecode is UNCHANGED by this signature: the decode
-     *         happens at construction and nothing about the deployed contract's
-     *         behaviour or storage layout moves. Only initcode grows.
-     *
+     *         `abi.encode(owner, initArgs)` to the pinned template initCode, so
+     *         any launchable template MUST take exactly `(address, bytes)`.
+     *         THE FACTORY WRITES THE OWNER: `_factoryOwner` overrides whatever
+     *         `p.owner` is carried inside `initArgs`.
      * @param _factoryOwner Owner, written by the factory. Never caller-supplied.
      * @param initArgs      abi.encode(DeployParams). Its `owner` field is ignored.
      */
@@ -847,87 +373,71 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (p.owner            == address(0)) revert InvalidAddress();
         if (p.usdc             == address(0)) revert InvalidAddress();
         if (p.cbeth            == address(0)) revert InvalidAddress();
-        if (p.dai              == address(0)) revert InvalidAddress();
-        if (p.weth             == address(0)) revert InvalidAddress();
-        if (p.router           == address(0)) revert InvalidAddress();
-        if (p.aeroRouter       == address(0)) revert InvalidAddress();
         if (p.morphoVault      == address(0)) revert InvalidAddress();
         if (p.chainlink        == address(0)) revert InvalidAddress();
-        if (p.chainlinkDai     == address(0)) revert InvalidAddress();
         if (p.chainlinkUsdcUsd == address(0)) revert InvalidAddress();
         if (p.chainlinkEthUsd  == address(0)) revert InvalidAddress();
         if (p.lstRates         == address(0)) revert InvalidAddress();
 
         // K-3 (external review, KupiaSec 2026-10-15): PossessioFactory pins this
-        // template's code, not the wiring inside initArgs, so the official
-        // factory would deploy, and announce, an Account wired to a hostile
-        // router, vault or feed. On Base mainnet the template now accepts only
-        // the canonical wiring (the DeployPayments.s.sol constants). Other
-        // chains (tests, testnets) keep the non-zero checks above.
+        // template's code, not the wiring inside initArgs. On Base mainnet the
+        // template accepts only the canonical wiring. Other chains (tests,
+        // testnets) keep the non-zero checks above.
         if (block.chainid == 8453) _requireBaseWiring(p);
 
-        // ─── Decimal-class validation (v2.3 defense-in-depth + v2.4.2 extension) ───
-        // cbETH/ETH must be 18-decimal exchange-rate feed (Chainlink yield-bearing-asset class).
-        // DAI/USD must be 8-decimal price feed (Chainlink standard price-feed class; freshness-only read).
-        // USDC/USD and ETH/USD must both be 8-decimal price feeds (cast-verified 2026-05-27).
-        // Asymmetric requirement reflects Chainlink's feed-class taxonomy.
+        // Decimal-class validation: cbETH/ETH is an 18-decimal exchange-rate
+        // feed; USDC/USD and ETH/USD are 8-decimal price feeds.
         if (IChainlinkFeed(p.chainlink).decimals()        != 18) revert InvalidAddress();
-        if (IChainlinkFeed(p.chainlinkDai).decimals()     != 8)  revert InvalidAddress();
         if (IChainlinkFeed(p.chainlinkUsdcUsd).decimals() != 8)  revert InvalidAddress();
         if (IChainlinkFeed(p.chainlinkEthUsd).decimals()  != 8)  revert InvalidAddress();
 
         USDC               = IERC20(p.usdc);
         CBETH              = IERC20(p.cbeth);
-        DAI                = IERC20(p.dai);
-        WETH               = IERC20(p.weth);
-        ROUTER             = ISwapRouter(p.router);
-        AERO_ROUTER        = IAerodromeSlipstreamRouter(p.aeroRouter);
         MORPHO_VAULT       = IMorphoVault(p.morphoVault);
         CHAINLINK          = IChainlinkFeed(p.chainlink);
-        CHAINLINK_DAI      = IChainlinkFeed(p.chainlinkDai);
         CHAINLINK_USDC_USD = IChainlinkFeed(p.chainlinkUsdcUsd);
         CHAINLINK_ETH_USD  = IChainlinkFeed(p.chainlinkEthUsd);
         LST_RATES          = ILSTExchangeRate(p.lstRates);
 
-        minSwapBatch = p.minSwapBatch;
-        daiCeiling   = p.daiCeiling;
-        dailyLimit   = p.dailyLimit;
-        windowStart  = block.timestamp;
+        minSwapBatch  = p.minSwapBatch;
+        usdcFloat     = p.usdcFloat;
+        maxKickUsdc   = p.maxKickUsdc;
+        auctionLength = 30 minutes;
+        kickDelay     = 24 hours;
 
-        // C-2 (audit 2026-07-14) — per-asset exit limits, mirroring the DAI
-        // rolling-window machinery. 0 = lockdown, same as dailyLimit.
+        // C-2 per-asset exit limits; 0 = lockdown. P-H1 reference limits.
         usdcDailyLimit   = p.usdcDailyLimit;
         cbEthDailyLimit  = p.cbEthDailyLimit;
-        // P-H1: reference limits for the increase cap
-        dailyLimitRef                              = p.dailyLimit;
         assetLimitRef[uint8(DailyLimitAsset.USDC)]  = p.usdcDailyLimit;
         assetLimitRef[uint8(DailyLimitAsset.CBETH)] = p.cbEthDailyLimit;
         usdcWindowStart  = block.timestamp;
         cbEthWindowStart = block.timestamp;
 
-        // v2.4 — Dual-acquisition baseline: 50% cbETH, 50% Morpho USDC.
-        // Council-ratified merchant-default per historical Claude seats.
+        // Dual-acquisition baseline: 50% auction (cbETH), 50% Morpho USDC.
         cbEthBps = 5000;
 
-        // Owner gets OWNER_ROLE and is admin of OPERATOR and GUARDIAN roles
+        // Payees: the merchant's own addresses, active at once. An empty list
+        // would deploy a contract nobody can withdraw from.
+        uint256 n = p.payees.length;
+        if (n == 0) revert NoPayees();
+        for (uint256 i = 0; i < n; i++) {
+            address who = p.payees[i];
+            if (who == address(0)) revert InvalidAddress();
+            payeeActiveAt[who] = uint64(block.timestamp);
+            emit PayeeProposed(who, block.timestamp);
+        }
+
         _grantRole(OWNER_ROLE, p.owner);
-        _setRoleAdmin(OPERATOR_ROLE, OWNER_ROLE);
-        _setRoleAdmin(GUARDIAN_ROLE, GUARDIAN_ROLE);   // P-H1: self-administered after the seed
         _setRoleAdmin(OWNER_ROLE, OWNER_ROLE);
     }
 
-    /// @dev K-3: the canonical Base mainnet wiring (script/DeployPayments.s.sol).
-    ///      Constructor-only, so it adds no runtime code.
+    /// @dev K-3: the canonical Base mainnet wiring. Constructor-only, so it
+    ///      adds no runtime code.
     function _requireBaseWiring(DeployParams memory p) private pure {
         _pin(p.usdc,             BaseWiring.USDC);
         _pin(p.cbeth,            BaseWiring.CBETH);
-        _pin(p.dai,              BaseWiring.DAI);
-        _pin(p.weth,             BaseWiring.WETH);
-        _pin(p.router,           BaseWiring.ROUTER);
-        _pin(p.aeroRouter,       BaseWiring.AERO_ROUTER);
         _pin(p.morphoVault,      BaseWiring.MORPHO_VAULT);
         _pin(p.chainlink,        BaseWiring.CHAINLINK_CBETH);
-        _pin(p.chainlinkDai,     BaseWiring.CHAINLINK_DAI);
         _pin(p.chainlinkUsdcUsd, BaseWiring.CHAINLINK_USDC);
         _pin(p.chainlinkEthUsd,  BaseWiring.CHAINLINK_ETH);
         _pin(p.lstRates,         BaseWiring.LST_RATES);
@@ -938,888 +448,321 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //                          SWEEP MECHANISM
+    //                              THE AUCTION
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Sweep — fills DAI reserve to ceiling (if set), then converts
-     *         remaining USDC into cbETH (100%), holds in-contract.
-     *
-     *         Merchant onboarding advice: vary your sweep timing. Predictable
-     *         schedules invite MEV pattern-matching.
-     *
-     *         DAI reserve priority: operations before accumulation. If incoming
-     *         USDC is less than the DAI refill gap, 100% goes to DAI and 0 to
-     *         the cbETH leg. Once reserve is full, 100% goes to cbETH.
-     *
-     *         Setting daiCeiling == 0 opts out of DAI reserve entirely.
-     *
-     *         100% cbETH allocation: rETH on Base is a bridged OptimismMintableERC20
-     *         token with no user-callable redemption path. Council-ratified
-     *         architecture limits the treasury layer to cbETH.
-     *
-     * @param minDaiOut    Minimum DAI output from USDC swap (0 if no refill needed)
-     * @param minWethOut   Minimum WETH output from USDC→WETH leg (v2.3 — multi-hop intermediate)
-     * @param minCbEthOut  Minimum cbETH output from WETH→cbETH leg (slippage guard)
-     */
-    function sweep(
-        uint256 minDaiOut,
-        uint256 minWethOut,
-        uint256 minCbEthOut
-    ) external nonReentrant notPaused {
-        // External entrypoint for direct OWNER_ROLE / OPERATOR_ROLE callers.
-        // Authorization is the role check below; reentrancy and pause guards
-        // are carried by this wrapper. Execution logic lives in _sweep so the
-        // Automation path (performUpkeep) can reuse it via an internal call
-        // without re-acquiring the contract-level ReentrancyGuard.
-        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(OPERATOR_ROLE, msg.sender)) {
-            revert Unauthorized();   // L-1: auth failure, distinct from value/address errors
-        }
-
-        // Execution core. _sweep is internal and the only callers are this
-        // role-gated, nonReentrant, notPaused wrapper and performUpkeep
-        // (onlyForwarder), so visibility itself confines entry — no runtime
-        // context handshake is needed. A direct call propagates any revert
-        // reason natively to the caller.
-        _sweep(minDaiOut, minWethOut, minCbEthOut);
+    /// @notice USDC above the float: what a kick would sell before the cap.
+    function sellableUsdc() public view returns (uint256) {
+        uint256 bal = USDC.balanceOf(address(this));
+        return bal > usdcFloat ? bal - usdcFloat : 0;
     }
 
-    /// @notice Internal sweep execution core. No reentrancy guard, no role
-    ///         check, no pause check — callers (external sweep, performUpkeep)
-    ///         are each responsible for carrying the guards appropriate to
-    ///         their entry path. Holds the canonical treasury execution logic
-    ///         unchanged from the prior monolithic sweep().
-    function _sweep(
-        uint256 minDaiOut,
-        uint256 minWethOut,
-        uint256 minCbEthOut
-    ) internal {
-        // SWEEP_DELAY is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
+    /// @notice True when kick() would open a lot now. Non-reverting; used by
+    ///         Automation's checkUpkeep and by any keeper's pre-flight.
+    function canKick() public view returns (bool) {
+        if (auctionsPaused) return false;
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < lastSweepTime + SWEEP_DELAY) revert SweepTooEarly();
+        if (lot.usdc != 0 && block.timestamp < lot.endsAt) return false;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < lastKickAt + kickDelay) return false;
+        if (sellableUsdc() < minSwapBatch) return false;
+        if (!_cbEthOracleFresh()) return false;
+        if (_usdcToEth(1e6) == 0) return false;
+        return true;
+    }
 
+    /**
+     * @notice Kick: deposit the Morpho share of the USDC above the float, and
+     *         put the cbETH share up as a lot. Anyone may call it; a kick can
+     *         only happen when the rules allow, and it moves nothing below the
+     *         curve. Reverts if a lot is open, the delay has not passed, the
+     *         batch is too small, or an oracle is stale (fail closed).
+     */
+    function kick() external nonReentrant notPaused {
+        _kick();
+    }
+
+    function _kick() internal {
+        // 1. An expired lot is closed first; an open one blocks the kick.
+        if (lot.usdc != 0) {
+            // forge-lint: disable-next-line(block-timestamp)
+            if (block.timestamp < lot.endsAt) revert LotOpen();
+            emit LotExpired(lot.usdc);
+            delete lot;
+        }
+        // 2. Cadence.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < lastKickAt + kickDelay) revert KickTooEarly();
+        // 3. Size: only the balance above the float, at least the batch, at most the cap.
+        uint256 sellable = sellableUsdc();
+        if (sellable < minSwapBatch || sellable == 0) revert BatchTooSmall();
+        uint256 kickAmount = sellable;
+        if (maxKickUsdc != 0 && kickAmount > maxKickUsdc) kickAmount = maxKickUsdc;
+        // 4. Oracle, fail closed: both the cbETH/ETH rate and the USDC→ETH path
+        //    must be fresh, or nothing is priced and nothing moves (P-1 rule).
+        _oracleCbEth(1e6);
+        // 5. The Morpho share, deposited now: a deposit has no price risk.
+        uint256 morphoAlloc = (kickAmount * (10000 - cbEthBps)) / 10000;
+        if (morphoAlloc > 0) _depositMorpho(morphoAlloc);
+        // 6. The lot.
+        uint256 lotUsdc = kickAmount - morphoAlloc;
+        uint256 endsAt;
+        if (lotUsdc > 0) {
+            endsAt = block.timestamp + auctionLength;
+            lot = Lot({usdc: uint128(lotUsdc), startedAt: uint64(block.timestamp), endsAt: uint64(endsAt)});
+        }
+        lastKickAt = block.timestamp;
+        emit Kicked(msg.sender, sellable, morphoAlloc, lotUsdc, endsAt);
+        emit TreasuryGaugeUpdated(_computeCurrentEthEquivalent());
+    }
+
+    /// @dev The Morpho leg, as in v2.4.1: consumption and share-delta checks.
+    function _depositMorpho(uint256 morphoAlloc) internal {
+        uint256 usdcBefore   = USDC.balanceOf(address(this));
+        uint256 sharesBefore = MORPHO_VAULT.balanceOf(address(this));
+        USDC.forceApprove(address(MORPHO_VAULT), morphoAlloc);
+        try MORPHO_VAULT.deposit(morphoAlloc, address(this)) returns (uint256 /* sharesIssued */) {
+            USDC.forceApprove(address(MORPHO_VAULT), 0);
+            if ((usdcBefore - USDC.balanceOf(address(this))) != morphoAlloc) revert LeakageDetected();
+            uint256 sharesAfter = MORPHO_VAULT.balanceOf(address(this));
+            if (sharesAfter <= sharesBefore) revert MorphoDepositFailed();
+            morphoDepositedPrincipal += morphoAlloc;
+            emit MorphoDeposited(morphoAlloc, sharesAfter - sharesBefore);
+        } catch {
+            USDC.forceApprove(address(MORPHO_VAULT), 0);
+            revert MorphoDepositFailed();
+        }
+    }
+
+    /**
+     * @notice Take the open lot: deliver the cbETH the curve asks for now (an
+     *         approval of at least currentRequired() is needed) and receive
+     *         the lot's USDC. Anyone may call it.
+     */
+    function take() external nonReentrant notPaused {
+        (uint256 usdcOut, uint256 required, uint256 m) = _settleStart();
+        uint256 cbBefore = CBETH.balanceOf(address(this));
+        CBETH.safeTransferFrom(msg.sender, address(this), required);
+        if (CBETH.balanceOf(address(this)) - cbBefore < required) revert ShortDelivery();
+        USDC.safeTransfer(msg.sender, usdcOut);
+        _settleEnd(usdcOut, required, m);
+    }
+
+    /**
+     * @notice Take the open lot with a callback: the USDC goes out first, the
+     *         taker sources cbETH inside possessioTake, and the balance check
+     *         settles it. Effects precede the call; the contract-wide
+     *         reentrancy guard covers kick, take and the exits.
+     */
+    function takeWithCallback(bytes calldata data) external nonReentrant notPaused {
+        (uint256 usdcOut, uint256 required, uint256 m) = _settleStart();
+        uint256 cbBefore = CBETH.balanceOf(address(this));
+        USDC.safeTransfer(msg.sender, usdcOut);
+        ITaker(msg.sender).possessioTake(usdcOut, required, data);
+        if (CBETH.balanceOf(address(this)) < cbBefore + required) revert ShortDelivery();
+        _settleEnd(usdcOut, required, m);
+    }
+
+    /// @dev Checks the lot, prices it, and closes it BEFORE any transfer.
+    function _settleStart() internal returns (uint256 usdcOut, uint256 required, uint256 m) {
+        Lot memory l = lot;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (l.usdc == 0 || block.timestamp >= l.endsAt) revert NoLot();
+        m = _multiplier(block.timestamp - l.startedAt, l.endsAt - l.startedAt);
+        required = _required(l.usdc, m);
+        usdcOut = l.usdc;
+        delete lot;
+    }
+
+    function _settleEnd(uint256 usdcOut, uint256 required, uint256 m) internal {
+        emit LotTaken(msg.sender, usdcOut, required, m);
+        if (m > PHASE1_END_MULT) emit ParOvershoot(msg.sender, m);
+        emit TreasuryGaugeUpdated(_computeCurrentEthEquivalent());
+    }
+
+    /// @notice The curve's multiplier now, 1e18 = the oracle amount. 0 if no lot.
+    function currentMultiplier() external view returns (uint256) {
+        Lot memory l = lot;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (l.usdc == 0 || block.timestamp >= l.endsAt) return 0;
+        return _multiplier(block.timestamp - l.startedAt, l.endsAt - l.startedAt);
+    }
+
+    /// @notice The cbETH a take must deliver now for the open lot. Reverts if
+    ///         there is no lot or an oracle is stale (so does take).
+    function currentRequired() external view returns (uint256) {
+        Lot memory l = lot;
+        // forge-lint: disable-next-line(block-timestamp)
+        if (l.usdc == 0 || block.timestamp >= l.endsAt) revert NoLot();
+        return _required(l.usdc, _multiplier(block.timestamp - l.startedAt, l.endsAt - l.startedAt));
+    }
+
+    /// @dev Live anchor: the oracle amount is read at the time of the take.
+    ///      Rounds up, in the contract's favour.
+    function _required(uint256 usdc, uint256 m) internal view returns (uint256) {
+        return (_oracleCbEth(usdc) * m + ONE - 1) / ONE;
+    }
+
+    /**
+     * @notice The multiplier at elapsed time `t` of an auction of length `L`
+     *         (SPEC §4.3; Reserve DutchTrade's shape):
+     *           phase 1, t in [0, 0.20L): geometric from 1536x to 1.5x, as ten
+     *             halvings with linear interpolation inside each halving, so no
+     *             fixed-point power is needed: m = 1.5 * 2^(9-n) * (2 - f) with
+     *             s = 10t/(0.20L), n = floor(s), f = s - n;
+     *           phase 2, [0.20L, 0.45L): linear from 1.5x to 1.0x;
+     *           phase 3, [0.45L, 0.95L): linear from 1.0x to FLOOR_BPS;
+     *           phase 4, [0.95L, L): flat at FLOOR_BPS.
+     *         Monotone non-increasing in t; continuous at every boundary.
+     */
+    function _multiplier(uint256 t, uint256 L) internal pure returns (uint256 m) {
+        uint256 p1 = (L * 20) / 100;
+        uint256 p2 = (L * 45) / 100;
+        uint256 p3 = (L * 95) / 100;
+        uint256 floor_ = FLOOR_BPS * 1e14;              // 0.99e18
+        if (t < p1) {
+            uint256 s18 = (t * 10 * ONE) / p1;          // [0, 10e18)
+            uint256 n   = s18 / ONE;                    // 0..9
+            uint256 f18 = s18 - n * ONE;                // [0, 1e18)
+            m = (PHASE1_END_MULT * (uint256(1) << (9 - n)) * (2 * ONE - f18)) / ONE;
+        } else if (t < p2) {
+            m = PHASE1_END_MULT - ((PHASE1_END_MULT - ONE) * (t - p1)) / (p2 - p1);
+        } else if (t < p3) {
+            m = ONE - ((ONE - floor_) * (t - p2)) / (p3 - p2);
+        } else {
+            m = floor_;
+        }
+    }
+
+    /// @dev The cbETH the oracle says `usdc` is worth now: USDC → USD → ETH
+    ///      (two 8-decimal feeds) → cbETH (the 18-decimal exchange-rate feed).
+    ///      Reverts on any stale or invalid feed: fail closed.
+    function _oracleCbEth(uint256 usdc) internal view returns (uint256) {
         uint256 cbEthPerEth18 = _validateOracle();
-
-        uint256 usdcBalance = USDC.balanceOf(address(this));
-        if (usdcBalance < minSwapBatch) revert BatchTooSmall();
-
-        // Step 1: DAI reserve refill (operations before accumulation)
-        uint256 usdcAfterDai = usdcBalance;
-
-        if (daiCeiling > 0) {
-            uint256 currentDai = DAI.balanceOf(address(this));
-            if (currentDai < daiCeiling) {
-                uint256 daiGap = daiCeiling - currentDai;
-
-                // Check DAI oracle — if stale/invalid, skip DAI refill this cycle
-                // and proceed with cbETH leg. Merchant's sweep still executes,
-                // DAI reserve will refill on next sweep when oracle recovers.
-                bool daiOracleOk = _isDaiOracleFresh();
-
-                if (daiOracleOk) {
-                    // Decimal normalization: daiGap is in DAI (18 decimals),
-                    // usdcBalance is in USDC (6 decimals). Convert daiGap to
-                    // USDC-equivalent for proper comparison and swap input sizing.
-                    // Assumes ~1:1 DAI/USDC peg (validated by Chainlink staleness check).
-                    uint256 daiGapInUsdc = daiGap / 1e12;
-                    uint256 usdcForDai   = daiGapInUsdc > usdcBalance
-                        ? usdcBalance
-                        : daiGapInUsdc;
-
-                    if (usdcForDai > 0) {
-                        uint256 daiBefore     = DAI.balanceOf(address(this));
-                        uint256 usdcBeforeSwap = USDC.balanceOf(address(this));
-                        USDC.forceApprove(address(ROUTER), usdcForDai);
-
-                        // H-1 hybrid floor: USDC→DAI at ~1:1 peg (gated above by
-                        // _isDaiOracleFresh). usdcForDai is 6-dec; DAI is 18-dec.
-                        // floor = usdcForDai * 1e12 * 90% . Effective min is
-                        // max(callerMin, floor) so performData/caller can tighten
-                        // but never loosen below the peg-derived bound.
-                        uint256 daiFloor = (usdcForDai * 1e12 * SWEEP_SLIPPAGE_BPS) / SWEEP_SLIPPAGE_DENOM;
-                        uint256 daiMin   = minDaiOut > daiFloor ? minDaiOut : daiFloor;
-
-                        try ROUTER.exactInputSingle(
-                            ISwapRouter.ExactInputSingleParams({
-                                tokenIn:           address(USDC),
-                                tokenOut:          address(DAI),
-                                fee:               FEE_STABLE,
-                                recipient:         address(this),
-                                amountIn:          usdcForDai,
-                                amountOutMinimum:  daiMin,
-                                sqrtPriceLimitX96: 0
-                            })
-                        ) returns (uint256 daiOut) {
-                            if (daiOut > 0) {
-                                uint256 newReserve = DAI.balanceOf(address(this));
-                                emit DAIReserveFilled(usdcForDai, newReserve - daiBefore, newReserve);
-
-                                // Measure actual USDC consumed (defends against
-                                // malicious routers that consume more than declared).
-                                uint256 usdcConsumed = usdcBeforeSwap - USDC.balanceOf(address(this));
-                                usdcAfterDai = usdcBalance - usdcConsumed;
-                            }
-                        } catch {
-                            // DAI swap failed — skip, proceed with cbETH leg
-                            // USDC stays in contract for cbETH leg below
-                            emit DAIRefillSkipped(2, daiGap);   // P-M3: never silent
-                        }
-
-                        // Reset approval — defends against malicious router that
-                        // consumes less than approved, leaving dangling allowance.
-                        USDC.forceApprove(address(ROUTER), 0);
-                    }
-                } else {
-                    emit DAIRefillSkipped(1, daiGap);           // P-M3: never silent
-                }
-            }
-        }
-
-        // Step 2: if any USDC remains after DAI refill, split per cbEthBps
-        // between cbETH (via multi-hop) and Morpho USDC vault (direct deposit).
-        if (usdcAfterDai == 0) {
-            lastSweepTime = block.timestamp;
-            emit UCRSweptDaiOnly(usdcBalance, usdcBalance, block.timestamp);
-            // v2.3 backwards-compat alias (deprecated event)
-            emit UCRSwept(usdcBalance, 0, 0, block.timestamp);
-            return;
-        }
-
-        // ═════════════════════════════════════════════════════════════════════
-        // v2.4 — Dual-acquisition: 50/50 split (configurable via cbEthBps).
-        //
-        // cbETH leg:   USDC → WETH (Uniswap V3 0.05%) → cbETH (Aerodrome Slipstream)
-        //              For L1 MAVAN staking destination.
-        //
-        // Morpho leg:  USDC → Bitwise Morpho Blue USDC vault (ERC4626 direct deposit)
-        //              For stable-asset yield. Mirror of L1Anchor.routeToMorpho.
-        //
-        // Council-ratified merchant baseline. Both legs run in a single sweep
-        // cycle. Failure on either leg reverts the whole sweep; partial
-        // execution is not a valid state.
-        // ═════════════════════════════════════════════════════════════════════
-
-        // Compute per-leg allocations from cbEthBps (basis points out of 10,000).
-        // Integer-division residue goes to the Morpho leg by construction.
-        uint256 cbEthAlloc = (usdcAfterDai * cbEthBps) / 10000;
-        uint256 morphoAlloc = usdcAfterDai - cbEthAlloc;
-
-        // ─── cbETH leg: USDC → WETH → cbETH ─────────────────────────────────
-        uint256 cbEthOut = 0;
-        uint256 wethOut = 0;
-        if (cbEthAlloc > 0) {
-            // Sub-leg 1: USDC → WETH (Uniswap V3, 0.05% fee)
-            uint256 usdcBeforeWethSwap = USDC.balanceOf(address(this));
-            USDC.forceApprove(address(ROUTER), cbEthAlloc);
-
-            // H-1 hybrid floor: WETH-out ≡ ETH-out. _usdcToEth gives the
-            // oracle ETH-equivalent of the USDC going in; 90% of that is the
-            // floor. Effective min = max(callerMin, floor).
-            uint256 wethFloor = (_usdcToEth(cbEthAlloc) * SWEEP_SLIPPAGE_BPS) / SWEEP_SLIPPAGE_DENOM;
-
-            // P-1 (audit 2026-08-26) — FAIL-CLOSED the WETH-leg floor.
-            //   _usdcToEth returns 0 on a stale/invalid USDC/USD or ETH/USD feed
-            //   (fail-open). Left unguarded, wethFloor collapses to 0 and — with
-            //   the automation default sweepSlippageMinWeth == 0 — the USDC→WETH
-            //   swap would run with amountOutMinimum == 0, reintroducing the H-1
-            //   sandwich exposure through a feed the cbETH gate does not cover.
-            //   The cbETH/ETH gate (_validateOracle) already reverts on its own
-            //   staleness; this makes the composite USDC/ETH feed symmetric —
-            //   a stale WETH-floor oracle blocks the sweep instead of silently
-            //   dropping the leg's slippage protection. (cbEthAlloc > 0 here.)
-            if (wethFloor == 0) revert OracleStale();
-
-            uint256 wethMin   = minWethOut > wethFloor ? minWethOut : wethFloor;
-
-            wethOut = ROUTER.exactInputSingle(
-                ISwapRouter.ExactInputSingleParams({
-                    tokenIn:           address(USDC),
-                    tokenOut:          address(WETH),
-                    fee:               FEE_LST,             // 0.05% — USDC/WETH (deep)
-                    recipient:         address(this),
-                    amountIn:          cbEthAlloc,
-                    amountOutMinimum:  wethMin,
-                    sqrtPriceLimitX96: 0
-                })
-            );
-            if (wethOut == 0) revert ZeroOutput();
-
-            // Leakage check on USDC consumption (defense-in-depth).
-            uint256 usdcAfterWethSwap = USDC.balanceOf(address(this));
-            if ((usdcBeforeWethSwap - usdcAfterWethSwap) != cbEthAlloc) {
-                revert LeakageDetected();
-            }
-
-            // Reset USDC approval on V3 router — defense-in-depth.
-            USDC.forceApprove(address(ROUTER), 0);
-
-            // Sub-leg 2: WETH → cbETH (Aerodrome Slipstream, tickSpacing=1)
-            uint256 wethBeforeCbEthSwap = WETH.balanceOf(address(this));
-            WETH.forceApprove(address(AERO_ROUTER), wethOut);
-
-            // H-1 hybrid floor: invert the 18-dec cbETH/ETH exchange rate to
-            // size expected cbETH from WETH-in. cbEthPerEth18 = ETH per cbETH
-            // (≈1.0–1.08e18), validated in _validateOracle this same call.
-            // expected cbETH = wethOut * 1e18 / cbEthPerEth18 ; floor = 90%.
-            uint256 cbEthFloor = (((wethOut * 1e18) / cbEthPerEth18) * SWEEP_SLIPPAGE_BPS) / SWEEP_SLIPPAGE_DENOM;
-            uint256 cbEthMin   = minCbEthOut > cbEthFloor ? minCbEthOut : cbEthFloor;
-
-            cbEthOut = AERO_ROUTER.exactInputSingle(
-                IAerodromeSlipstreamRouter.ExactInputSingleParams({
-                    tokenIn:           address(WETH),
-                    tokenOut:          address(CBETH),
-                    tickSpacing:       CBETH_TICK_SPACING,
-                    recipient:         address(this),
-                    deadline:          block.timestamp,
-                    amountIn:          wethOut,
-                    amountOutMinimum:  cbEthMin,
-                    sqrtPriceLimitX96: 0
-                })
-            );
-            if (cbEthOut == 0) revert ZeroOutput();
-
-            // Leakage check on WETH consumption (defense-in-depth).
-            uint256 wethAfterCbEthSwap = WETH.balanceOf(address(this));
-            if ((wethBeforeCbEthSwap - wethAfterCbEthSwap) != wethOut) {
-                revert LeakageDetected();
-            }
-
-            // Reset WETH approval on Aerodrome router — defense-in-depth.
-            WETH.forceApprove(address(AERO_ROUTER), 0);
-
-            emit CbEthAcquired(cbEthAlloc, wethOut, cbEthOut);
-        }
-
-        // ─── Morpho leg: USDC → Bitwise Morpho Blue vault (ERC4626 deposit) ─
-        uint256 morphoShares = 0;
-        if (morphoAlloc > 0) {
-            // v2.4.1 — leakage check parity with cbETH leg (Plate Finding 1).
-            // Capture both balances BEFORE the deposit so consumption and
-            // mint can be verified independently after.
-            uint256 usdcBeforeMorpho   = USDC.balanceOf(address(this));
-            uint256 sharesBefore       = MORPHO_VAULT.balanceOf(address(this));
-
-            USDC.forceApprove(address(MORPHO_VAULT), morphoAlloc);
-
-            try MORPHO_VAULT.deposit(morphoAlloc, address(this))
-                returns (uint256 /* sharesIssued */)
-            {
-                USDC.forceApprove(address(MORPHO_VAULT), 0);
-
-                // v2.4.1 — USDC consumption leakage check (Plate Finding 1).
-                // Symmetric defense-in-depth with the cbETH leg's leakage
-                // checks. Any deviation between declared input and vault
-                // consumption is severe enough to revert the whole sweep.
-                uint256 usdcAfterMorpho = USDC.balanceOf(address(this));
-                if ((usdcBeforeMorpho - usdcAfterMorpho) != morphoAlloc) {
-                    revert LeakageDetected();
-                }
-
-                // Share-delta verification (existing).
-                uint256 sharesAfter = MORPHO_VAULT.balanceOf(address(this));
-                if (sharesAfter <= sharesBefore) revert MorphoDepositFailed();
-
-                // v2.4.1 — Use verified delta, not vault's claim (Plate Finding 2).
-                // Under honest vault both values match; under malicious vault
-                // the verified delta is the truth. Event records truth.
-                uint256 sharesActuallyMinted = sharesAfter - sharesBefore;
-                morphoShares = sharesActuallyMinted;
-                morphoDepositedPrincipal += morphoAlloc;
-
-                emit MorphoDeposited(morphoAlloc, sharesActuallyMinted);
-            } catch {
-                USDC.forceApprove(address(MORPHO_VAULT), 0);
-                revert MorphoDepositFailed();
-            }
-        }
-
-        // ─── Treasury gauge update (cbETH leg only — Morpho yield is share-denominated) ──
-        uint256 ethAdded = 0;
-        if (cbEthOut > 0) {
-            uint256 cbEthInEth = LST_RATES.cbEthToEth(cbEthOut);
-            if (cbEthInEth == 0) revert ExchangeRateInvalid();
-            ethAdded = cbEthInEth;
-        }
-
-        lastSweepTime = block.timestamp;
-        uint256 currentEthEquivalent = _computeCurrentEthEquivalent();
-
-        emit UCRSweptFull(usdcBalance, cbEthOut, morphoShares, ethAdded, block.timestamp);
-        // v2.3 backwards-compat alias (deprecated event)
-        emit UCRSwept(usdcBalance, cbEthOut, ethAdded, block.timestamp);
-        emit TreasuryGaugeUpdated(currentEthEquivalent);
-    }
-
-    /**
-     * @notice v2.4.2 — Convert a USDC amount (6-decimal) to ETH-wei equivalent
-     *         (18-decimal) using compositional Chainlink oracle path.
-     *
-     *         USDC/ETH direct does not exist on Base mainnet — cast-verified
-     *         2026-05-27. Composes via two USD-quoted Base mainnet feeds:
-     *
-     *             USDC → USD (CHAINLINK_USDC_USD, 8-decimal)
-     *             USD → ETH (CHAINLINK_ETH_USD, 8-decimal, inverted)
-     *
-     *         Decimal math:
-     *             usdcUsdE8 = "USD per USDC, scaled 1e8" (≈ 99955838 = $0.99955838)
-     *             ethUsdE8  = "USD per ETH, scaled 1e8"
-     *             ethAmt    = (usdcAmt * 1e12 * usdcUsdE8) / ethUsdE8 / 1e6
-     *                       = usdcAmt * usdcUsdE8 * 1e6 / ethUsdE8
-     *
-     *         Scale check:
-     *             usdcAmt    is 6-dec   = 1e6
-     *             usdcUsdE8  is 8-dec   = 1e8
-     *             ethUsdE8   is 8-dec   = 1e8
-     *             1e6 multiplier upshifts to 18-dec for ETH-wei
-     *             Numerator scale: 1e6 * 1e8 * 1e6 = 1e20
-     *             Divide by ethUsdE8 (~1e8 * eth_in_usd): yields 1e20 / 1e8 = 1e12-ish
-     *             …wait, this needs explicit derivation, see expanded math below.
-     *
-     *         Expanded derivation:
-     *             1 USDC = usdcUsdE8 / 1e8 USD
-     *             1 USD = 1e8 / ethUsdE8 ETH (in 18-dec terms when ethUsdE8 is USD-per-ETH)
-     *             ⇒ 1 USDC = (usdcUsdE8 / 1e8) * (1e8 / ethUsdE8) ETH = usdcUsdE8 / ethUsdE8 ETH
-     *             For x USDC (6-dec wei): x_in_eth_wei = (x_usdc * 1e12 * usdcUsdE8) / ethUsdE8
-     *             1e12 multiplier converts USDC 6-dec to ETH 18-dec while the price ratio
-     *             (usdcUsdE8 / ethUsdE8) carries the value.
-     *
-     *         Compositional staleness: returns 0 if EITHER feed is stale/reverting/invalid.
-     *         Caller (gauge) treats 0 as "Morpho leg invisible this read" — same
-     *         downgrade pattern as cbETH leg when LST_RATES fails.
-     */
-    function _usdcToEth(uint256 usdcAmt) internal view returns (uint256 ethAmt) {
-        if (usdcAmt == 0) return 0;
-
-        // ── USDC/USD freshness check
-        int256 usdcUsdE8;
-        try CHAINLINK_USDC_USD.latestRoundData() returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 /* startedAt */,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) {
-            if (answeredInRound < roundId)                  return 0;
-            if (updatedAt == 0)                             return 0;
-            // forge-lint: disable-next-line(block-timestamp)
-            if (block.timestamp - updatedAt > ORACLE_STALE_STABLE) return 0;   // P-H2: 24h-heartbeat feed
-            if (answer <= 0)                                return 0;
-            usdcUsdE8 = answer;
-        } catch {
-            return 0;
-        }
-
-        // ── ETH/USD freshness check
-        int256 ethUsdE8;
-        try CHAINLINK_ETH_USD.latestRoundData() returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 /* startedAt */,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) {
-            if (answeredInRound < roundId)                  return 0;
-            if (updatedAt == 0)                             return 0;
-            // forge-lint: disable-next-line(block-timestamp)
-            if (block.timestamp - updatedAt > ORACLE_STALE) return 0;
-            if (answer <= 0)                                return 0;
-            ethUsdE8 = answer;
-        } catch {
-            return 0;
-        }
-
-        // ── Composed conversion (decimal math fully derived in NatSpec above)
-        // Numerator pre-divides safely: usdcAmt × 1e12 × usdcUsdE8 fits comfortably
-        // in uint256 (1e6 × 1e12 × 1e8 = 1e26, well below 2^256 ~ 1.16e77).
-        // forge-lint: disable-next-line(unsafe-typecast)
-        ethAmt = (usdcAmt * 1e12 * uint256(usdcUsdE8)) / uint256(ethUsdE8);
-    }
-
-    /**
-     * @notice Compute current ETH-equivalent of treasury holdings across both legs
-     *         of the dual-acquisition architecture.
-     *
-     *         v2.4.2 — Extended from cbETH-leg-only to dual-leg aggregation:
-     *             cbETH leg:  CBETH.balanceOf(this) → LST_RATES.cbEthToEth → ETH-wei
-     *             Morpho leg: MORPHO_VAULT.balanceOf(this) → convertToAssets → USDC →
-     *                         _usdcToEth (Chainlink compositional path) → ETH-wei
-     *
-     *         Returns sum of both legs at CURRENT exchange rates, not historical
-     *         deposit totals. Drops if cbETH rate falls or USDC depegs; rises if
-     *         Morpho yield accrues or cbETH rate climbs.
-     *
-     *         Compositional staleness:
-     *           - If LST_RATES reverts: cbETH leg reports 0, Morpho leg may still report.
-     *           - If MORPHO_VAULT.convertToAssets reverts: Morpho leg reports 0,
-     *             cbETH leg still reports.
-     *           - If EITHER Chainlink USDC/USD or ETH/USD is stale: Morpho leg
-     *             reports 0 (via _usdcToEth's compositional staleness floor).
-     *         Each leg's failure cleanly downgrades; the gauge never reports a
-     *         stale composite value. Console operators read 0 on a leg as
-     *         "leg-value unknown this block" not "leg-value is literally zero."
-     */
-    function _computeCurrentEthEquivalent() internal view returns (uint256) {
-        // ── cbETH leg (v2.4 baseline, defensively wrapped in v2.4.2)
-        uint256 cbEthInEth;
-        uint256 cbBal = CBETH.balanceOf(address(this));
-        if (cbBal > 0) {
-            try LST_RATES.cbEthToEth(cbBal) returns (uint256 v) {
-                cbEthInEth = v;
-            } catch {
-                cbEthInEth = 0;
-            }
-        }
-
-        // ── Morpho leg (v2.4.2 addition)
-        uint256 morphoInEth;
-        uint256 morphoShares = MORPHO_VAULT.balanceOf(address(this));
-        if (morphoShares > 0) {
-            try MORPHO_VAULT.convertToAssets(morphoShares) returns (uint256 usdcValue) {
-                morphoInEth = _usdcToEth(usdcValue);
-            } catch {
-                morphoInEth = 0;
-            }
-        }
-
-        return cbEthInEth + morphoInEth;
+        uint256 ethWei = _usdcToEth(usdc);
+        if (ethWei == 0) revert OracleStale();
+        return (ethWei * ONE) / cbEthPerEth18;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     //                          CIRCUIT BREAKER
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Pause sweep mechanism. Callable by OWNER or OPERATOR.
-     *         Owner-initiated pause requires 48h timelock to resume.
-     */
-    function pauseUCR() external {
-        if (!hasRole(OWNER_ROLE, msg.sender) && !hasRole(OPERATOR_ROLE, msg.sender)) {
-            revert Unauthorized();   // L-1: auth failure, distinct from value/address errors
-        }
-        routingPaused = true;
-        emit UCRPaused(msg.sender, block.timestamp);
+    /// @notice Pause kicks and takes. Owner only. An open lot simply expires.
+    function pauseAuctions() external onlyRole(OWNER_ROLE) {
+        auctionsPaused = true;
+        emit AuctionsPaused(msg.sender, block.timestamp);
     }
 
-    /**
-     * @notice Queue a timelocked resume. ID includes sender + nonce + timestamp
-     *         for uniqueness across same-block calls.
-     */
-    function queueResumeUCR() external onlyRole(OWNER_ROLE) returns (bytes32 id) {
+    /// @notice Queue a timelocked resume (TIMELOCK, 48 h).
+    function queueResumeAuctions() external onlyRole(OWNER_ROLE) returns (bytes32 id) {
         queueNonce++;
-        id = keccak256(abi.encodePacked(
-            "resume",
-            msg.sender,
-            queueNonce,
-            block.timestamp
-        ));
+        id = keccak256(abi.encodePacked("resume", msg.sender, queueNonce, block.timestamp));
         timelockQueue[id] = block.timestamp + TIMELOCK;
-        emit UCRResumeQueued(id, timelockQueue[id]);
+        emit AuctionsResumeQueued(id, timelockQueue[id]);
     }
 
-    /**
-     * @notice Execute queued resume after TIMELOCK elapsed. Owner-only.
-     */
-    function resumeUCR(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
-        routingPaused = false;
-        emit UCRResumed(msg.sender, block.timestamp);
+    function resumeAuctions(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
+        auctionsPaused = false;
+        emit AuctionsResumed(msg.sender, block.timestamp);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //                          GUARDIAN (SECURITY SYSTEM)
+    //                     PAYEES (THE STOLEN-KEY DEFENCE)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Merchant arms the Guardian. Only then can Guardian pause.
-     *         Default is disarmed. Merchant can flip on/off any time.
-     *
-     *         Analogy: arming a store's security system before closing.
-     */
-    function enableGuardian() external onlyRole(OWNER_ROLE) {
-        guardianEnabled = true;
-        // Review 2026-10-17 (F-1): a re-arm hands the freeze decision back to
-        // the guardian, so a release queued while disarmed (K-1) is void. Left
-        // in place, it would outlive the re-arm and lift a LATER freeze the
-        // moment the next disarm completed, cutting K-1's stated 37-day cost
-        // to 7 days. queueFreezeRelease requires the guardian disarmed, so no
-        // queue can exist while it is armed.
-        if (freezeReleaseExecuteAfter != 0) {
-            freezeReleaseExecuteAfter = 0;
-            emit FreezeReleaseCancelled(msg.sender);
-        }
-        emit GuardianEnabled(msg.sender, block.timestamp);
+    /// @notice Propose a payee; it becomes active after PAYEE_DELAY (48 h). The
+    ///         console shows the event, so a proposal the merchant did not make
+    ///         is visible in time to remove it and move funds to their own
+    ///         payees. Re-proposing an active payee reverts.
+    function proposePayee(address who) external onlyRole(OWNER_ROLE) {
+        if (who == address(0)) revert InvalidAddress();
+        if (payeeActiveAt[who] != 0) revert AlreadyPayee();
+        uint256 activeAt = block.timestamp + PAYEE_DELAY;
+        payeeActiveAt[who] = uint64(activeAt);
+        emit PayeeProposed(who, activeAt);
     }
 
-    /**
-     * @notice Merchant disarms the Guardian. Guardian pause calls will revert.
-     */
-    function disableGuardian() external onlyRole(OWNER_ROLE) {
-        // P-H1: with a guardian seated, disarming is timelocked and vetoable —
-        // otherwise a stolen owner key disarms and drains in one transaction.
-        // With no guardian seated there is nothing to protect: instant.
-        if (guardianCount != 0) {
-            uint256 readyAt = guardianDisableExecuteAfter;
-            // forge-lint: disable-next-line(block-timestamp)
-            if (readyAt == 0 || block.timestamp < readyAt) revert GuardianDisableNotReady();
-            guardianDisableExecuteAfter = 0;
-        }
-        guardianEnabled = false;
-        emit GuardianDisabled(msg.sender, block.timestamp);
+    /// @notice Remove a payee, or cancel a pending proposal. Instant.
+    function removePayee(address who) external onlyRole(OWNER_ROLE) {
+        if (payeeActiveAt[who] == 0) revert NotAPayee(who);
+        delete payeeActiveAt[who];
+        emit PayeeRemoved(who);
     }
 
-    /// @notice P-H1: schedule disarming the guardian (GUARDIAN_DISABLE_DELAY).
-    ///         Re-queuing restarts the clock; it can never shorten it.
-    function queueGuardianDisable() external onlyRole(OWNER_ROLE) {
-        uint256 readyAt = block.timestamp + GUARDIAN_DISABLE_DELAY;
-        guardianDisableExecuteAfter = readyAt;
-        emit GuardianDisableQueued(msg.sender, readyAt);
-    }
-
-    /// @notice P-H1: cancel a queued disarm. Owner (changed their mind) or
-    ///         guardian (the veto — a disarm the merchant did not queue is the
-    ///         signature of a stolen owner key).
-    function cancelGuardianDisable() external onlyOwnerOrGuardian {
-        if (guardianDisableExecuteAfter == 0) revert NothingQueued();
-        guardianDisableExecuteAfter = 0;
-        emit GuardianDisableCancelled(msg.sender);
-    }
-
-    /// @notice K-1 (external review, KupiaSec 2026-10-15): the way out for a
-    ///         lost guardian key. A disarm leaves withdrawalsFrozen on, and
-    ///         only an armed guardian can clear it, so a guardian that froze
-    ///         withdrawals and then lost its key locked the merchant out for
-    ///         good. With the guardian disarmed and withdrawals frozen, the
-    ///         owner may queue a release that executes after
-    ///         FREEZE_RELEASE_DELAY. Any guardian can cancel it, armed or not.
-    ///         Stated cost: a stolen owner key now lifts the freeze if every
-    ///         guardian stays silent through the 7-day disarm AND the 30-day
-    ///         release. Before K-1 the freeze never lifted at all.
-    function queueFreezeRelease() external onlyRole(OWNER_ROLE) {
-        if (guardianEnabled) revert GuardianStillArmed();
-        if (!withdrawalsFrozen) revert NotFrozen();
-        uint256 readyAt = block.timestamp + FREEZE_RELEASE_DELAY;
-        freezeReleaseExecuteAfter = readyAt;
-        emit FreezeReleaseQueued(msg.sender, readyAt);
-    }
-
-    /// @notice K-1: cancel a queued release. Owner (changed their mind) or any
-    ///         guardian, armed or not (a release the merchant did not queue is
-    ///         the signature of a stolen owner key).
-    function cancelFreezeRelease() external onlyOwnerOrGuardian {
-        if (freezeReleaseExecuteAfter == 0) revert NothingQueued();
-        freezeReleaseExecuteAfter = 0;
-        emit FreezeReleaseCancelled(msg.sender);
-    }
-
-    /// @notice K-1: lift the freeze once the release delay has passed. Reverts
-    ///         if the guardian was re-armed meanwhile: an armed guardian
-    ///         decides the freeze itself.
-    function executeFreezeRelease() external onlyRole(OWNER_ROLE) {
-        uint256 readyAt = freezeReleaseExecuteAfter;
+    /// @notice True when `who` may receive an exit now.
+    function isPayee(address who) public view returns (bool) {
+        uint64 at = payeeActiveAt[who];
         // forge-lint: disable-next-line(block-timestamp)
-        if (readyAt == 0 || block.timestamp < readyAt) revert FreezeReleaseNotReady();
-        if (guardianEnabled) revert GuardianStillArmed();
-        freezeReleaseExecuteAfter = 0;
-        withdrawalsFrozen = false;
-        emit FreezeReleased(msg.sender);
-        emit WithdrawalsFrozenSet(msg.sender, false, block.timestamp);
+        return at != 0 && block.timestamp >= at;
     }
 
-    /// @notice P-H1: the owner may only SEED the first guardian. Once one is
-    ///         seated, GUARDIAN_ROLE administers itself (role admin ==
-    ///         GUARDIAN_ROLE), so a compromised owner key cannot appoint
-    ///         itself guardian and lift the freeze.
-    function grantRole(bytes32 role, address account) public virtual override {
-        if (role == GUARDIAN_ROLE && guardianCount == 0) {
-            _checkRole(OWNER_ROLE);
-            _grantRole(role, account);
-            return;
-        }
-        super.grantRole(role, account);
-    }
-
-    function _grantRole(bytes32 role, address account) internal virtual override returns (bool granted) {
-        granted = super._grantRole(role, account);
-        if (granted && role == GUARDIAN_ROLE) guardianCount += 1;
-    }
-
-    function _revokeRole(bytes32 role, address account) internal virtual override returns (bool revoked) {
-        revoked = super._revokeRole(role, account);
-        if (revoked && role == GUARDIAN_ROLE) guardianCount -= 1;
-    }
-
-    /**
-     * @notice Guardian pause — only valid when guardianEnabled == true.
-     *         Guardian can ONLY pause. Cannot withdraw, unpause, or sweep.
-     *         Merchant resumes via standard queueResumeUCR (48h timelock).
-     */
-    function guardianPause() external onlyRole(GUARDIAN_ROLE) {
-        if (!guardianEnabled) revert GuardianNotEnabled();
-        routingPaused = true;
-        emit GuardianPaused(msg.sender, block.timestamp);
-        emit UCRPaused(msg.sender, block.timestamp);
-    }
-
-    /**
-     * @notice M-1 (council-ratified C): Guardian freezes the fund-exfiltration
-     *         paths — withdrawDAI and executeEmergencyWithdraw. Independent of
-     *         routingPaused, so sweeps are unaffected. Defends against a
-     *         compromised OWNER_ROLE key, which cannot clear this flag.
-     *         Guardian can freeze and unfreeze (a freeze that the owner could
-     *         lift would be no defense; an unfreeze the Guardian can't perform
-     *         would strand the merchant). The complementary protection is
-     *         guardianCancelEmergency below, which kills a queued drain so that
-     *         unfreezing later cannot let a pre-staged emergency complete.
-     */
-    function setWithdrawalsFrozen(bool frozen) external onlyRole(GUARDIAN_ROLE) {
-        if (!guardianEnabled) revert GuardianNotEnabled();
-        withdrawalsFrozen = frozen;
-        emit WithdrawalsFrozenSet(msg.sender, frozen, block.timestamp);
-    }
-
-    /**
-     * @notice M-1: Guardian cancels a queued emergency withdrawal. Mirrors
-     *         cancelEmergencyWithdraw (OWNER_ROLE) but for the Guardian, so a
-     *         compromised owner cannot push a 7-day cbETH/token drain past the
-     *         merchant's security role. Owner re-queuing is met by Guardian
-     *         re-cancelling; combined with the freeze, the drain cannot complete.
-     */
-    function guardianCancelEmergency(address token) external onlyRole(GUARDIAN_ROLE) {
-        if (!guardianEnabled) revert GuardianNotEnabled();
-        if (emergencyQueue[token].executeAfter == 0) revert NothingQueued();
-        delete emergencyQueue[token];
-        emit GuardianCancelledEmergency(msg.sender, token);
-        emit EmergencyCancelled(token);
+    function _requirePayee(address to) internal view {
+        if (!isPayee(to)) revert NotAPayee(to);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //                       DAI RESERVE (STABLE-ASSET BALANCE)
+    //                               EXITS
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Withdraw DAI from reserve to any address. Owner only.
-     *         Subject to daily limit — rate-based protection against
-     *         compromised-key drain attacks.
-     *         Emits DAIWithdrawn for off-chain Guardian monitoring.
-     *
-     * @param amount DAI amount to withdraw (18 decimals)
-     * @param to     Destination address chosen by Owner
-     */
-    function withdrawDAI(uint256 amount, address to)
-        external onlyRole(OWNER_ROLE) nonReentrant
-    {
-        if (withdrawalsFrozen) revert WithdrawalsFrozen();   // M-1
-        if (to == address(0)) revert InvalidAddress();
-        if (amount == 0)      revert ZeroAmount();
-
-        _consumeDaiDailyLimit(amount);                       // P-M4: leaky bucket
-
-        DAI.safeTransfer(to, amount);
-        emit DAIWithdrawn(msg.sender, amount, to, block.timestamp);
-    }
-
-    /// @notice Send idle USDC out of the contract to any address.
-    /// @dev Operational exit for USDC that is sitting in the contract (e.g. a
-    ///      payment received but not yet swept). Owner-gated, reentrancy-safe.
-    ///      C-2 (audit 2026-07-14): subject to the rolling usdcDailyLimit
-    ///      window (shared with redeemMorpho's USDC output) — a compromised
-    ///      OWNER key can no longer drain the USDC balance in one call. Larger
-    ///      exits go through the 7-day emergency-withdraw timelock.
-    /// @param amount USDC amount (6-dec) to transfer.
-    /// @param to     Recipient address.
-    function sendUSDC(uint256 amount, address to)
-        external onlyRole(OWNER_ROLE) nonReentrant
-    {
-        if (withdrawalsFrozen) revert WithdrawalsFrozen();
-        if (to == address(0))  revert InvalidAddress();
-        if (amount == 0)       revert ZeroAmount();
-
-        _consumeUsdcDailyLimit(amount);   // C-2
-
+    /// @notice Send idle USDC to an active payee, within the rolling usdcDailyLimit
+    ///         (shared with redeemMorpho's output). Larger exits go through
+    ///         the 7-day emergency path.
+    function sendUSDC(uint256 amount, address to) external onlyRole(OWNER_ROLE) nonReentrant {
+        if (amount == 0) revert ZeroAmount();
+        _requirePayee(to);
+        _consumeUsdcDailyLimit(amount);
         USDC.safeTransfer(to, amount);
         emit USDCSent(msg.sender, amount, to, block.timestamp);
     }
 
-    /// @notice Send cbETH out of the contract to any address.
-    /// @dev The contract does not itself convert cbETH back to ETH/USDC (cbETH
-    ///      on Base is a bridge token without native redemption). This exit
-    ///      transfers the cbETH to the owner, who unwinds it on a DEX (e.g.
-    ///      Aerodrome) themselves. Owner-gated, reentrancy-safe.
-    ///      C-2 (audit 2026-07-14): subject to the rolling cbEthDailyLimit
-    ///      window — the yield-bearing treasury can no longer be drained in
-    ///      one call by a compromised OWNER key. Larger exits go through the
-    ///      7-day emergency-withdraw timelock.
-    /// @param amount cbETH amount (18-dec) to transfer.
-    /// @param to     Recipient address.
-    function sendCbETH(uint256 amount, address to)
-        external onlyRole(OWNER_ROLE) nonReentrant
-    {
-        if (withdrawalsFrozen) revert WithdrawalsFrozen();
-        if (to == address(0))  revert InvalidAddress();
-        if (amount == 0)       revert ZeroAmount();
-
-        _consumeCbEthDailyLimit(amount);  // C-2
-
+    /// @notice Send cbETH to an active payee, within the rolling cbEthDailyLimit.
+    function sendCbETH(uint256 amount, address to) external onlyRole(OWNER_ROLE) nonReentrant {
+        if (amount == 0) revert ZeroAmount();
+        _requirePayee(to);
+        _consumeCbEthDailyLimit(amount);
         CBETH.safeTransfer(to, amount);
         emit CbETHSent(msg.sender, amount, to, block.timestamp);
     }
 
-    /// @notice Redeem Morpho vault shares back to USDC, sent to `to`.
-    /// @dev Clean operational unwind of the Morpho leg: calls the ERC4626
-    ///      redeem(shares, receiver, owner) so the vault converts shares to USDC
-    ///      and sends that USDC directly to `to`. The contract is both the share
-    ///      owner and the redemption initiator, so owner == address(this).
-    ///      Owner-gated, reentrancy-safe.
-    ///      C-2 (audit 2026-07-14): the redeemed USDC counts against the same
-    ///      rolling usdcDailyLimit window as sendUSDC (a Morpho redemption IS a
-    ///      USDC exit — sharing the cap closes the split-path drain). The limit
-    ///      is consumed AFTER the redeem so the check runs on the vault's actual
-    ///      output, not an estimate; an over-limit redemption reverts atomically
-    ///      (nonReentrant + revert unwinds the redeem). Larger unwinds go
-    ///      through the 7-day emergency-withdraw timelock.
-    /// @param shares Vault shares to redeem.
-    /// @param to     Recipient of the resulting USDC.
-    /// @return usdcOut The USDC amount returned by the vault.
+    /// @notice Redeem Morpho vault shares to USDC, sent to an active payee. The
+    ///         redeemed USDC counts against usdcDailyLimit, checked on the
+    ///         vault's actual output.
     function redeemMorpho(uint256 shares, address to)
         external onlyRole(OWNER_ROLE) nonReentrant
         returns (uint256 usdcOut)
     {
-        if (withdrawalsFrozen) revert WithdrawalsFrozen();
-        if (to == address(0))  revert InvalidAddress();
-        if (shares == 0)       revert ZeroAmount();
-
-        // ERC4626: redeem `shares`, send resulting assets (USDC) to `to`,
-        // burning from this contract's share balance.
+        if (shares == 0) revert ZeroAmount();
+        _requirePayee(to);
         usdcOut = MORPHO_VAULT.redeem(shares, to, address(this));
         if (usdcOut == 0) revert ZeroOutput();
-
-        _consumeUsdcDailyLimit(usdcOut);  // C-2 — post-check on verified output
-
+        _consumeUsdcDailyLimit(usdcOut);
         emit MorphoRedeemed(msg.sender, shares, usdcOut, to, block.timestamp);
-    }
-
-    /**
-     * @notice Adjust DAI reserve ceiling. Owner only. Applies immediately.
-     *         Set to 0 to opt out of DAI reserve (sweeps will route 100% to cbETH).
-     *         Lowering below current reserve does not force a withdrawal —
-     *         reserve simply stops accumulating until below new ceiling.
-     */
-    function setDaiCeiling(uint256 newCeiling) external onlyRole(OWNER_ROLE) {
-        daiCeiling = newCeiling;
-        emit DAICeilingUpdated(newCeiling);
-    }
-
-    /**
-     * @notice Decrease the daily DAI withdrawal limit. Applies immediately —
-     *         tightening security is always instant.
-     */
-    function decreaseDailyLimit(uint256 newLimit) external onlyRole(OWNER_ROLE) {
-        if (newLimit >= dailyLimit) revert InvalidLimit(); // must be lower
-        dailyLimit = newLimit;
-        emit DailyLimitDecreased(newLimit);
-    }
-
-    /**
-     * @notice Queue an increase to the daily DAI withdrawal limit.
-     *         24-hour delay before increase takes effect.
-     *         Asymmetric timelock: decreases are instant, increases delayed.
-     *         Prevents compromised key from raising limit and immediately draining.
-     */
-    function queueDailyLimitIncrease(uint256 newLimit) external onlyRole(OWNER_ROLE) {
-        if (newLimit <= dailyLimit) revert InvalidLimit(); // must be higher
-        _checkIncreaseCap(newLimit, dailyLimitRef);        // P-H1
-        queuedLimitIncrease = QueuedLimit({
-            newLimit: newLimit,
-            executeAfter: block.timestamp + LIMIT_DELAY
-        });
-        emit DailyLimitIncreaseQueued(newLimit, block.timestamp + LIMIT_DELAY);
-    }
-
-    /**
-     * @notice Execute a queued limit increase after 24h delay elapsed.
-     */
-    function executeDailyLimitIncrease() external onlyRole(OWNER_ROLE) {
-        QueuedLimit memory q = queuedLimitIncrease;
-        if (q.executeAfter == 0)              revert NoIncreaseQueued();
-        // LIMIT_DELAY is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
-
-        dailyLimit = q.newLimit;
-        if (q.newLimit > dailyLimitRef) dailyLimitRef = q.newLimit;   // P-H1
-        delete queuedLimitIncrease;
-
-        emit DailyLimitIncreaseExecuted(q.newLimit);
-    }
-
-    /**
-     * @notice Cancel a queued limit increase. Applies immediately.
-     */
-    /// @dev P-H1: an increase may at most LIMIT_INCREASE_MAX_MULT x the reference
-    ///      (highest limit set by the constructor or an executed increase). A
-    ///      zero reference (deployed in lockdown, never raised) is uncapped for
-    ///      the first raise — still delayed and guardian-cancellable.
-    function _checkIncreaseCap(uint256 newLimit, uint256 ref) internal pure {
-        if (ref == 0) return;
-        uint256 maxAllowed = ref * LIMIT_INCREASE_MAX_MULT;
-        if (newLimit > maxAllowed) revert IncreaseTooLarge(newLimit, maxAllowed);
-    }
-
-    /// @notice P-H1: guardian veto on a queued DAI limit increase.
-    function guardianCancelDailyLimitIncrease() external onlyRole(GUARDIAN_ROLE) {
-        if (!guardianEnabled) revert GuardianNotEnabled();
-        if (queuedLimitIncrease.executeAfter == 0) revert NoIncreaseQueued();
-        delete queuedLimitIncrease;
-        emit GuardianCancelledDailyLimitIncrease(msg.sender);
-        emit DailyLimitIncreaseCancelled();
-    }
-
-    /// @notice P-H1: guardian veto on a queued per-asset limit increase.
-    function guardianCancelAssetLimitIncrease(DailyLimitAsset asset) external onlyRole(GUARDIAN_ROLE) {
-        if (!guardianEnabled) revert GuardianNotEnabled();
-        if (queuedAssetLimitIncrease[uint8(asset)].executeAfter == 0) revert NoIncreaseQueued();
-        delete queuedAssetLimitIncrease[uint8(asset)];
-        emit GuardianCancelledAssetLimitIncrease(msg.sender, uint8(asset));
-    }
-
-    function cancelDailyLimitIncrease() external onlyRole(OWNER_ROLE) {
-        if (queuedLimitIncrease.executeAfter == 0) revert NoIncreaseQueued();
-        delete queuedLimitIncrease;
-        emit DailyLimitIncreaseCancelled();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     //          C-2: PER-ASSET EXIT LIMITS (USDC / cbETH — audit 2026-07-14)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Decrease a per-asset daily exit limit. Applies immediately —
-     *         tightening security is always instant (mirrors decreaseDailyLimit).
-     */
-    function decreaseAssetDailyLimit(DailyLimitAsset asset, uint256 newLimit)
-        external onlyRole(OWNER_ROLE)
-    {
+    /// @notice Decrease a per-asset daily exit limit. Applies immediately.
+    function decreaseAssetDailyLimit(DailyLimitAsset asset, uint256 newLimit) external onlyRole(OWNER_ROLE) {
         if (asset == DailyLimitAsset.USDC) {
-            if (newLimit >= usdcDailyLimit) revert InvalidLimit(); // must be lower
+            if (newLimit >= usdcDailyLimit) revert InvalidLimit();
             usdcDailyLimit = newLimit;
         } else {
-            if (newLimit >= cbEthDailyLimit) revert InvalidLimit(); // must be lower
+            if (newLimit >= cbEthDailyLimit) revert InvalidLimit();
             cbEthDailyLimit = newLimit;
         }
         emit AssetDailyLimitDecreased(uint8(asset), newLimit);
     }
 
-    /**
-     * @notice Queue an increase to a per-asset daily exit limit. LIMIT_DELAY
-     *         (24h) before it takes effect. Asymmetric timelock: decreases are
-     *         instant, increases delayed — a compromised key cannot raise a cap
-     *         and immediately drain (mirrors queueDailyLimitIncrease).
-     */
-    function queueAssetDailyLimitIncrease(DailyLimitAsset asset, uint256 newLimit)
-        external onlyRole(OWNER_ROLE)
-    {
+    /// @notice Queue an increase to a per-asset daily exit limit; LIMIT_DELAY
+    ///         (24 h) before it takes effect, and at most LIMIT_INCREASE_MAX_MULT
+    ///         times the reference limit (P-H1).
+    function queueAssetDailyLimitIncrease(DailyLimitAsset asset, uint256 newLimit) external onlyRole(OWNER_ROLE) {
         uint256 current = asset == DailyLimitAsset.USDC ? usdcDailyLimit : cbEthDailyLimit;
-        if (newLimit <= current) revert InvalidLimit(); // must be higher
-        _checkIncreaseCap(newLimit, assetLimitRef[uint8(asset)]);   // P-H1
+        if (newLimit <= current) revert InvalidLimit();
+        _checkIncreaseCap(newLimit, assetLimitRef[uint8(asset)]);
         queuedAssetLimitIncrease[uint8(asset)] = QueuedLimit({
             newLimit: newLimit,
             executeAfter: block.timestamp + LIMIT_DELAY
@@ -1827,56 +770,39 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit AssetDailyLimitIncreaseQueued(uint8(asset), newLimit, block.timestamp + LIMIT_DELAY);
     }
 
-    /**
-     * @notice Execute a queued per-asset limit increase after LIMIT_DELAY elapsed.
-     */
-    function executeAssetDailyLimitIncrease(DailyLimitAsset asset)
-        external onlyRole(OWNER_ROLE)
-    {
+    function executeAssetDailyLimitIncrease(DailyLimitAsset asset) external onlyRole(OWNER_ROLE) {
         QueuedLimit memory q = queuedAssetLimitIncrease[uint8(asset)];
         if (q.executeAfter == 0)              revert NoIncreaseQueued();
-        // LIMIT_DELAY is 24 hours; validator's ~12s manipulation window is immaterial against 86,400s.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
-
         if (asset == DailyLimitAsset.USDC) {
             usdcDailyLimit = q.newLimit;
         } else {
             cbEthDailyLimit = q.newLimit;
         }
-        if (q.newLimit > assetLimitRef[uint8(asset)]) assetLimitRef[uint8(asset)] = q.newLimit;   // P-H1
+        if (q.newLimit > assetLimitRef[uint8(asset)]) assetLimitRef[uint8(asset)] = q.newLimit;
         delete queuedAssetLimitIncrease[uint8(asset)];
-
         emit AssetDailyLimitIncreaseExecuted(uint8(asset), q.newLimit);
     }
 
-    /**
-     * @notice Cancel a queued per-asset limit increase. Applies immediately.
-     */
-    function cancelAssetDailyLimitIncrease(DailyLimitAsset asset)
-        external onlyRole(OWNER_ROLE)
-    {
+    function cancelAssetDailyLimitIncrease(DailyLimitAsset asset) external onlyRole(OWNER_ROLE) {
         if (queuedAssetLimitIncrease[uint8(asset)].executeAfter == 0) revert NoIncreaseQueued();
         delete queuedAssetLimitIncrease[uint8(asset)];
         emit AssetDailyLimitIncreaseCancelled(uint8(asset));
     }
 
-    /**
-     * @notice Roll the daily withdrawal window if 24h has elapsed since start.
-     *         Internal — called from withdrawDAI to reset counter on window boundary.
-     */
-    /// @dev P-M4 (re-audit 2026-09-01): the "rolling" 24h caps were FIXED
-    ///      windows — a full limit at windowStart+24h-1 and another at +24h moved
-    ///      2x the cap in one second. Every limit is now a LEAKY BUCKET: the
-    ///      spent amount drains back to zero linearly over WINDOW_SIZE. There is
-    ///      no boundary to straddle: after a full draw the next unit of capacity
-    ///      appears at limit/WINDOW_SIZE per second, so an attacker gets at most
-    ///      limit * (1 + D/WINDOW_SIZE) over any span D — never 2x in an instant —
-    ///      and the guardian has the full window to react to the first draw.
-    ///      Honest bound stated: the SUSTAINED rate is unchanged (one limit per
-    ///      24h); only the burst is removed. Storage is reused, ABI unchanged:
-    ///      *Withdrawn = spent (as of *WindowStart), *WindowStart = last
-    ///      accounting timestamp.
+    /// @dev P-H1: an increase may be at most LIMIT_INCREASE_MAX_MULT x the
+    ///      reference. A zero reference (deployed in lockdown) is uncapped for
+    ///      the first raise, which is still delayed.
+    function _checkIncreaseCap(uint256 newLimit, uint256 ref) internal pure {
+        if (ref == 0) return;
+        uint256 maxAllowed = ref * LIMIT_INCREASE_MAX_MULT;
+        if (newLimit > maxAllowed) revert IncreaseTooLarge(newLimit, maxAllowed);
+    }
+
+    /// @dev P-M4: every limit is a leaky bucket. The spent amount drains back
+    ///      to zero linearly over WINDOW_SIZE, so there is no boundary to
+    ///      straddle for 2x the cap in an instant.
     function _drained(uint256 spent, uint256 lastTs, uint256 limit) internal view returns (uint256) {
         // forge-lint: disable-next-line(block-timestamp)
         uint256 elapsed = block.timestamp - lastTs;
@@ -1885,33 +811,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         return spent > refill ? spent - refill : 0;
     }
 
-    function _consumeDaiDailyLimit(uint256 amount) internal {
-        uint256 spent = _drained(dailyWithdrawn, windowStart, dailyLimit);
-        if (spent + amount > dailyLimit) revert DailyLimitExceeded();
-        dailyWithdrawn = spent + amount;
-        windowStart = block.timestamp;
-    }
-
-    /**
-     * @notice C-2 — roll + consume the rolling USDC exit window. Shared by
-     *         sendUSDC and redeemMorpho (whose exit value IS USDC), so the two
-     *         paths cannot be combined to exceed the cap. Mirrors withdrawDAI's
-     *         _rollWindowIfNeeded + check + accumulate sequence in one place.
-     *         Reverts DailyLimitExceeded when `amount` would breach the window.
-     */
     function _consumeUsdcDailyLimit(uint256 amount) internal {
-        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);   // P-M4
+        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);
         if (spent + amount > usdcDailyLimit) revert DailyLimitExceeded();
         usdcDailyWithdrawn = spent + amount;
         usdcWindowStart = block.timestamp;
     }
 
-    /**
-     * @notice C-2 — roll + consume the rolling cbETH exit window (sendCbETH).
-     *         Reverts DailyLimitExceeded when `amount` would breach the window.
-     */
     function _consumeCbEthDailyLimit(uint256 amount) internal {
-        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit); // P-M4
+        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);
         if (spent + amount > cbEthDailyLimit) revert DailyLimitExceeded();
         cbEthDailyWithdrawn = spent + amount;
         cbEthWindowStart = block.timestamp;
@@ -1921,73 +829,31 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     //                     EMERGENCY WITHDRAWAL (7-DAY TIMELOCK)
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Queue an emergency withdrawal of any held token. 7-day delay
-     *         before execution. Owner-only.
-     *
-     *         Use cases: merchant shuts down business, wants to migrate to
-     *         new infrastructure, or wants cbETH in their own wallet for
-     *         direct treasury management or bridging to Ethereum L1.
-     */
-    function queueEmergencyWithdraw(address token, uint256 amount)
-        external onlyRole(OWNER_ROLE)
-    {
+    /// @notice Queue an emergency withdrawal of any held token (migration,
+    ///         shutdown, bridging cbETH to L1). 7-day delay. Owner only.
+    function queueEmergencyWithdraw(address token, uint256 amount) external onlyRole(OWNER_ROLE) {
         if (token == address(0)) revert InvalidAddress();
         if (amount == 0)         revert ZeroAmount();
-
-        emergencyQueue[token] = EmergencyWithdraw({
-            amount: amount,
-            executeAfter: block.timestamp + EMERGENCY_DELAY
-        });
-
+        emergencyQueue[token] = EmergencyWithdraw({amount: amount, executeAfter: block.timestamp + EMERGENCY_DELAY});
         emit EmergencyQueued(token, amount, block.timestamp + EMERGENCY_DELAY);
     }
 
-    /**
-     * @notice Execute queued emergency withdrawal after 7 days.
-     *         For DAI specifically: also subject to daily withdrawal limit.
-     *         This closes the compromised-key bypass where attacker could queue
-     *         emergency withdrawal of full DAI reserve and drain in one transaction
-     *         after the 7-day delay.
-     *         Other tokens (cbETH, USDC, Morpho vault shares) are not subject
-     *         to their daily limits on the emergency path (7-day timelock is
-     *         their full protection). C-2 (audit 2026-07-14): this is the
-     *         DELIBERATE escape hatch — the operational exits (sendUSDC,
-     *         sendCbETH, redeemMorpho) are daily-capped, so any move beyond a
-     *         daily cap must come through this 7-day queue, which the Guardian
-     *         can freeze and cancel.
-     */
-    function executeEmergencyWithdraw(address token, address to)
-        external onlyRole(OWNER_ROLE) nonReentrant
-    {
-        if (withdrawalsFrozen) revert WithdrawalsFrozen();   // M-1
-        if (to == address(0)) revert InvalidAddress();
-
+    /// @notice Execute a queued emergency withdrawal after 7 days, to an active
+    ///         payee. This is the deliberate escape hatch above the daily caps.
+    function executeEmergencyWithdraw(address token, address to) external onlyRole(OWNER_ROLE) nonReentrant {
+        _requirePayee(to);
         EmergencyWithdraw memory q = emergencyQueue[token];
         if (q.executeAfter == 0)              revert NothingQueued();
-        // EMERGENCY_DELAY is 7 days; validator's ~12s manipulation window is immaterial against 604,800s.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
-
         uint256 balance = IERC20(token).balanceOf(address(this));
         uint256 amount  = q.amount > balance ? balance : q.amount;
         if (amount == 0) revert NothingToWithdraw();
-
-        // DAI emergency withdrawals also enforce the daily limit
-        if (token == address(DAI)) {
-            _consumeDaiDailyLimit(amount);                   // P-M4: leaky bucket
-        }
-
         delete emergencyQueue[token];
-
         IERC20(token).safeTransfer(to, amount);
-
         emit EmergencyExecuted(token, amount, to);
     }
 
-    /**
-     * @notice Cancel a queued emergency withdrawal.
-     */
     function cancelEmergencyWithdraw(address token) external onlyRole(OWNER_ROLE) {
         if (emergencyQueue[token].executeAfter == 0) revert NothingQueued();
         delete emergencyQueue[token];
@@ -1997,93 +863,143 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // ═══════════════════════════════════════════════════════════════════════
     //                              GOVERNANCE
     // ═══════════════════════════════════════════════════════════════════════
+    // None of these can move funds or lower the floor; a stolen key can only
+    // make auctions rarer or smaller.
 
-    /**
-     * @notice Update minimum USDC batch size required before sweep. Owner-only.
-     */
+    /// @notice Minimum USDC above the float before a kick is allowed.
     function setMinSwapBatch(uint256 amount) external onlyRole(OWNER_ROLE) {
         if (amount == 0) revert ZeroAmount();
         minSwapBatch = amount;
         emit MinSwapBatchUpdated(amount);
     }
 
+    /// @notice USDC kept liquid for operations; never auctioned.
+    function setUsdcFloat(uint256 amount) external onlyRole(OWNER_ROLE) {
+        usdcFloat = amount;
+        emit UsdcFloatUpdated(amount);
+    }
+
+    /// @notice Cap per kick, both legs together. 0 = no cap.
+    function setMaxKickUsdc(uint256 amount) external onlyRole(OWNER_ROLE) {
+        maxKickUsdc = amount;
+        emit MaxKickUpdated(amount);
+    }
+
+    /// @notice How long a lot stays open, within [10 min, 2 h].
+    function setAuctionLength(uint64 seconds_) external onlyRole(OWNER_ROLE) {
+        if (seconds_ < MIN_AUCTION_LENGTH || seconds_ > MAX_AUCTION_LENGTH) revert OutOfRange();
+        auctionLength = seconds_;
+        emit AuctionLengthUpdated(seconds_);
+    }
+
+    /// @notice Minimum time between kicks, within [1 h, 7 d].
+    function setKickDelay(uint64 seconds_) external onlyRole(OWNER_ROLE) {
+        if (seconds_ < MIN_KICK_DELAY || seconds_ > MAX_KICK_DELAY) revert OutOfRange();
+        kickDelay = seconds_;
+        emit KickDelayUpdated(seconds_);
+    }
+
+    /// @notice The split: cbEthBps to the auction, the rest to Morpho. Bounded
+    ///         to [1000, 9000] so neither leg can be zeroed without a redeploy.
+    function setCbEthBps(uint16 newBps) external onlyRole(OWNER_ROLE) {
+        if (newBps < 1000 || newBps > 9000) revert InvalidBpsRange();
+        uint16 oldBps = cbEthBps;
+        cbEthBps = newBps;
+        emit CbEthBpsUpdated(oldBps, newBps, block.timestamp);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     //                              INTERNAL
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Chainlink oracle validation — full staleness checks (Grok-audit
-     *         pattern): roundId completeness, updatedAt positive, age within
-     *         heartbeat-appropriate window, answer positive.
-     *
-     *         Staleness window: ORACLE_STALE_CBETH = 90,000s (25h) — accommodates
-     *         Chainlink's 24-hour heartbeat cadence for the cbETH/ETH 18-decimal
-     *         exchange-rate feed. Legacy 3600s window would reject valid feed
-     *         data during low-volatility periods.
-     */
+    /// @notice cbETH/ETH feed validation: round completeness, updatedAt, age
+    ///         within ORACLE_STALE_CBETH (25 h, a 24 h heartbeat feed), answer
+    ///         positive. Returns ETH per cbETH scaled 1e18.
     function _validateOracle() internal view returns (uint256 cbEthPerEth18) {
-        (
-            uint80 roundId,
-            int256 answer,
-            ,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) = CHAINLINK.latestRoundData();
-
-        if (answeredInRound < roundId)                       revert OracleStale();
-        if (updatedAt == 0)                                  revert OracleStale();
+        (uint80 roundId, int256 answer, , uint256 updatedAt, uint80 answeredInRound) = CHAINLINK.latestRoundData();
+        if (answeredInRound < roundId)                        revert OracleStale();
+        if (updatedAt == 0)                                   revert OracleStale();
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp - updatedAt > ORACLE_STALE_CBETH) revert OracleStale();
-        if (answer <= 0)                                     revert OracleInvalid();
-
-        // 18-decimal exchange-rate feed: answer is ETH-per-cbETH scaled 1e18
-        // (≈1.0–1.08e18). Returned so the cbETH-leg slippage floor can size a
-        // min-out from the live rate without a second oracle read. H-1 fix.
+        if (block.timestamp - updatedAt > ORACLE_STALE_CBETH)  revert OracleStale();
+        if (answer <= 0)                                      revert OracleInvalid();
         cbEthPerEth18 = uint256(answer);
     }
 
-    /**
-     * @notice Non-reverting DAI/USD oracle freshness check.
-     *         Returns false if stale/invalid so sweep can skip DAI refill
-     *         gracefully rather than reverting the whole sweep.
-     */
-    function _isDaiOracleFresh() internal view returns (bool) {
-        try CHAINLINK_DAI.latestRoundData() returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 /* startedAt */,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) {
-            if (answeredInRound < roundId)                   return false;
-            if (updatedAt == 0)                              return false;
-            // P-H2: DAI/USD is a 24h-heartbeat feed — ORACLE_STALE_STABLE (25h).
+    /// @dev Non-reverting twin of _validateOracle, for canKick.
+    function _cbEthOracleFresh() internal view returns (bool) {
+        try CHAINLINK.latestRoundData() returns (uint80 roundId, int256 answer, uint256, uint256 updatedAt, uint80 answeredInRound) {
+            if (answeredInRound < roundId) return false;
+            if (updatedAt == 0) return false;
             // forge-lint: disable-next-line(block-timestamp)
-            if (block.timestamp - updatedAt > ORACLE_STALE_STABLE)  return false;
-            if (answer <= 0)                                 return false;
-            return true;
+            if (block.timestamp - updatedAt > ORACLE_STALE_CBETH) return false;
+            return answer > 0;
         } catch {
             return false;
         }
+    }
+
+    /**
+     * @notice Convert a USDC amount (6-dec) to ETH-wei (18-dec) through two
+     *         USD-quoted Base feeds: USDC/USD and ETH/USD (there is no USDC/ETH
+     *         feed on Base). Returns 0 if EITHER feed is stale, reverting or
+     *         invalid; callers treat 0 as "unpriced" and fail closed where it
+     *         matters (kick, take) or downgrade where it does not (the gauge).
+     *             ethWei = usdcAmt * 1e12 * usdcUsdE8 / ethUsdE8
+     */
+    function _usdcToEth(uint256 usdcAmt) internal view returns (uint256 ethAmt) {
+        if (usdcAmt == 0) return 0;
+        int256 usdcUsdE8;
+        try CHAINLINK_USDC_USD.latestRoundData() returns (uint80 roundId, int256 answer, uint256, uint256 updatedAt, uint80 answeredInRound) {
+            if (answeredInRound < roundId)                           return 0;
+            if (updatedAt == 0)                                      return 0;
+            // forge-lint: disable-next-line(block-timestamp)
+            if (block.timestamp - updatedAt > ORACLE_STALE_STABLE)   return 0;
+            if (answer <= 0)                                         return 0;
+            usdcUsdE8 = answer;
+        } catch {
+            return 0;
+        }
+        int256 ethUsdE8;
+        try CHAINLINK_ETH_USD.latestRoundData() returns (uint80 roundId, int256 answer, uint256, uint256 updatedAt, uint80 answeredInRound) {
+            if (answeredInRound < roundId)                           return 0;
+            if (updatedAt == 0)                                      return 0;
+            // forge-lint: disable-next-line(block-timestamp)
+            if (block.timestamp - updatedAt > ORACLE_STALE)          return 0;
+            if (answer <= 0)                                         return 0;
+            ethUsdE8 = answer;
+        } catch {
+            return 0;
+        }
+        // forge-lint: disable-next-line(unsafe-typecast)
+        ethAmt = (usdcAmt * 1e12 * uint256(usdcUsdE8)) / uint256(ethUsdE8);
+    }
+
+    /// @notice ETH-equivalent of the cbETH leg (via LST_RATES) plus the Morpho
+    ///         leg (convertToAssets, then the two feeds). Each leg downgrades
+    ///         to 0 on its own failure; the gauge never reports a stale sum.
+    function _computeCurrentEthEquivalent() internal view returns (uint256) {
+        uint256 cbEthInEth;
+        uint256 cbBal = CBETH.balanceOf(address(this));
+        if (cbBal > 0) {
+            try LST_RATES.cbEthToEth(cbBal) returns (uint256 v) { cbEthInEth = v; } catch { cbEthInEth = 0; }
+        }
+        uint256 morphoInEth;
+        uint256 morphoShares = MORPHO_VAULT.balanceOf(address(this));
+        if (morphoShares > 0) {
+            try MORPHO_VAULT.convertToAssets(morphoShares) returns (uint256 usdcValue) {
+                morphoInEth = _usdcToEth(usdcValue);
+            } catch {
+                morphoInEth = 0;
+            }
+        }
+        return cbEthInEth + morphoInEth;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
     //                                VIEWS
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Treasury Gauge — ETH-equivalent of all treasury holdings at current
-     *         exchange rates. v2.4.2: now includes BOTH cbETH leg AND Morpho USDC leg.
-     *
-     *         Reflects actual capital across the dual-acquisition architecture,
-     *         not historical deposit total. Drops if cbETH rate falls or USDC
-     *         depegs against ETH; rises if Morpho yield accrues or cbETH rate climbs.
-     *
-     *         Compositional staleness: see _computeCurrentEthEquivalent NatSpec
-     *         for the per-leg downgrade semantics. A "0" return when treasury is
-     *         non-empty indicates oracle path failure on every leg this block,
-     *         not literal-zero treasury value.
-     */
+    /// @notice Treasury gauge: ETH-equivalent of both legs at current rates.
     function getTreasuryGauge() external view returns (uint256) {
         return _computeCurrentEthEquivalent();
     }
@@ -2092,92 +1008,30 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         return USDC.balanceOf(address(this));
     }
 
-    function getDAIBalance() external view returns (uint256) {
-        return DAI.balanceOf(address(this));
-    }
-
     function getCbETHBalance() external view returns (uint256) {
         return CBETH.balanceOf(address(this));
     }
 
-    /**
-     * @notice v2.4.2 — Current Morpho leg position: shares held and their current
-     *         USDC redemption value. Closes read-surface gap noted by Code Integrity
-     *         routing 2026-05-27: every other token holding (USDC, DAI, cbETH) has
-     *         a single-call getter; Morpho leg previously required three RPC calls.
-     *
-     *         Note on monotonic value growth between reads:
-     *         The Bitwise Morpho Blue USDC vault accrues yield continuously. Reading
-     *         this function repeatedly while `shares` stays constant will show
-     *         `currentUSDCValue` increasing — that's the dual-acquisition design
-     *         working correctly, not a bug. Consoles displaying the value should
-     *         expect this and avoid false-positive "stale value" warnings.
-     *
-     *         Defensive try/catch around convertToAssets (matches L1Anchor's
-     *         morphoUsdcValue pattern). If vault paused or reverting,
-     *         currentUSDCValue returns 0 while shares still reflects holdings —
-     *         caller can cross-reference `shares > 0 && currentUSDCValue == 0`
-     *         as a "vault state unclear" signal.
-     */
-    function getMorphoBalance()
-        external
-        view
-        returns (uint256 shares, uint256 currentUSDCValue)
-    {
+    /// @notice Morpho leg: shares held and their current USDC value (0 if the
+    ///         vault read reverts while shares > 0: "vault state unclear").
+    function getMorphoBalance() external view returns (uint256 shares, uint256 currentUSDCValue) {
         shares = MORPHO_VAULT.balanceOf(address(this));
         if (shares == 0) return (0, 0);
-        try MORPHO_VAULT.convertToAssets(shares) returns (uint256 v) {
-            currentUSDCValue = v;
-        } catch {
-            currentUSDCValue = 0;
-        }
+        try MORPHO_VAULT.convertToAssets(shares) returns (uint256 v) { currentUSDCValue = v; } catch { currentUSDCValue = 0; }
     }
 
-    /**
-     * @notice How much DAI remains withdrawable in the current 24h window.
-     *         If window has rolled over, returns full dailyLimit.
-     */
-    function dailyRemaining() external view returns (uint256) {
-        uint256 spent = _drained(dailyWithdrawn, windowStart, dailyLimit);   // P-M4 leaky bucket
-        return spent >= dailyLimit ? 0 : dailyLimit - spent;
-    }
-
-    /**
-     * @notice C-2 — remaining USDC exit allowance (sendUSDC + redeemMorpho) in
-     *         the current 24h window. Full limit if the window has rolled over.
-     */
     function usdcDailyRemaining() external view returns (uint256) {
-        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);   // P-M4 leaky bucket
+        uint256 spent = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);
         return spent >= usdcDailyLimit ? 0 : usdcDailyLimit - spent;
     }
 
-    /**
-     * @notice C-2 — remaining cbETH exit allowance (sendCbETH) in the current
-     *         24h window. Full limit if the window has rolled over.
-     */
     function cbEthDailyRemaining() external view returns (uint256) {
-        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);   // P-M4 leaky bucket
+        uint256 spent = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);
         return spent >= cbEthDailyLimit ? 0 : cbEthDailyLimit - spent;
     }
 
-    /**
-     * @notice Armor Level — days of operating overhead the DAI reserve covers.
-     *         Requires merchant-provided daily burn rate (off-chain calculation,
-     *         passed here as param). On-chain view is purely informational.
-     */
-    function armorLevelDays(uint256 dailyBurnRate) external view returns (uint256) {
-        if (dailyBurnRate == 0) return type(uint256).max;
-        uint256 reserve = DAI.balanceOf(address(this));
-        return reserve / dailyBurnRate;
-    }
-
-    function isDaiReserveFull() external view returns (bool) {
-        if (daiCeiling == 0) return true; // opted out, always "full"
-        return DAI.balanceOf(address(this)) >= daiCeiling;
-    }
-
-    function nextSweepAllowed() external view returns (uint256) {
-        return lastSweepTime + SWEEP_DELAY;
+    function nextKickAllowed() external view returns (uint256) {
+        return lastKickAt + kickDelay;
     }
 
     function isEmergencyQueued(address token) external view returns (bool) {
@@ -2186,7 +1040,6 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
 
     function emergencyReady(address token) external view returns (bool) {
         uint256 eAfter = emergencyQueue[token].executeAfter;
-        // Comparison against 7-day EMERGENCY_DELAY queue time; validator's ~12s manipulation window is immaterial.
         // forge-lint: disable-next-line(block-timestamp)
         return eAfter != 0 && block.timestamp >= eAfter;
     }
@@ -2194,141 +1047,40 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // ═══════════════════════════════════════════════════════════════════════
     //          CHAINLINK AUTOMATION (council-ratified 2026-05-12, Phase 3)
     //
-    //  Schedules the already-authorized sweep() function when its canonical
-    //  guards permit, with a hysteresis buffer on minSwapBatch.
-    //
-    //  Single-task upkeep. Automation gains NO new authorities. Every action
-    //  it performs is one that any OWNER or OPERATOR could perform once
-    //  guards are satisfied. Determinism preserved.
-    //
-    //  Council IV.1 (sweep portion), IV.3, IV.4, IV.7 (Position A), IV.8,
-    //  IV.9 integrated.
+    //  Optional. Automation gains NO authority: performUpkeep is kick(), which
+    //  anyone may call. Hysteresis (IV.4): the sellable USDC must reach 120% of
+    //  minSwapBatch before Automation kicks; kick itself takes the canonical
+    //  threshold.
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Chainlink calls this off-chain (view).
-     *         Returns whether sweep() should run.
-     *
-     *         Hysteresis (IV.4): USDC balance must exceed minSwapBatch × 120%
-     *         before upkeep triggers. The sweep function itself accepts the
-     *         canonical threshold; the buffer applies only to Automation.
-     *
-     *         AUTO-INV-1: All guards checked here mirror or strictly tighten
-     *         the guards inside sweep().
-     *
-     *         performData carries the operator's minDaiOut, minWethOut, and
-     *         minCbEthOut slippage guards as ABI-encoded (uint256, uint256,
-     *         uint256). These are passed through to sweep(). The values are
-     *         set by the operator via setSweepSlippageGuards() — see below.
-     *         minWethOut was added in v2.3 for the multi-hop USDC→WETH→cbETH
-     *         path; each leg has its own slippage guard.
-     */
     function checkUpkeep(bytes calldata /*checkData*/)
-        external
-        view
-        override
+        external view override
         returns (bool upkeepNeeded, bytes memory performData)
     {
         if (upkeepPaused) return (false, "");
-        if (routingPaused) return (false, "");
-
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < lastSweepTime + SWEEP_DELAY) return (false, "");
-
+        if (!canKick()) return (false, "");
         uint256 hysteresisThreshold = (minSwapBatch * UPKEEP_HYSTERESIS_BPS) / 100;
-        uint256 usdcBalance = USDC.balanceOf(address(this));
-        if (usdcBalance < hysteresisThreshold) return (false, "");
-
-        return (true, abi.encode(
-            sweepSlippageMinDai,
-            sweepSlippageMinWeth,
-            sweepSlippageMinCbEth
-        ));
+        if (sellableUsdc() < hysteresisThreshold) return (false, "");
+        return (true, "");
     }
 
-    /**
-     * @notice Chainlink's Automation Forwarder calls this on-chain.
-     *
-     *         IV.3: only the forwarder may call (onlyForwarder modifier).
-     *         IV.9: replay-protected via executedUpkeeps mapping (defense-in-depth).
-     *         nonReentrant: belt-and-suspenders.
-     *
-     *         Replay key keyed on lastSweepTime — once sweep() runs, lastSweepTime
-     *         updates, so any retry would compute a different replay key, but
-     *         sweep() would also revert with SweepTooEarly via its own 24h delay.
-     *         The replay map is defense-in-depth.
-     */
-    function performUpkeep(bytes calldata performData)
-        external
-        override
-        onlyForwarder
-        nonReentrant
-    {
+    /// @notice The forwarder's kick. Replay-protected (IV.9) on top of the
+    ///         kick's own delay.
+    function performUpkeep(bytes calldata /*performData*/) external override onlyForwarder nonReentrant notPaused {
         if (upkeepPaused) revert UpkeepIsPaused();
-
-        (
-            uint256 minDaiOut,
-            uint256 minWethOut,
-            uint256 minCbEthOut
-        ) = abi.decode(performData, (uint256, uint256, uint256));
-
-        bytes32 replayKey = keccak256(abi.encode("sweep", lastSweepTime));
+        bytes32 replayKey = keccak256(abi.encode("kick", lastKickAt));
         if (executedUpkeeps[replayKey]) revert UpkeepAlreadyExecuted();
         executedUpkeeps[replayKey] = true;
-
         uint256 gasBefore = gasleft();
-        uint256 usdcBalanceBefore = USDC.balanceOf(address(this));
-
-        // Execution core. onlyForwarder + nonReentrant are this path's
-        // authorization and reentrancy guards; _sweep is internal so entry is
-        // confined by visibility. Direct call propagates any revert reason
-        // natively (no try/catch re-bubble needed).
-        _sweep(minDaiOut, minWethOut, minCbEthOut);
-
-        uint256 usdcBalanceAfter = USDC.balanceOf(address(this));
-        uint256 valueMoved = usdcBalanceBefore > usdcBalanceAfter
-            ? usdcBalanceBefore - usdcBalanceAfter : 0;
-
-        emit UpkeepPerformed(gasBefore - gasleft(), valueMoved);
+        uint256 usdcBefore = USDC.balanceOf(address(this));
+        _kick();
+        uint256 usdcAfter = USDC.balanceOf(address(this));
+        emit UpkeepPerformed(gasBefore - gasleft(), usdcBefore > usdcAfter ? usdcBefore - usdcAfter : 0);
         unchecked { executedUpkeepCount += 1; }
     }
 
-    /// @notice IV.4 — slippage guards passed to sweep() via Chainlink performData.
-    ///         Operator-set; updates without timelock since values are protective
-    ///         (too-tight = sweep reverts; too-loose = bad price). OWNER_ROLE only.
-    ///         v2.3 — minWeth added for the USDC→WETH leg of the multi-hop path.
-    uint256 public sweepSlippageMinDai;
-    uint256 public sweepSlippageMinWeth;
-    uint256 public sweepSlippageMinCbEth;
-
-    function setSweepSlippageGuards(
-        uint256 minDai,
-        uint256 minWeth,
-        uint256 minCbEth
-    )
-        external
-        onlyRole(OWNER_ROLE)
-    {
-        sweepSlippageMinDai = minDai;
-        sweepSlippageMinWeth = minWeth;
-        sweepSlippageMinCbEth = minCbEth;
-    }
-
-    /// @notice v2.4 — Owner-controlled adjustment of the 50/50 split ratio.
-    ///         Bounded to [1000, 9000] basis points (10%–90%) so neither leg
-    ///         can be fully zeroed without an explicit contract amendment.
-    ///         Merchants who want full single-leg routing should redeploy or
-    ///         contact protocol for an amended contract.
-    function setCbEthBps(uint16 newBps) external onlyRole(OWNER_ROLE) {
-        if (newBps < 1000 || newBps > 9000) revert InvalidBpsRange();
-        uint16 oldBps = cbEthBps;
-        cbEthBps = newBps;
-        emit CbEthBpsUpdated(oldBps, newBps, block.timestamp);
-    }
-
-    /**
-     * @notice Initial forwarder registration. One-time path callable by OWNER_ROLE.
-     */
+    /// @notice One-time forwarder registration. Updates afterwards go through
+    ///         the 48 h timelock below.
     function setForwarder(address forwarder) external onlyRole(OWNER_ROLE) {
         if (forwarder == address(0)) revert InvalidAddress();
         if (automationForwarder != address(0)) revert ForwarderAlreadySet();
@@ -2341,12 +1093,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit UpkeepRegistered(newUpkeepID, block.timestamp);
     }
 
-    /// @notice IV.8 Step 1 — queue forwarder update via 48h timelock.
-    function queueForwarderUpdate(address newForwarder)
-        external
-        onlyRole(OWNER_ROLE)
-        returns (bytes32 id)
-    {
+    function queueForwarderUpdate(address newForwarder) external onlyRole(OWNER_ROLE) returns (bytes32 id) {
         if (newForwarder == address(0)) revert InvalidAddress();
         _pendingForwarder = newForwarder;
         id = keccak256(abi.encodePacked("forwarderUpdate", block.timestamp, newForwarder));
@@ -2354,12 +1101,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit ForwarderUpdateQueued(id, newForwarder, timelockQueue[id]);
     }
 
-    /// @notice IV.8 Step 2 — execute forwarder update after 48h elapsed.
-    function executeForwarderUpdate(bytes32 id)
-        external
-        onlyRole(OWNER_ROLE)
-        tlPassed(id)
-    {
+    function executeForwarderUpdate(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
         address newForwarder = _pendingForwarder;
         if (newForwarder == address(0)) revert InvalidAddress();
         address old = automationForwarder;
@@ -2368,7 +1110,6 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit ForwarderUpdated(old, newForwarder, block.timestamp);
     }
 
-    /// @notice IV.7 — upkeep pause (Position A: OWNER_ROLE for Payments).
     function pauseUpkeep() external onlyRole(OWNER_ROLE) {
         upkeepPaused = true;
         emit UpkeepPausedSet(true, block.timestamp);
@@ -2378,5 +1119,4 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         upkeepPaused = false;
         emit UpkeepPausedSet(false, block.timestamp);
     }
-
 }
