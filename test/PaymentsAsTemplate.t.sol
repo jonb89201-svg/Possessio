@@ -72,7 +72,7 @@ contract PaymentsAsTemplateTest is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predictedFactory = vm.computeCreateAddress(address(this), nonce + 1);
         saltPool = new PossessioSaltPool(predictedFactory, keeper, OPERATOR, TREASURY, FEESRC);
-        factory  = new PossessioFactory(FEE, templateCodehash, address(saltPool), address(usdc), sink);
+        factory  = new PossessioFactory(FEE, templateCodehash, address(saltPool), address(usdc), sink, address(0), 0);
         require(address(factory) == predictedFactory, "factory prediction failed");
     }
 

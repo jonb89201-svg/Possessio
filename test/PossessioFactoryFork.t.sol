@@ -124,7 +124,7 @@ contract PossessioFactoryForkTest is Test {
         address[] memory sources = new address[](1);
         sources[0] = predictedFactory;
         heart = new PossessioPool(USDC, sources, operatorDest, treasuryDest, 1_000_000e6, 1, 0, 3600);
-        factory = new PossessioFactory(FEE, templateCodehash, address(pool), USDC, address(heart));
+        factory = new PossessioFactory(FEE, templateCodehash, address(pool), USDC, address(heart), address(0), 0);
         require(address(factory) == predictedFactory, "factory prediction");
 
         (buyer, buyerPk) = makeAddrAndKey("buyer");

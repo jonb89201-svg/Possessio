@@ -118,7 +118,7 @@ contract PossessioFactoryAdversarialTest is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predicted = vm.computeCreateAddress(address(this), nonce + 1);
         p = new PossessioSaltPool(predicted, keeper, OPERATOR, TREASURY, FEESRC);
-        f = new PossessioFactory(FEE, codehash, address(p), address(usdc), sink);
+        f = new PossessioFactory(FEE, codehash, address(p), address(usdc), sink, address(0), 0);
         require(address(f) == predicted, "prediction");
     }
 
@@ -315,10 +315,10 @@ contract PossessioFactoryAdversarialTest is Test {
         PossessioSaltPool p = new PossessioSaltPool(address(0xF), keeper, OPERATOR, TREASURY, FEESRC);
 
         vm.expectRevert(PossessioFactory.ZeroCodehash.selector);
-        new PossessioFactory(FEE, bytes32(0), address(p), address(usdc), sink);
+        new PossessioFactory(FEE, bytes32(0), address(p), address(usdc), sink, address(0), 0);
 
         vm.expectRevert(PossessioFactory.EmptyTemplateCodehash.selector);
-        new PossessioFactory(FEE, keccak256(""), address(p), address(usdc), sink);
+        new PossessioFactory(FEE, keccak256(""), address(p), address(usdc), sink, address(0), 0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -336,18 +336,18 @@ contract PossessioFactoryAdversarialTest is Test {
 
         // (a) real contract WITHOUT the door (usdc mock) — the exact class that bricked live.
         vm.expectRevert(PossessioFactory.FeeSinkInterfaceMismatch.selector);
-        new PossessioFactory(FEE, codehash, address(p), address(usdc), address(usdc));
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), address(usdc), address(0), 0);
 
         // (b) an EOA / undeployed address — no code, staticcall throws.
         vm.expectRevert(PossessioFactory.FeeSinkInterfaceMismatch.selector);
-        new PossessioFactory(FEE, codehash, address(p), address(usdc), makeAddr("eoaFeeSink"));
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), makeAddr("eoaFeeSink"), address(0), 0);
 
         // (c) F-L3 (re-audit 2026-09-01): a real Pool that does NOT list this
         //     factory as a source — constructed clean, then every fee push
         //     reverted forever. Refuses to exist now.
         address unlisted = address(new UnlistedPool());
         vm.expectRevert(PossessioFactory.FeeSinkSourceNotAuthorized.selector);
-        new PossessioFactory(FEE, codehash, address(p), address(usdc), unlisted);
+        new PossessioFactory(FEE, codehash, address(p), address(usdc), unlisted, address(0), 0);
     }
 }
 

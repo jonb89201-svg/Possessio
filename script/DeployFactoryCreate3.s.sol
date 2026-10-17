@@ -70,6 +70,9 @@ contract DeployFactoryCreate3 is Script {
         uint256 pk               = vm.envUint("DEPLOYER_PK");
         uint256 deploymentFee    = vm.envUint("DEPLOYMENT_FEE");        // Architect's price (interim 1_000000 = $1)
         bytes32 templateCodehash = vm.envBytes32("TEMPLATE_CODEHASH");  // pinned template creation-code hash
+        // Optional security-partner share (PARTNER SHARE in PossessioFactory). Both unset = no partner.
+        address partnerSink      = vm.envOr("PARTNER_SINK_ADDR", address(0)); // the partner's PossessioPool
+        uint256 partnerBps       = vm.envOr("PARTNER_BPS", uint256(0));        // e.g. 5000 = half of each fee
 
         // The broadcasting key MUST be the anchor EOA — the salt is sender-locked to it,
         // so any other caller is rejected by CreateX's guard. Fail early and readably.
@@ -92,13 +95,17 @@ contract DeployFactoryCreate3 is Script {
         // pool is not live, stop here rather than let CreateX wrap the brick-guard
         // revert in an opaque failure.
         if (POOL.code.length == 0) revert FeeSinkPoolNotLive(POOL);
+        // Same gate for the partner's pool: it must be live, with this factory's
+        // predicted address in its source set, before the factory deploys.
+        if (partnerSink != address(0) && partnerSink.code.length == 0) revert FeeSinkPoolNotLive(partnerSink);
 
         // initCode = factory creation bytecode ++ abi.encode(constructor args).
-        // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink).
+        // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink,
+        //                     _partnerSink, _partnerBps).
         // feeSink = POOL (option A). Address is independent of this bytecode.
         bytes memory initCode = abi.encodePacked(
             type(PossessioFactory).creationCode,
-            abi.encode(deploymentFee, templateCodehash, SALT_POOL, PAY_TOKEN, POOL)
+            abi.encode(deploymentFee, templateCodehash, SALT_POOL, PAY_TOKEN, POOL, partnerSink, partnerBps)
         );
 
         vm.startBroadcast(pk);

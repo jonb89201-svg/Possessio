@@ -56,13 +56,16 @@ contract DeployPossessioFactory is Script {
         require(templateCodehash != bytes32(0), "TEMPLATE_CODEHASH not set - pin the template bytecode hash");
 
         vm.startBroadcast(pk);
-        // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink)
+        // Constructor order: (_deploymentFee, _templateCodehash, _saltPool, _payToken, _feeSink,
+        //                    _partnerSink, _partnerBps)
         PossessioFactory factory = new PossessioFactory(
             DEPLOYMENT_FEE,
             templateCodehash,
             saltPool,
             PAY_TOKEN,
-            FEE_SINK
+            FEE_SINK,
+            address(0), // no partner pool on this legacy rail
+            0
         );
         vm.stopBroadcast();
 

@@ -31,8 +31,23 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
        entire transaction, fee included.
     3. No live salt mining. The pool's PoolEmpty() (no fallback) is
        inherited unchanged.
-    4. Fee token discipline: USDC only, one sink, no mixing.
+    4. Fee token discipline: USDC only, no mixing. The fee goes to at
+       most two pinned sinks: feeSink, and an optional partnerSink
+       that receives a fixed PARTNER_BPS share (see PARTNER SHARE).
     5. Price is immutable. No DEPLOYMENT_FEE setter exists anywhere.
+
+  PARTNER SHARE (2026-10-17)
+    A security partner can be paid by the protocol itself, under the
+    same rules as the protocol's own pool. partnerSink is a second
+    PossessioPool (same contract, same limits) whose destinations are
+    the partner's address. Both partnerSink and PARTNER_BPS are
+    immutable, so the partner can audit this code and know the payment
+    cannot be changed. The partner's cut rounds down, so any odd unit
+    goes to feeSink. If the partner pool refuses a payment (for example
+    because the token blocks its treasury address), the cut waits here
+    in partnerOwed and anyone can retry with flushPartner(). The cut can
+    only ever go to partnerSink, and a refused partner payment never
+    blocks a deploy.
 
   TEMPLATE CONVENTION (RATIFIED)
     Every template's constructor is `constructor(address owner,
@@ -97,6 +112,14 @@ contract PossessioFactory is ReentrancyGuard {
     ///         factory is not in its immutable source set — every fee push
     ///         would revert forever. Caught at construction.
     error FeeSinkSourceNotAuthorized();
+    /// @notice partnerSink and PARTNER_BPS must be set together, partnerSink
+    ///         must differ from feeSink, and the share must round to a
+    ///         non-zero amount of the fee.
+    error PartnerConfigInvalid();
+    error PartnerShareTooHigh(uint256 bps);
+    error PartnerSinkInterfaceMismatch();
+    error PartnerSinkSourceNotAuthorized();
+    error NothingOwed();
 
     /*//////////////////////////////////////////////////////////////
                         FEE AUTHORIZATION (EIP-3009)
@@ -145,11 +168,29 @@ contract PossessioFactory is ReentrancyGuard {
     ///         authorizedSources or every deploy reverts.
     address public immutable feeSink;
 
+    /// @notice The partner's pool: a second PossessioPool, pinned like feeSink,
+    ///         whose destinations are the security partner's address. Zero when
+    ///         this factory has no partner.
+    address public immutable partnerSink;
+
+    /// @notice The partner's share of every fee, in basis points. Zero when
+    ///         this factory has no partner; never above MAX_PARTNER_BPS.
+    uint256 public immutable PARTNER_BPS;
+
+    /// @notice The partner's share is capped at half the fee.
+    uint256 public constant MAX_PARTNER_BPS = 5_000;
+
+    /// @notice Partner cuts the partner pool refused, held here until
+    ///         flushPartner() delivers them. Only partnerSink can receive them.
+    uint256 public partnerOwed;
+
     /*//////////////////////////////////////////////////////////////
                               EVENTS
     //////////////////////////////////////////////////////////////*/
 
     event TemplateDeployed(address indexed owner, address indexed deployed, uint256 fee);
+    event PartnerPaid(uint256 amount);
+    event PartnerPaymentDeferred(uint256 amount, uint256 totalOwed);
 
     /*//////////////////////////////////////////////////////////////
                             CONSTRUCTOR
@@ -160,7 +201,9 @@ contract PossessioFactory is ReentrancyGuard {
         bytes32 _templateCodehash,
         address _saltPool,
         address _payToken,
-        address _feeSink
+        address _feeSink,
+        address _partnerSink,
+        uint256 _partnerBps
     ) {
         if (_deploymentFee == 0) revert ZeroFee();
         if (_templateCodehash == bytes32(0)) revert ZeroCodehash();
@@ -198,12 +241,35 @@ contract PossessioFactory is ReentrancyGuard {
             revert FeeSinkInterfaceMismatch();
         }
 
+        // PARTNER SHARE: both set or both unset; the partner pool passes the same
+        // live-pool and authorized-source checks as feeSink, so a mis-wired
+        // partner pool refuses to exist instead of deferring every payment.
+        if (_partnerBps > MAX_PARTNER_BPS) revert PartnerShareTooHigh(_partnerBps);
+        if ((_partnerSink == address(0)) != (_partnerBps == 0)) revert PartnerConfigInvalid();
+        if (_partnerSink != address(0)) {
+            if (_partnerSink == _feeSink) revert PartnerConfigInvalid();
+            if ((_deploymentFee * _partnerBps) / 10_000 == 0) revert PartnerConfigInvalid();
+            if (_partnerSink.code.length == 0) revert PartnerSinkInterfaceMismatch();
+            try IPossessioPool(_partnerSink).isInfraSink() returns (bool ok) {
+                if (!ok) revert PartnerSinkInterfaceMismatch();
+            } catch {
+                revert PartnerSinkInterfaceMismatch();
+            }
+            try IPossessioPool(_partnerSink).isAuthorizedSource(address(this)) returns (bool authorized) {
+                if (!authorized) revert PartnerSinkSourceNotAuthorized();
+            } catch {
+                revert PartnerSinkInterfaceMismatch();
+            }
+        }
+
         DEPLOYMENT_FEE = _deploymentFee;
         templateCodehash = _templateCodehash;
         saltPool = ISaltPool(_saltPool);
         payToken = IERC3009(_payToken);
         payTokenERC20 = IERC20(_payToken);
         feeSink = _feeSink;
+        partnerSink = _partnerSink;
+        PARTNER_BPS = _partnerBps;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -258,8 +324,14 @@ contract PossessioFactory is ReentrancyGuard {
         //    pool has no sync door). If this factory is not in the pool's
         //    authorizedSources the call reverts — unwinding the whole deploy, fee
         //    included (Invariant 2 preserved: the caller is never charged on failure).
-        payTokenERC20.forceApprove(feeSink, DEPLOYMENT_FEE);
-        IPossessioPool(feeSink).receiveInfraFunds(DEPLOYMENT_FEE);
+        //    With a partner, the partner's cut (rounded down) goes to partnerSink and
+        //    the rest, including any odd unit, to feeSink. A refused partner cut is
+        //    held, never lost, and never blocks the deploy (see _payPartner).
+        uint256 partnerCut = (DEPLOYMENT_FEE * PARTNER_BPS) / 10_000;
+        uint256 ownCut = DEPLOYMENT_FEE - partnerCut;
+        payTokenERC20.forceApprove(feeSink, ownCut);
+        IPossessioPool(feeSink).receiveInfraFunds(ownCut);
+        if (partnerCut != 0) _payPartner(partnerCut);
 
         // 5. Pull one pre-mined salt (factory-only; sender-locked here).
         bytes32 salt = saltPool.pullSalt();
@@ -274,5 +346,38 @@ contract PossessioFactory is ReentrancyGuard {
         if (deployed == address(0)) revert DeployFailed();
 
         emit TemplateDeployed(owner, deployed, DEPLOYMENT_FEE);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PARTNER SHARE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Deliver every held partner cut to partnerSink. Anyone may call;
+    ///         the funds can only go to partnerSink. Reverts, holding the cuts,
+    ///         if the partner pool still refuses them.
+    function flushPartner() external nonReentrant returns (uint256 amount) {
+        amount = partnerOwed;
+        if (amount == 0) revert NothingOwed();
+        partnerOwed = 0;
+        payTokenERC20.forceApprove(partnerSink, amount);
+        IPossessioPool(partnerSink).receiveInfraFunds(amount);
+        emit PartnerPaid(amount);
+    }
+
+    /// @dev Pay the partner's cut through its pool's accounted door. A refusal
+    ///      (the pool's outbound surplus push can revert if the token blocks the
+    ///      partner's treasury address) must not block the deploy, the same
+    ///      push-payment DoS class as a refund to an address that can no longer
+    ///      receive USDC. So the cut is held in partnerOwed instead, and the
+    ///      dangling approval is cleared.
+    function _payPartner(uint256 amount) private {
+        payTokenERC20.forceApprove(partnerSink, amount);
+        try IPossessioPool(partnerSink).receiveInfraFunds(amount) {
+            emit PartnerPaid(amount);
+        } catch {
+            payTokenERC20.forceApprove(partnerSink, 0);
+            partnerOwed += amount;
+            emit PartnerPaymentDeferred(amount, partnerOwed);
+        }
     }
 }
