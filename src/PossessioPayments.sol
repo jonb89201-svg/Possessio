@@ -12,6 +12,10 @@
 //   per-asset rolling exit limits (C-2, P-H1 cap, P-M4 leaky bucket), the 7-day
 //   emergency path, the treasury gauge, the oracle validation, the optional
 //   Chainlink Automation hooks, the factory-shaped constructor and the K-3 pin.
+// v3.0.2 (2026-10-18) — C-1, from the second cold seat (it ran the suites itself,
+//   offline): a kick cap below the minimum batch let a permissionless kick move
+//   dust into Morpho, open no lot and spend the kick delay. The constructor and
+//   both setters refuse a cap below the batch, and the kick refuses it too.
 // v3.0.1 (2026-10-18) — cold-seat hardening (COLD_SEAT_AUDIT_20261018, council
 //   sandbox): G-1 the Base L2 sequencer uptime feed gates kick and take, with a
 //   grace period after a restart; G-2 sendUSDC keeps an open lot's USDC reserved
@@ -421,6 +425,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         minSwapBatch  = p.minSwapBatch;
         usdcFloat     = p.usdcFloat;
         maxKickUsdc   = p.maxKickUsdc;
+        if (p.maxKickUsdc != 0 && p.maxKickUsdc < p.minSwapBatch) revert InvalidLimit();   // C-1
         auctionLength = 30 minutes;
         kickDelay     = 24 hours;
 
@@ -526,6 +531,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (sellable < minSwapBatch || sellable == 0) revert BatchTooSmall();
         uint256 kickAmount = sellable;
         if (maxKickUsdc != 0 && kickAmount > maxKickUsdc) kickAmount = maxKickUsdc;
+        if (kickAmount < minSwapBatch) revert BatchTooSmall();   // C-1: never a dust kick, whatever the settings say
         // 4. Oracle, fail closed: both the cbETH/ETH rate and the USDC→ETH path
         //    must be fresh, or nothing is priced and nothing moves (P-1 rule).
         //    G-1: and the sequencer must have been up for SEQUENCER_GRACE.
@@ -919,9 +925,11 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // None of these can move funds or lower the floor; a stolen key can only
     // make auctions rarer or smaller.
 
-    /// @notice Minimum USDC above the float before a kick is allowed.
+    /// @notice Minimum USDC above the float before a kick is allowed. Never above
+    ///         a non-zero cap (C-1): the two settings must leave a kick possible.
     function setMinSwapBatch(uint256 amount) external onlyRole(OWNER_ROLE) {
         if (amount == 0) revert ZeroAmount();
+        if (maxKickUsdc != 0 && amount > maxKickUsdc) revert InvalidLimit();
         minSwapBatch = amount;
         emit MinSwapBatchUpdated(amount);
     }
@@ -932,8 +940,11 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         emit UsdcFloatUpdated(amount);
     }
 
-    /// @notice Cap per kick, both legs together. 0 = no cap.
+    /// @notice Cap per kick, both legs together. 0 = no cap. A non-zero cap is
+    ///         never below the minimum batch (C-1), or no kick could ever happen
+    ///         and a dust kick would still spend the delay.
     function setMaxKickUsdc(uint256 amount) external onlyRole(OWNER_ROLE) {
+        if (amount != 0 && amount < minSwapBatch) revert InvalidLimit();
         maxKickUsdc = amount;
         emit MaxKickUpdated(amount);
     }

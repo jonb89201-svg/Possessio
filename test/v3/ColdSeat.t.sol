@@ -10,6 +10,7 @@ import "./Base.sol";
 /// Morpho principal accounting, R-2 a fee-on-transfer cbETH, and the whole-revert
 /// of a redeem above the daily limit.
 contract PaymentsV3ColdSeat is PaymentsV3Base {
+    using stdStorage for StdStorage;
 
     // ═══════════════ G-1: the sequencer uptime feed gates kick and take ═══════
 
@@ -225,5 +226,53 @@ contract PaymentsV3ColdSeat is PaymentsV3Base {
         assertEq(vault.balanceOf(address(pay)), shares, "no shares left the vault");
         assertEq(pay.morphoDepositedPrincipal(), principal, "the principal is untouched");
         assertEq(usdc.balanceOf(PAYEE), 0, "the payee got nothing");
+    }
+
+    // ═══════════════ second seat (MEASURED on the offline kit, 2026-10-18): C-1 ═══
+
+    /// C-1: the cap was applied after the batch check and nothing tied the two
+    /// settings together, so a cap below the batch let a permissionless kick move
+    /// dust into Morpho, open no lot and still spend the kick delay. The settings
+    /// now refuse the mismatch, and the kick refuses it too.
+    function test_C1_capBelowTheBatchIsRefused() public {
+        _owner();
+        vm.expectRevert(PossessioPayments.InvalidLimit.selector);
+        pay.setMaxKickUsdc(BATCH - 1);
+        _owner(); pay.setMaxKickUsdc(BATCH);                 // equal is fine
+        assertEq(pay.maxKickUsdc(), BATCH);
+        _owner(); pay.setMaxKickUsdc(0);                     // no cap is fine
+        assertEq(pay.maxKickUsdc(), 0);
+    }
+
+    function test_C1_batchAboveTheCapIsRefused() public {
+        _owner(); pay.setMaxKickUsdc(500e6);
+        _owner();
+        vm.expectRevert(PossessioPayments.InvalidLimit.selector);
+        pay.setMinSwapBatch(500e6 + 1);
+        _owner(); pay.setMinSwapBatch(500e6);                // equal is fine
+        assertEq(pay.minSwapBatch(), 500e6);
+    }
+
+    function test_C1_constructorRefusesACapBelowTheBatch() public {
+        PossessioPayments.DeployParams memory p = _params();
+        p.maxKickUsdc = BATCH - 1;
+        vm.expectRevert(PossessioPayments.InvalidLimit.selector);
+        deployPayments(p);
+        p.maxKickUsdc = BATCH;
+        PossessioPayments ok = deployPayments(p);
+        assertEq(ok.maxKickUsdc(), BATCH);
+    }
+
+    /// Defence in depth, and the seat's reproduction: 100 USDC above the float and
+    /// a one-unit cap. No setter allows the mismatch any more, so it is planted
+    /// straight into storage; the kick must refuse rather than move dust.
+    function test_C1_kickRefusesADustCap() public {
+        _fund(FLOAT + BATCH);
+        stdstore.target(address(pay)).sig("maxKickUsdc()").checked_write(uint256(1));
+        assertEq(pay.maxKickUsdc(), 1, "the mismatch is planted");
+        vm.expectRevert(PossessioPayments.BatchTooSmall.selector);
+        _kick();
+        assertEq(vault.balanceOf(address(pay)), 0, "no dust reached Morpho");
+        assertEq(pay.lastKickAt(), 0, "the kick delay was not spent");
     }
 }
