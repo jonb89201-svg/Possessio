@@ -1215,12 +1215,15 @@ contract MockV3Router_A {
 contract MockChainlink_A {
     int256  public answer;
     uint256 public updatedAt;
+    uint256 public startedAt = 1;   // the sequencer uptime feed reads it: long ago = up for long (G-1)
     uint8   public decimals;
 
     constructor(uint8 decimals_) {
         updatedAt = block.timestamp;
         decimals = decimals_;
-        if (decimals_ == 18) {
+        if (decimals_ == 0) {
+            answer = 0;                                // the sequencer uptime feed: 0 = up
+        } else if (decimals_ == 18) {
             answer = int256(980_000_000_000_000_000);  // 0.98e18 cbETH/ETH
         } else {
             answer = int256(100_000_000);              // $1.00 in 8-dec (USD feed default)
@@ -1229,10 +1232,11 @@ contract MockChainlink_A {
     function latestRoundData() external view returns (
         uint80, int256, uint256, uint256, uint80
     ) {
-        return (1, answer, block.timestamp, updatedAt, 1);
+        return (1, answer, startedAt, updatedAt, 1);
     }
     function setAnswer(int256 a) external { answer = a; }
     function setUpdatedAt(uint256 t) external { updatedAt = t; }
+    function setStartedAt(uint256 t) external { startedAt = t; }
 }
 
 contract MockLSTRates_A {
@@ -1305,6 +1309,7 @@ contract PaymentsAutomationInvariants is Test {
     MockChainlink_A         ethOracle;       // cbETH/ETH 18-dec
     MockChainlink_A         usdcUsdOracle;   // USDC/USD 8-dec
     MockChainlink_A         ethUsdOracle;    // ETH/USD 8-dec
+    MockChainlink_A         seqOracle;       // L2 sequencer uptime, 0-dec (G-1)
     MockLSTRates_A          lstRates;
 
     address constant FORWARDER = address(0xF1);
@@ -1324,6 +1329,7 @@ contract PaymentsAutomationInvariants is Test {
         ethOracle     = new MockChainlink_A(18);
         usdcUsdOracle = new MockChainlink_A(8);
         ethUsdOracle  = new MockChainlink_A(8);
+        seqOracle     = new MockChainlink_A(0);
         lstRates    = new MockLSTRates_A();
 
         address[] memory payees = new address[](1);
@@ -1337,6 +1343,7 @@ contract PaymentsAutomationInvariants is Test {
             chainlink:        address(ethOracle),
             chainlinkUsdcUsd: address(usdcUsdOracle),
             chainlinkEthUsd:  address(ethUsdOracle),
+            sequencerUptime:  address(seqOracle),
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_SWAP_BATCH,
             usdcFloat:        0,

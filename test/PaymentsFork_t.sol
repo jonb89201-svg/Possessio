@@ -29,7 +29,11 @@ interface IVaultF {
     function balanceOf(address) external view returns (uint256);
 }
 interface ILST { function cbEthToEth(uint256) external view returns (uint256); }
-interface IFeedF { function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80); }
+interface IFeedF {
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
+    function description() external view returns (string memory);
+    function decimals() external view returns (uint8);
+}
 
 /// Uniswap V3 SwapRouter02 (no deadline field).
 interface ISwapRouter02 {
@@ -89,6 +93,7 @@ contract PaymentsForkTest is Test {
     address constant CHAINLINK_CBETH = 0x806b4Ac04501c29769051e42783cF04dCE41440b; // cbETH/ETH 18-dec
     address constant CHAINLINK_USDC  = 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B; // USDC/USD 8-dec
     address constant CHAINLINK_ETH   = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70; // ETH/USD 8-dec
+    address constant CHAINLINK_SEQ   = 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433; // L2 Sequencer Uptime Status Feed, 0-dec (G-1)
     address constant LST_RATES       = 0xDDb75e974d99FcF95E241adbFD376861c47a8548; // deployed + certified
 
     uint256 constant MIN_SWAP_BATCH    = 100_000000;   // 100 USDC
@@ -105,6 +110,7 @@ contract PaymentsForkTest is Test {
         return PossessioPayments.DeployParams({
             owner: OWNER, usdc: USDC, cbeth: CBETH, morphoVault: MORPHO_VAULT,
             chainlink: CHAINLINK_CBETH, chainlinkUsdcUsd: CHAINLINK_USDC, chainlinkEthUsd: CHAINLINK_ETH,
+            sequencerUptime: CHAINLINK_SEQ,
             lstRates: LST_RATES, minSwapBatch: MIN_SWAP_BATCH, usdcFloat: usdcFloat, maxKickUsdc: 0,
             usdcDailyLimit: USDC_DAILY_LIMIT, cbEthDailyLimit: CBETH_DAILY_LIMIT, payees: payees
         });
@@ -296,5 +302,53 @@ contract PaymentsForkTest is Test {
                 console2.log("  MEASURED: no fill down to the floor (market more than 1% above the oracle, or venue too thin)");
             }
         }
+    }
+
+    // ── cold-seat audit 2026-10-18 ─────────────────────────────────────────
+
+    /// G-4: the feeds are what the wiring says they are. description() is the
+    /// label Chainlink ships with each proxy, decimals() the class the constructor
+    /// checks. The cbETH/ETH feed is "CBETH / ETH": its answer is ETH per cbETH,
+    /// above 1e18 because cbETH accrues, which is why _oracleCbEth divides by it.
+    function test_fork_feedDescriptionsMatchTheirRoles() public {
+        if (!forked) { vm.skip(true); return; }
+        assertEq(IFeedF(CHAINLINK_CBETH).description(), "CBETH / ETH");
+        assertEq(IFeedF(CHAINLINK_CBETH).decimals(), 18);
+        assertEq(IFeedF(CHAINLINK_ETH).description(), "ETH / USD");
+        assertEq(IFeedF(CHAINLINK_ETH).decimals(), 8);
+        assertEq(IFeedF(CHAINLINK_USDC).description(), "USDC / USD");
+        assertEq(IFeedF(CHAINLINK_USDC).decimals(), 8);
+        assertEq(IFeedF(CHAINLINK_SEQ).description(), "L2 Sequencer Uptime Status Feed");
+        assertEq(IFeedF(CHAINLINK_SEQ).decimals(), 0);
+        (, int256 ethPerCbEth,,,) = IFeedF(CHAINLINK_CBETH).latestRoundData();
+        assertGt(uint256(ethPerCbEth), 1e18, "ETH per cbETH, not the other way round");
+        assertLt(uint256(ethPerCbEth), 2e18);
+        (, int256 status, uint256 since,,) = IFeedF(CHAINLINK_SEQ).latestRoundData();
+        console2.log("MEASURED cbETH/ETH answer (ETH per cbETH, 1e18):", uint256(ethPerCbEth));
+        console2.log("MEASURED sequencer uptime answer (0 = up):", uint256(status));
+        console2.log("MEASURED sequencer status since (unix):", since);
+    }
+
+    /// G-1: with the uptime feed saying down nothing is priced; just back up,
+    /// nothing is priced for SEQUENCER_GRACE; with the live feed (up since June)
+    /// the kick proceeds.
+    function test_fork_sequencerDownFailsClosed() public {
+        if (!forked) { vm.skip(true); return; }
+        deal(USDC, address(payments), USDC_FLOAT + 2_000e6);
+        uint256 now_ = vm.getBlockTimestamp();
+        bytes memory sel = abi.encodeWithSelector(IFeedF.latestRoundData.selector);
+        vm.mockCall(CHAINLINK_SEQ, sel, abi.encode(uint80(1), int256(1), now_ - 1 hours, now_, uint80(1)));
+        assertFalse(payments.canKick(), "canKick sees the outage");
+        vm.expectRevert(PossessioPayments.SequencerDown.selector);
+        payments.kick();
+        vm.mockCall(CHAINLINK_SEQ, sel, abi.encode(uint80(2), int256(0), now_ - 10 minutes, now_, uint80(2)));
+        assertFalse(payments.canKick(), "canKick sees the grace period");
+        vm.expectRevert(PossessioPayments.SequencerGracePeriod.selector);
+        payments.kick();
+        vm.clearMockedCalls();
+        assertTrue(payments.canKick(), "the live feed: up for months");
+        payments.kick();
+        (uint128 lotUsdc,,) = payments.lot();
+        assertEq(uint256(lotUsdc), 1_000e6, "the kick went through");
     }
 }

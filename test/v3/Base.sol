@@ -7,13 +7,15 @@ import {deployPayments} from "../PaymentsDeployHelper.sol";
 import {MockUSDC_V3, MockCbETH_V3, MockFeed_V3, MockLST_V3, MockVault_V3, HonestTaker_V3, ReentrantTaker_V3} from "./PaymentsV3Mocks.sol";
 
 /// Shared fixture for the v3.0 suites: mocks at ETH = $3,000, USDC = $1,
-/// cbETH/ETH = 1.05, a $1,000 float, a $100 batch, one payee.
+/// cbETH/ETH = 1.05, the sequencer up for a day, a $1,000 float, a $100 batch,
+/// one payee.
 contract PaymentsV3Base is Test {
     MockUSDC_V3  usdc;
     MockCbETH_V3 cbeth;
     MockFeed_V3  feedCb;
     MockFeed_V3  feedUsdc;
     MockFeed_V3  feedEth;
+    MockFeed_V3  feedSeq;        // the L2 sequencer uptime feed: answer 0 = up (G-1)
     MockLST_V3   lst;
     MockVault_V3 vault;
     PossessioPayments pay;
@@ -37,6 +39,8 @@ contract PaymentsV3Base is Test {
         feedCb   = new MockFeed_V3(1.05e18, 18);
         feedUsdc = new MockFeed_V3(1e8, 8);
         feedEth  = new MockFeed_V3(3000e8, 8);
+        feedSeq  = new MockFeed_V3(0, 0);
+        feedSeq.setStartedAt(block.timestamp - 1 days);   // up for a day: past SEQUENCER_GRACE
         lst      = new MockLST_V3();
         vault    = new MockVault_V3(address(usdc));
         pay      = deployPayments(_params());
@@ -53,6 +57,7 @@ contract PaymentsV3Base is Test {
             chainlink:        address(feedCb),
             chainlinkUsdcUsd: address(feedUsdc),
             chainlinkEthUsd:  address(feedEth),
+            sequencerUptime:  address(feedSeq),
             lstRates:         address(lst),
             minSwapBatch:     BATCH,
             usdcFloat:        FLOAT,

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 // BUILD-PROOF: DEPLOY_PAYMENTS_V1 - deploys PossessioPayments to Base mainnet.
-// All 18 DeployParams are cast-verified Base mainnet values (the 4 feeds all
-// validated by the certified fork test - a clean deploy proves every address).
+// The DeployParams addresses are cast-verified Base mainnet values, read from
+// BaseWiring (the feeds are validated by the fork suite; a clean deploy proves
+// every address).
 // lstRates is the LSTExchangeRate already deployed + certified at
 // 0xDDb75e974d99FcF95E241adbFD376861c47a8548.
 //
-// Payments needs NO liquidity pool (it uses existing V3 SwapRouter + Aerodrome
-// + Morpho liquidity), so it can deploy and operate without a seeding step.
+// Payments needs NO liquidity pool: the auction needs no venue of its own and
+// the Morpho leg uses the live vault, so it deploys and operates without a
+// seeding step.
 //
 // owner = deployer (standing default for automated deploys).
 //
@@ -66,13 +68,15 @@ contract DeployPayments is Script {
     // ---- cast-verified Base mainnet addresses: ONE source of truth, BaseWiring ----
     // (review 2026-10-17, F-8). The template pins the same library on chainid
     // 8453 (K-3), so a value edited here alone can no longer deploy on Base.
-    // v3.0: seven addresses. The routers, WETH and DAI left with the swap sweep.
+    // v3.0: seven addresses (the routers, WETH and DAI left with the swap sweep);
+    // v3.0.1: eight, with the sequencer uptime feed (cold-seat audit 2026-10-18, G-1).
     address constant USDC             = BaseWiring.USDC;
     address constant CBETH            = BaseWiring.CBETH;
     address constant MORPHO_VAULT     = BaseWiring.MORPHO_VAULT;
     address constant CHAINLINK_CBETH  = BaseWiring.CHAINLINK_CBETH; // cbETH/ETH 18-dec
     address constant CHAINLINK_USDC   = BaseWiring.CHAINLINK_USDC;  // USDC/USD 8-dec
     address constant CHAINLINK_ETH    = BaseWiring.CHAINLINK_ETH;   // ETH/USD 8-dec
+    address constant CHAINLINK_SEQ    = BaseWiring.CHAINLINK_SEQUENCER; // L2 Sequencer Uptime Status Feed, 0-dec
     address constant LST_RATES        = BaseWiring.LST_RATES;       // deployed + certified
 
     // ---- config (units verified against contract) ----
@@ -114,6 +118,7 @@ contract DeployPayments is Script {
             chainlink:        CHAINLINK_CBETH,
             chainlinkUsdcUsd: CHAINLINK_USDC,
             chainlinkEthUsd:  CHAINLINK_ETH,
+            sequencerUptime:  CHAINLINK_SEQ,
             lstRates:         LST_RATES,
             minSwapBatch:     MIN_SWAP_BATCH,
             usdcFloat:        USDC_FLOAT,

@@ -264,23 +264,23 @@ contract AuctionTest is PaymentsV3Base {
         assertEq(cbeth.balanceOf(STRANGER), required, "the loser keeps the cbETH");
     }
 
-    /// An owner exit during an open lot can make the lot untakeable (the
-    /// transfer fails), never pay a taker twice. The lot stays open.
-    function test_take_whenTheOwnerDrainedBelowTheLot() public {
+    /// v3.0 (7f64a81) let an owner exit during an open lot drain the balance
+    /// below the lot, which left the lot untakeable until it expired: funds
+    /// safe, liveness hurt (cold-seat audit 2026-10-18, G-2). v3.0.1 reserves
+    /// the lot's USDC: the exit is refused and the take proceeds. Replaces
+    /// test_take_whenTheOwnerDrainedBelowTheLot.
+    function test_take_theOwnerCannotDrainBelowTheLot() public {
         _fundAndKick(1_000e6);
         vm.prank(OWNER);
-        pay.sendUSDC(1_200e6, PAYEE);                   // balance now 300 < lot 500
+        vm.expectRevert(PossessioPayments.LotReserved.selector);
+        pay.sendUSDC(1_200e6, PAYEE);                   // would leave 300 < lot 500
+        assertEq(usdc.balanceOf(address(pay)), 1_500e6, "nothing left");
         _warpTo(810);
-        uint256 required = pay.currentRequired();
-        cbeth.mint(TAKER, required);
-        vm.startPrank(TAKER);
-        cbeth.approve(address(pay), required);
-        vm.expectRevert();
-        pay.take();
-        vm.stopPrank();
+        uint256 required = _take(TAKER);
+        assertEq(usdc.balanceOf(TAKER), 500e6, "the lot was taken");
+        assertEq(cbeth.balanceOf(address(pay)), required, "and paid for");
         (uint256 lotUsdc,,) = _lot();
-        assertEq(lotUsdc, 500e6, "still open");
-        assertEq(cbeth.balanceOf(TAKER), required, "nothing taken from the taker");
+        assertEq(lotUsdc, 0, "closed");
     }
 
     /*──────────────────────── takeWithCallback ────────────────────*/

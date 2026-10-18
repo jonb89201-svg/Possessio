@@ -192,8 +192,8 @@ contract ExitsTest is PaymentsV3Base {
 
     function test_ctor_guards() public {
         PossessioPayments.DeployParams memory p;
-        address[7] memory zeroables;
-        for (uint256 i = 0; i < 7; i++) {
+        address[8] memory zeroables;
+        for (uint256 i = 0; i < 8; i++) {
             p = _params();
             if (i == 0) p.usdc = address(0);
             if (i == 1) p.cbeth = address(0);
@@ -202,6 +202,7 @@ contract ExitsTest is PaymentsV3Base {
             if (i == 4) p.chainlinkUsdcUsd = address(0);
             if (i == 5) p.chainlinkEthUsd = address(0);
             if (i == 6) p.lstRates = address(0);
+            if (i == 7) p.sequencerUptime = address(0);
             vm.expectRevert(PossessioPayments.InvalidAddress.selector);
             deployPayments(p);
         }
@@ -212,6 +213,10 @@ contract ExitsTest is PaymentsV3Base {
         deployPayments(p);
         p = _params();
         p.chainlinkEthUsd = address(new MockFeed_V3(3000e8, 18));
+        vm.expectRevert(PossessioPayments.InvalidAddress.selector);
+        deployPayments(p);
+        p = _params();
+        p.sequencerUptime = address(new MockFeed_V3(0, 8));            // wrong class: the uptime feed is 0-dec (G-1)
         vm.expectRevert(PossessioPayments.InvalidAddress.selector);
         deployPayments(p);
         // K-3: on Base the mock wiring is refused, field by field (usdc first).

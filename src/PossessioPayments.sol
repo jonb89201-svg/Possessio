@@ -12,6 +12,12 @@
 //   per-asset rolling exit limits (C-2, P-H1 cap, P-M4 leaky bucket), the 7-day
 //   emergency path, the treasury gauge, the oracle validation, the optional
 //   Chainlink Automation hooks, the factory-shaped constructor and the K-3 pin.
+// v3.0.1 (2026-10-18) — cold-seat hardening (COLD_SEAT_AUDIT_20261018, council
+//   sandbox): G-1 the Base L2 sequencer uptime feed gates kick and take, with a
+//   grace period after a restart; G-2 sendUSDC keeps an open lot's USDC reserved
+//   and an emergency USDC exit cancels the lot; G-3 the Morpho principal falls
+//   pro rata as shares leave; G-4 the cbETH/ETH feed value is named for what it
+//   holds (ETH per cbETH).
 // v2.4.3 (2026-06-01) and v2.4.4 (2026-07-14): audit remediation batches; the
 //   history of the swap-era contract is in the repository's audit reports.
 pragma solidity ^0.8.24;
@@ -82,7 +88,8 @@ import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/autom
 
 /// @notice Chainlink oracle feed for staleness validation. decimals() is read
 ///         by the constructor's decimal-class guard: cbETH/ETH is an 18-decimal
-///         exchange-rate feed; USDC/USD and ETH/USD are 8-decimal price feeds.
+///         exchange-rate feed; USDC/USD and ETH/USD are 8-decimal price feeds;
+///         the L2 Sequencer Uptime Status Feed is 0-decimal (answer 0 = up).
 interface IChainlinkFeed {
     function latestRoundData() external view returns (
         uint80 roundId,
@@ -129,6 +136,7 @@ library BaseWiring {
     address internal constant CHAINLINK_CBETH   = 0x806b4Ac04501c29769051e42783cF04dCE41440b; // cbETH/ETH, 18-dec
     address internal constant CHAINLINK_USDC    = 0x7e860098F58bBFC8648a4311b374B1D669a2bc6B; // USDC/USD, 8-dec
     address internal constant CHAINLINK_ETH     = 0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70; // ETH/USD, 8-dec
+    address internal constant CHAINLINK_SEQUENCER = 0xBCF85224fc0756B9Fa45aA7892530B47e10b6433; // L2 Sequencer Uptime Status Feed, 0-dec
     address internal constant LST_RATES         = 0xDDb75e974d99FcF95E241adbFD376861c47a8548; // LSTExchangeRate (certified)
 }
 
@@ -150,6 +158,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     uint256 public constant ORACLE_STALE_CBETH  = 90_000; // 25h — cbETH/ETH exchange-rate feed (24h heartbeat)
     uint256 public constant ORACLE_STALE        = 3600;   // 1 hour — ETH/USD (~20-min heartbeat feed)
     uint256 public constant ORACLE_STALE_STABLE = 90_000; // 25h — USDC/USD (24h heartbeat)
+    uint256 public constant SEQUENCER_GRACE     = 1 hours; // G-1: no kick or take until this long after the sequencer restarts
     uint256 public constant LIMIT_INCREASE_MAX_MULT = 2;  // P-H1: an increase is at most 2x the reference limit
     uint256 public constant LIMIT_DELAY     = 24 hours;   // daily limit increase delay
     uint256 public constant WINDOW_SIZE     = 24 hours;   // leaky-bucket window of the exit limits
@@ -173,6 +182,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     IChainlinkFeed   public immutable CHAINLINK;           // cbETH/ETH — 18-decimal exchange-rate feed
     IChainlinkFeed   public immutable CHAINLINK_USDC_USD;  // USDC/USD — 8-decimal price feed
     IChainlinkFeed   public immutable CHAINLINK_ETH_USD;   // ETH/USD — 8-decimal price feed
+    IChainlinkFeed   public immutable SEQUENCER_UPTIME;    // L2 Sequencer Uptime Status Feed — 0-decimal, answer 0 = up
     ILSTExchangeRate public immutable LST_RATES;
 
     // ── Auction state ───────────────────────────────────────────────────────
@@ -196,7 +206,9 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///         [1000, 9000]. Merchant default 5000.
     uint16  public cbEthBps;
 
-    /// @notice Cumulative USDC principal deposited to Morpho (deposits, not value).
+    /// @notice USDC principal still deposited in Morpho: up by each deposit, down
+    ///         pro rata as shares leave (redeemMorpho, an emergency exit of the
+    ///         shares). Deposits, not value: the gauge prices the shares live.
     uint256 public morphoDepositedPrincipal;
 
     // ── Payees (the stolen-owner-key defence) ───────────────────────────────
@@ -248,6 +260,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event Kicked(address indexed by, uint256 sellable, uint256 morphoIn, uint256 lotUsdc, uint256 endsAt);
     event LotTaken(address indexed taker, uint256 usdcOut, uint256 cbEthIn, uint256 multiplier);
     event LotExpired(uint256 usdc);
+    event LotCancelled(uint256 usdc);   // G-2: an emergency USDC exit closed the lot
     /// @notice A take happened while the curve was still above 1.5x the oracle
     ///         amount: the oracle said cbETH was far cheaper than the market did.
     event ParOvershoot(address indexed taker, uint256 multiplier);
@@ -290,6 +303,9 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     error ShortDelivery();
     error OracleStale();
     error OracleInvalid();
+    error SequencerDown();          // G-1: the L2 sequencer uptime feed says down
+    error SequencerGracePeriod();   // G-1: up again, but for less than SEQUENCER_GRACE
+    error LotReserved();            // G-2: an open lot's USDC cannot be sent out
     error ZeroOutput();
     error LeakageDetected();
     error MorphoDepositFailed();
@@ -347,6 +363,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         address chainlink;          // cbETH/ETH 18-dec exchange-rate feed
         address chainlinkUsdcUsd;   // USDC/USD 8-dec price feed
         address chainlinkEthUsd;    // ETH/USD 8-dec price feed
+        address sequencerUptime;    // L2 Sequencer Uptime Status Feed, 0-dec (G-1)
         address lstRates;
         uint256 minSwapBatch;       // minimum USDC above the float before a kick
         uint256 usdcFloat;          // USDC kept liquid, never auctioned
@@ -376,6 +393,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (p.chainlink        == address(0)) revert InvalidAddress();
         if (p.chainlinkUsdcUsd == address(0)) revert InvalidAddress();
         if (p.chainlinkEthUsd  == address(0)) revert InvalidAddress();
+        if (p.sequencerUptime  == address(0)) revert InvalidAddress();
         if (p.lstRates         == address(0)) revert InvalidAddress();
 
         // K-3 (external review, KupiaSec 2026-10-15): PossessioFactory pins this
@@ -389,6 +407,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (IChainlinkFeed(p.chainlink).decimals()        != 18) revert InvalidAddress();
         if (IChainlinkFeed(p.chainlinkUsdcUsd).decimals() != 8)  revert InvalidAddress();
         if (IChainlinkFeed(p.chainlinkEthUsd).decimals()  != 8)  revert InvalidAddress();
+        if (IChainlinkFeed(p.sequencerUptime).decimals()  != 0)  revert InvalidAddress();
 
         USDC               = IERC20(p.usdc);
         CBETH              = IERC20(p.cbeth);
@@ -396,6 +415,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         CHAINLINK          = IChainlinkFeed(p.chainlink);
         CHAINLINK_USDC_USD = IChainlinkFeed(p.chainlinkUsdcUsd);
         CHAINLINK_ETH_USD  = IChainlinkFeed(p.chainlinkEthUsd);
+        SEQUENCER_UPTIME   = IChainlinkFeed(p.sequencerUptime);
         LST_RATES          = ILSTExchangeRate(p.lstRates);
 
         minSwapBatch  = p.minSwapBatch;
@@ -439,6 +459,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         _pin(p.chainlink,        BaseWiring.CHAINLINK_CBETH);
         _pin(p.chainlinkUsdcUsd, BaseWiring.CHAINLINK_USDC);
         _pin(p.chainlinkEthUsd,  BaseWiring.CHAINLINK_ETH);
+        _pin(p.sequencerUptime,  BaseWiring.CHAINLINK_SEQUENCER);
         _pin(p.lstRates,         BaseWiring.LST_RATES);
     }
 
@@ -456,6 +477,13 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         return bal > usdcFloat ? bal - usdcFloat : 0;
     }
 
+    /// @notice True while a lot is open and not expired. Its USDC is reserved
+    ///         for the taker (G-2): sendUSDC cannot reach below it.
+    function lotOpen() public view returns (bool) {
+        // forge-lint: disable-next-line(block-timestamp)
+        return lot.usdc != 0 && block.timestamp < lot.endsAt;
+    }
+
     /// @notice True when kick() would open a lot now. Non-reverting; used by
     ///         Automation's checkUpkeep and by any keeper's pre-flight.
     function canKick() public view returns (bool) {
@@ -467,6 +495,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (sellableUsdc() < minSwapBatch) return false;
         if (!_cbEthOracleFresh()) return false;
         if (_usdcToEth(1e6) == 0) return false;
+        if (!_sequencerUp()) return false;
         return true;
     }
 
@@ -499,6 +528,8 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (maxKickUsdc != 0 && kickAmount > maxKickUsdc) kickAmount = maxKickUsdc;
         // 4. Oracle, fail closed: both the cbETH/ETH rate and the USDC→ETH path
         //    must be fresh, or nothing is priced and nothing moves (P-1 rule).
+        //    G-1: and the sequencer must have been up for SEQUENCER_GRACE.
+        _requireSequencerUp();
         _oracleCbEth(1e6);
         // 5. The split, as in v2.4: the lot (cbETH side) is cbEthBps of the
         //    kick and the integer-division residue goes to the Morpho leg by
@@ -535,6 +566,16 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         }
     }
 
+    /// @dev G-3 (cold-seat audit 2026-10-18): the principal falls pro rata with
+    ///      the shares that leave, so morphoDepositedPrincipal reads "what is
+    ///      still deposited", never a cumulative total.
+    function _reduceMorphoPrincipal(uint256 sharesOut, uint256 sharesBefore) internal {
+        if (sharesBefore == 0) return;
+        uint256 principal = morphoDepositedPrincipal;
+        uint256 out = sharesOut >= sharesBefore ? principal : (principal * sharesOut) / sharesBefore;
+        morphoDepositedPrincipal = principal - out;
+    }
+
     /**
      * @notice Take the open lot: deliver the cbETH the curve asks for now (an
      *         approval of at least currentRequired() is needed) and receive
@@ -569,6 +610,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         Lot memory l = lot;
         // forge-lint: disable-next-line(block-timestamp)
         if (l.usdc == 0 || block.timestamp >= l.endsAt) revert NoLot();
+        _requireSequencerUp();   // G-1: nothing is priced while the sequencer is down or just back
         m = _multiplier(block.timestamp - l.startedAt, l.endsAt - l.startedAt);
         required = _required(l.usdc, m);
         usdcOut = l.usdc;
@@ -639,10 +681,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     ///      (two 8-decimal feeds) → cbETH (the 18-decimal exchange-rate feed).
     ///      Reverts on any stale or invalid feed: fail closed.
     function _oracleCbEth(uint256 usdc) internal view returns (uint256) {
-        uint256 cbEthPerEth18 = _validateOracle();
+        uint256 ethPerCbEth18 = _validateOracle();
         uint256 ethWei = _usdcToEth(usdc);
         if (ethWei == 0) revert OracleStale();
-        return (ethWei * ONE) / cbEthPerEth18;
+        return (ethWei * ONE) / ethPerCbEth18;   // cbETH = ETH / (ETH per cbETH)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -712,6 +754,9 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     function sendUSDC(uint256 amount, address to) external onlyRole(OWNER_ROLE) nonReentrant {
         if (amount == 0) revert ZeroAmount();
         _requirePayee(to);
+        // G-2: an open lot's USDC is reserved for its taker, so the owner (or a
+        // stolen key) cannot leave a lot standing that can no longer be taken.
+        if (lotOpen() && USDC.balanceOf(address(this)) < amount + lot.usdc) revert LotReserved();
         _consumeUsdcDailyLimit(amount);
         USDC.safeTransfer(to, amount);
         emit USDCSent(msg.sender, amount, to, block.timestamp);
@@ -735,8 +780,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     {
         if (shares == 0) revert ZeroAmount();
         _requirePayee(to);
+        uint256 sharesBefore = MORPHO_VAULT.balanceOf(address(this));
         usdcOut = MORPHO_VAULT.redeem(shares, to, address(this));
         if (usdcOut == 0) revert ZeroOutput();
+        _reduceMorphoPrincipal(shares, sharesBefore);   // G-3
         _consumeUsdcDailyLimit(usdcOut);
         emit MorphoRedeemed(msg.sender, shares, usdcOut, to, block.timestamp);
     }
@@ -851,6 +898,11 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         uint256 amount  = q.amount > balance ? balance : q.amount;
         if (amount == 0) revert NothingToWithdraw();
         delete emergencyQueue[token];
+        // G-2: a USDC emergency exit cancels the lot instead of leaving one
+        // standing that can no longer be taken. G-3: shares leaving take their
+        // share of the principal with them.
+        if (token == address(USDC) && lot.usdc != 0) { emit LotCancelled(lot.usdc); delete lot; }
+        if (token == address(MORPHO_VAULT)) _reduceMorphoPrincipal(amount, balance);
         IERC20(token).safeTransfer(to, amount);
         emit EmergencyExecuted(token, amount, to);
     }
@@ -915,15 +967,17 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
 
     /// @notice cbETH/ETH feed validation: round completeness, updatedAt, age
     ///         within ORACLE_STALE_CBETH (25 h, a 24 h heartbeat feed), answer
-    ///         positive. Returns ETH per cbETH scaled 1e18.
-    function _validateOracle() internal view returns (uint256 cbEthPerEth18) {
+    ///         positive. Returns ETH per cbETH, 1e18-scaled: the feed's answer is
+    ///         how much ETH one cbETH is worth (description "CBETH / ETH";
+    ///         MEASURED on Base 2026-10-18: 1.1417e18). G-4: named for what it holds.
+    function _validateOracle() internal view returns (uint256 ethPerCbEth18) {
         (uint80 roundId, int256 answer, , uint256 updatedAt, uint80 answeredInRound) = CHAINLINK.latestRoundData();
         if (answeredInRound < roundId)                        revert OracleStale();
         if (updatedAt == 0)                                   revert OracleStale();
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp - updatedAt > ORACLE_STALE_CBETH)  revert OracleStale();
         if (answer <= 0)                                      revert OracleInvalid();
-        cbEthPerEth18 = uint256(answer);
+        ethPerCbEth18 = uint256(answer);
     }
 
     /// @dev Non-reverting twin of _validateOracle, for canKick.
@@ -934,6 +988,29 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
             // forge-lint: disable-next-line(block-timestamp)
             if (block.timestamp - updatedAt > ORACLE_STALE_CBETH) return false;
             return answer > 0;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev G-1 (cold-seat audit 2026-10-18): the Base L2 Sequencer Uptime
+    ///      Status Feed. answer 0 = up, 1 = down; startedAt = when the current
+    ///      status began. After a restart, kicks and takes wait SEQUENCER_GRACE
+    ///      so the price feeds can catch up before anything is priced. A
+    ///      reverting feed fails closed.
+    function _requireSequencerUp() internal view {
+        (, int256 answer, uint256 startedAt, , ) = SEQUENCER_UPTIME.latestRoundData();
+        if (answer != 0) revert SequencerDown();
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < startedAt + SEQUENCER_GRACE) revert SequencerGracePeriod();
+    }
+
+    /// @dev Non-reverting twin of _requireSequencerUp, for canKick.
+    function _sequencerUp() internal view returns (bool) {
+        try SEQUENCER_UPTIME.latestRoundData() returns (uint80, int256 answer, uint256 startedAt, uint256, uint80) {
+            if (answer != 0) return false;
+            // forge-lint: disable-next-line(block-timestamp)
+            return block.timestamp >= startedAt + SEQUENCER_GRACE;
         } catch {
             return false;
         }

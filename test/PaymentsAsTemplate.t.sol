@@ -34,7 +34,7 @@ contract PaymentsAsTemplateTest is Test {
 
     FactoryUSDC usdc;
     MockCbETH_V3 cbeth; MockVault_V3 morpho;
-    MockFeed_V3 clEth; MockFeed_V3 clUsdcUsd; MockFeed_V3 clEthUsd;
+    MockFeed_V3 clEth; MockFeed_V3 clUsdcUsd; MockFeed_V3 clEthUsd; MockFeed_V3 clSeq;
     MockLST_V3 lst;
 
     PossessioFactory factory;
@@ -59,6 +59,8 @@ contract PaymentsAsTemplateTest is Test {
         clEth     = new MockFeed_V3(int256(980_000_000_000_000_000), 18);
         clUsdcUsd = new MockFeed_V3(int256(100_000_000), 8);
         clEthUsd  = new MockFeed_V3(int256(300_000_000_000), 8);
+        clSeq     = new MockFeed_V3(0, 0);                 // the sequencer uptime feed, up (G-1)
+        clSeq.setStartedAt(block.timestamp - 1 days);
         lst = new MockLST_V3();
 
         sink = address(new MockPool(usdc));
@@ -89,6 +91,7 @@ contract PaymentsAsTemplateTest is Test {
             owner: encodedOwner,
             usdc: address(usdc), cbeth: address(cbeth), morphoVault: address(morpho),
             chainlink: address(clEth), chainlinkUsdcUsd: address(clUsdcUsd), chainlinkEthUsd: address(clEthUsd),
+            sequencerUptime: address(clSeq),
             lstRates: address(lst),
             minSwapBatch: 100_000000,
             usdcFloat: usdcFloat,

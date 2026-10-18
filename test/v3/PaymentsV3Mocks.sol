@@ -40,8 +40,10 @@ contract MockCbETH_V3 {
     mapping(address => uint256) public _balances;
     mapping(address => mapping(address => uint256)) public _allowances;
     uint256 public shortBy;
+    uint256 public feeBps;      // a fee-on-transfer skim, for the R-2 residual test
     function mint(address to, uint256 amt) external { _balances[to] += amt; }
     function setShortBy(uint256 s) external { shortBy = s; }
+    function setFeeBps(uint256 f) external { feeBps = f; }
     function balanceOf(address a) external view returns (uint256) { return _balances[a]; }
     function approve(address s, uint256 a) external returns (bool) { _allowances[msg.sender][s] = a; return true; }
     function allowance(address o, address s) external view returns (uint256) { return _allowances[o][s]; }
@@ -54,7 +56,9 @@ contract MockCbETH_V3 {
         require(_allowances[from][msg.sender] >= a, "not approved");
         _allowances[from][msg.sender] -= a;
         _balances[from] -= a;
-        _balances[to] += a - (shortBy > a ? a : shortBy);
+        uint256 credited = a - (shortBy > a ? a : shortBy);
+        credited -= (credited * feeBps) / 10000;
+        _balances[to] += credited;
         return true;
     }
 }
@@ -62,13 +66,15 @@ contract MockCbETH_V3 {
 contract MockFeed_V3 {
     int256 public _answer;
     uint256 public _updatedAt;
+    uint256 public _startedAt;   // read by the contract only on the sequencer uptime feed (G-1)
     uint80  public _roundId;
     uint80  public _answeredInRound;
     bool    public _reverts;
     uint8   public _decimals;
     constructor(int256 a, uint8 decimals_) {
-        _answer = a; _updatedAt = block.timestamp; _roundId = 1; _answeredInRound = 1; _decimals = decimals_;
+        _answer = a; _updatedAt = block.timestamp; _startedAt = block.timestamp; _roundId = 1; _answeredInRound = 1; _decimals = decimals_;
     }
+    function setStartedAt(uint256 t) external { _startedAt = t; }
     function setAnswer(int256 a) external { _answer = a; _updatedAt = block.timestamp; _roundId++; _answeredInRound = _roundId; }
     function setUpdatedAt(uint256 t) external { _updatedAt = t; }
     /// Class-appropriate staleness: past the 25 h window for the 18-dec feed,
@@ -78,7 +84,7 @@ contract MockFeed_V3 {
     function setIncomplete() external { _answeredInRound = _roundId - 1; }
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
         require(!_reverts, "MockFeed: reverts");
-        return (_roundId, _answer, 0, _updatedAt, _answeredInRound);
+        return (_roundId, _answer, _startedAt, _updatedAt, _answeredInRound);
     }
     function decimals() external view returns (uint8) { return _decimals; }
 }
@@ -119,6 +125,11 @@ contract MockVault_V3 {
         _shares[receiver] += shares; totalShares += shares; totalAssets_ += consumeAmt;
     }
     function balanceOf(address a) external view returns (uint256) { return _shares[a]; }
+    /// Shares are an ERC20: the 7-day emergency path can move them out (G-3 test).
+    function transfer(address to, uint256 a) external returns (bool) {
+        require(_shares[msg.sender] >= a, "insuf shares");
+        _shares[msg.sender] -= a; _shares[to] += a; return true;
+    }
     function convertToAssets(uint256 shares) external view returns (uint256) {
         require(!convertReverts, "MockVault: convert reverts");
         if (totalShares == 0) return shares;

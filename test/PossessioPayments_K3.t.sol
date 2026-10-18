@@ -10,7 +10,8 @@ import {MockUSDC_V3, MockCbETH_V3, MockFeed_V3, MockLST_V3, MockVault_V3} from "
 /// code but not the wiring in initArgs. On Base mainnet the template accepts only
 /// the canonical wiring, so the official factory cannot deploy, and announce, an
 /// Account wired to a hostile vault or feed. v3.0: seven addresses (the routers,
-/// WETH and DAI left with the swap sweep).
+/// WETH and DAI left with the swap sweep); v3.0.1: eight, with the sequencer
+/// uptime feed (cold-seat audit 2026-10-18, G-1).
 contract PossessioPaymentsK3 is Test {
     address constant HOSTILE = address(0xBAD);
 
@@ -30,6 +31,7 @@ contract PossessioPaymentsK3 is Test {
             chainlink:        BaseWiring.CHAINLINK_CBETH,
             chainlinkUsdcUsd: BaseWiring.CHAINLINK_USDC,
             chainlinkEthUsd:  BaseWiring.CHAINLINK_ETH,
+            sequencerUptime:  BaseWiring.CHAINLINK_SEQUENCER,
             lstRates:         BaseWiring.LST_RATES,
             minSwapBatch:     100 * 1e6,
             usdcFloat:        1_000 * 1e6,
@@ -45,7 +47,7 @@ contract PossessioPaymentsK3 is Test {
         deployPayments(p);
     }
 
-    /// Every one of the 7 wiring fields is pinned on Base, before any external call.
+    /// Every one of the 8 wiring fields is pinned on Base, before any external call.
     function test_K3_onBase_everyWiringFieldIsPinned() public {
         vm.chainId(8453);
         PossessioPayments.DeployParams memory c = _canonical();
@@ -56,6 +58,7 @@ contract PossessioPaymentsK3 is Test {
         p = _canonical(); p.chainlink        = HOSTILE; _refused(p, c.chainlink);
         p = _canonical(); p.chainlinkUsdcUsd = HOSTILE; _refused(p, c.chainlinkUsdcUsd);
         p = _canonical(); p.chainlinkEthUsd  = HOSTILE; _refused(p, c.chainlinkEthUsd);
+        p = _canonical(); p.sequencerUptime  = HOSTILE; _refused(p, c.sequencerUptime);
         p = _canonical(); p.lstRates         = HOSTILE; _refused(p, c.lstRates);
     }
 
@@ -68,8 +71,10 @@ contract PossessioPaymentsK3 is Test {
         vm.mockCall(c.chainlink,        dec, abi.encode(uint8(18)));
         vm.mockCall(c.chainlinkUsdcUsd, dec, abi.encode(uint8(8)));
         vm.mockCall(c.chainlinkEthUsd,  dec, abi.encode(uint8(8)));
+        vm.mockCall(c.sequencerUptime,  dec, abi.encode(uint8(0)));
         PossessioPayments payments = deployPayments(c);
         assertEq(address(payments.MORPHO_VAULT()), c.morphoVault);
+        assertEq(address(payments.SEQUENCER_UPTIME()), c.sequencerUptime);
         assertEq(address(payments.LST_RATES()), c.lstRates);
         assertEq(address(payments.CHAINLINK_ETH_USD()), c.chainlinkEthUsd);
     }
@@ -85,6 +90,7 @@ contract PossessioPaymentsK3 is Test {
         p.chainlink        = address(new MockFeed_V3(int256(980_000_000_000_000_000), 18));
         p.chainlinkUsdcUsd = address(new MockFeed_V3(int256(100_000_000), 8));
         p.chainlinkEthUsd  = address(new MockFeed_V3(int256(300_000_000_000), 8));
+        p.sequencerUptime  = address(new MockFeed_V3(0, 0));
         p.lstRates         = address(new MockLST_V3());
         PossessioPayments payments = deployPayments(p);
         assertEq(address(payments.MORPHO_VAULT()), p.morphoVault);

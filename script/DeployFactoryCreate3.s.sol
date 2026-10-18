@@ -31,7 +31,7 @@
 // yes or no (WITH_PARTNER), never a default.
 //
 // RUN (Base FORK first — proves everything, spends no real ETH):
-//   DEPLOYER_PK=<anchor EOA key> DEPLOYMENT_FEE=1000000 TEMPLATE_CODEHASH=0x... \
+//   DEPLOYER_PK=<anchor EOA key> DEPLOYMENT_FEE=50000000 TEMPLATE_CODEHASH=0x... \
 //   WITH_PARTNER=true PARTNER_SINK_ADDR=0x<partner pool> PARTNER_BPS=5000 \
 //   forge script script/DeployFactoryCreate3.s.sol --rpc-url $BASE_RPC_URL -vvv
 // (WITH_PARTNER=false deploys without a partner; unset refuses to run.)
@@ -91,7 +91,7 @@ contract DeployFactoryCreate3 is Script {
         if (block.chainid != 8453) revert WrongChain(block.chainid); // Base (fork or mainnet)
 
         uint256 pk               = vm.envUint("DEPLOYER_PK");
-        uint256 deploymentFee    = vm.envUint("DEPLOYMENT_FEE");        // Architect's price (interim 1_000000 = $1)
+        uint256 deploymentFee    = vm.envUint("DEPLOYMENT_FEE");        // Architect's price: 50_000000 = $50 (2026-10-17), split with the partner pool when WITH_PARTNER
         bytes32 templateCodehash = vm.envBytes32("TEMPLATE_CODEHASH");  // pinned template creation-code hash
         (address partnerSink, uint256 partnerBps) = _partnerConfig();   // PARTNER SHARE, explicit yes or no
 
