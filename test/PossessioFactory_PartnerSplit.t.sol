@@ -158,6 +158,7 @@ contract PossessioFactoryPartnerSplitTest is Test {
         assertEq(partnerPool.poolBalance(), FEE / 2, "partner pool accounted it");
         assertEq(usdc.balanceOf(address(factory)), 0, "factory keeps nothing");
         assertEq(factory.partnerOwed(), 0, "nothing held");
+        assertEq(factory.partnerPaidTotal(), FEE / 2, "paid total: the delivered half");
         assertEq(usdc.allowance(address(factory), address(partnerPool)), 0, "no dangling approval");
     }
 
@@ -268,6 +269,33 @@ contract PossessioFactoryPartnerSplitTest is Test {
         factory.flushPartner();
         assertEq(factory.partnerOwed(), FEE / 2, "still held");
         assertEq(usdc.balanceOf(address(factory)), FEE / 2, "funds still here");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    The cumulative figure the milestones read
+    //////////////////////////////////////////////////////////////*/
+
+    /// partnerPaidTotal counts USDC that reached the partner's pool: deploys
+    /// and flushes, never a cut that is still held.
+    function test_paidTotal_countsDeliveredOnly() public {
+        _refusePartner(); // two deploys delivered their halves before the block
+        assertEq(factory.partnerPaidTotal(), FEE, "two delivered halves counted");
+
+        _launch(saltPool, factory, 12); // this half is refused and held
+        assertEq(factory.partnerOwed(), FEE / 2, "held");
+        assertEq(factory.partnerPaidTotal(), FEE, "a held cut is not counted");
+
+        usdc.setBlocked(partnerSafe, false);
+        vm.prank(makeAddr("anyone"));
+        factory.flushPartner();
+        assertEq(factory.partnerPaidTotal(), FEE + FEE / 2, "counted once delivered");
+        assertEq(factory.partnerOwed(), 0, "nothing left held");
+    }
+
+    function test_paidTotal_zeroWithoutPartner() public {
+        (,, PossessioSaltPool sp, PossessioFactory f) = _constellation(FEE, 0);
+        _launch(sp, f, 20);
+        assertEq(f.partnerPaidTotal(), 0, "no partner, nothing counted");
     }
 
     function test_flush_nothingOwed_reverts() public {

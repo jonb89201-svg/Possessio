@@ -184,6 +184,11 @@ contract PossessioFactory is ReentrancyGuard {
     ///         flushPartner() delivers them. Only partnerSink can receive them.
     uint256 public partnerOwed;
 
+    /// @notice Every unit of USDC delivered to partnerSink so far, by deploys
+    ///         and by flushes. Deferred cuts count only once delivered. The
+    ///         partnership's milestones read from this figure directly.
+    uint256 public partnerPaidTotal;
+
     /*//////////////////////////////////////////////////////////////
                               EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -369,6 +374,7 @@ contract PossessioFactory is ReentrancyGuard {
         partnerOwed = 0;
         payTokenERC20.forceApprove(partnerSink, amount);
         IPossessioPool(partnerSink).receiveInfraFunds(amount);
+        partnerPaidTotal += amount;
         emit PartnerPaid(amount);
     }
 
@@ -387,6 +393,7 @@ contract PossessioFactory is ReentrancyGuard {
     function _payPartner(uint256 amount) private {
         payTokenERC20.forceApprove(partnerSink, amount);
         try IPossessioPool(partnerSink).receiveInfraFunds(amount) {
+            partnerPaidTotal += amount;
             emit PartnerPaid(amount);
         } catch {
             payTokenERC20.forceApprove(partnerSink, 0);
