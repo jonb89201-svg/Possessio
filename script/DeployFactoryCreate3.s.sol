@@ -53,6 +53,8 @@ interface IPoolProbe {
     function isInfraSink() external view returns (bool);
     function isAuthorizedSource(address source) external view returns (bool);
     function FLOOR_PER_UNIT() external view returns (uint256);
+    function operatorDestination() external view returns (address);
+    function treasuryDestination() external view returns (address);
 }
 
 contract DeployFactoryCreate3 is Script {
@@ -86,6 +88,13 @@ contract DeployFactoryCreate3 is Script {
     error PoolInterfaceMismatch(address pool);
     error PoolRefusesFactory(address pool, address factory);
     error CutBelowFloorUnit(address pool, uint256 cut, uint256 floorPerUnit);
+    error StubPartnerDestination(address pool, address destination);
+
+    /// The partner pool's placeholder destination while the partner has not
+    /// supplied its Safe (DeployPartnerPoolCreate3.s.sol). A factory pinned to a
+    /// pool that pays the stub would pay nobody: refused unless
+    /// ALLOW_STUB_PARTNER=true is stated, which is for fork and staging runs only.
+    address public constant PARTNER_DEST_STUB = 0x0000000000000000000000000000000000005aFE;
 
     function run() external returns (address factoryAddr) {
         if (block.chainid != 8453) revert WrongChain(block.chainid); // Base (fork or mainnet)
@@ -124,6 +133,7 @@ contract DeployFactoryCreate3 is Script {
         if (partnerSink != address(0)) {
             _requireLivePool(partnerSink);
             _requireCutClearsFloor(partnerSink, partnerCut);
+            _requirePartnerDestinationReal(partnerSink, vm.envOr("ALLOW_STUB_PARTNER", false));
         }
 
         // Say what is about to be frozen into the permanent address, before any gas.
@@ -211,5 +221,19 @@ contract DeployFactoryCreate3 is Script {
     function _requireCutClearsFloor(address pool, uint256 cut) internal view {
         uint256 floorPerUnit = IPoolProbe(pool).FLOOR_PER_UNIT();
         if (cut < floorPerUnit) revert CutBelowFloorUnit(pool, cut, floorPerUnit);
+    }
+
+    /// The partner pool's two destinations must be the partner's real Safe. The
+    /// stub (staging placeholder) is refused unless ALLOW_STUB_PARTNER=true is
+    /// stated (`allowStub`, read once in run()); then it is logged loudly. The pin
+    /// is immutable, so a factory that went out with a stub-destination partner
+    /// pool could never pay the partner.
+    function _requirePartnerDestinationReal(address pool, bool allowStub) internal view {
+        address op = IPoolProbe(pool).operatorDestination();
+        address tr = IPoolProbe(pool).treasuryDestination();
+        if (op == PARTNER_DEST_STUB || tr == PARTNER_DEST_STUB) {
+            if (!allowStub) revert StubPartnerDestination(pool, op == PARTNER_DEST_STUB ? op : tr);
+            console2.log("  !! PARTNER POOL DESTINATION IS THE STUB (ALLOW_STUB_PARTNER=true): staging only");
+        }
     }
 }

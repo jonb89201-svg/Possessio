@@ -21,6 +21,9 @@ contract PreflightPool {
     function isInfraSink() external view returns (bool) { return infra; }
     function setInfra(bool v) external { infra = v; }
     function authorize(address who) external { isAuthorizedSource[who] = true; }
+    address public operatorDestination = address(0xA11CE);
+    address public treasuryDestination = address(0xB0B);
+    function setDestinations(address op, address tr) external { operatorDestination = op; treasuryDestination = tr; }
 }
 
 /// Has code, but none of the pool's doors.
@@ -32,6 +35,7 @@ contract PreflightHarness is DeployFactoryCreate3 {
     function partnerConfig() external view returns (address, uint256) { return _partnerConfig(); }
     function livePool(address pool) external view { _requireLivePool(pool); }
     function cutClearsFloor(address pool, uint256 cut) external view { _requireCutClearsFloor(pool, cut); }
+    function partnerDestinationReal(address pool, bool allowStub) external view { _requirePartnerDestinationReal(pool, allowStub); }
     function predicted() external pure returns (address) { return PREDICTED_FACTORY; }
 }
 
@@ -115,6 +119,26 @@ contract DeployFactoryCreate3PreflightTest is Test {
     }
 
     /// F-6: a cut below the pool's dust gate never raises its floor.
+    /// The partner pool's destinations must be the partner's real Safe. The stub
+    /// is refused unless the run states ALLOW_STUB_PARTNER=true (passed in as a
+    /// flag, so this test touches no process-wide env).
+    function test_preflight_refusesAStubPartnerDestinationUnlessAllowed() public {
+        PreflightPool pool = new PreflightPool(1);
+        address stub = h.PARTNER_DEST_STUB();
+
+        h.partnerDestinationReal(address(pool), false);      // real destinations: fine
+
+        pool.setDestinations(stub, address(0xB0B));          // the stub as operator: refused
+        vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.StubPartnerDestination.selector, address(pool), stub));
+        h.partnerDestinationReal(address(pool), false);
+
+        pool.setDestinations(address(0xA11CE), stub);        // the stub as treasury: refused
+        vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.StubPartnerDestination.selector, address(pool), stub));
+        h.partnerDestinationReal(address(pool), false);
+
+        h.partnerDestinationReal(address(pool), true);       // stated: a staging run may proceed
+    }
+
     function test_preflight_cutMustClearTheFloorUnit() public {
         PreflightPool pool = new PreflightPool(1_000_000);  // $1 per unit
         vm.expectRevert(
