@@ -34,15 +34,22 @@ contract CarryoverTest is PaymentsV3Base {
     /// Roles_OwnerCanGrantOperator / AttackerCannotGrant, as owner rotation:
     /// OWNER_ROLE administers itself, so a Safe can hand over to a new Safe.
     function test_roles_ownerRotation() public {
+        // v3.0.3: a Safe hands over to a new Safe through the 48 h queue, never at once.
         address NEW_OWNER = makeAddr("new-owner");
         bytes32 role = pay.OWNER_ROLE();
         vm.prank(STRANGER);
         vm.expectRevert();
-        pay.grantRole(role, STRANGER);
+        pay.queueOwnerGrant(NEW_OWNER);
         vm.prank(OWNER);
-        pay.grantRole(role, NEW_OWNER);
+        bytes32 g = pay.queueOwnerGrant(NEW_OWNER);
+        vm.warp(block.timestamp + pay.TIMELOCK() + 1);
+        vm.prank(OWNER);
+        pay.executeOwnerGrant(NEW_OWNER, g);
         vm.prank(NEW_OWNER);
-        pay.revokeRole(role, OWNER);
+        bytes32 r = pay.queueOwnerRevoke(OWNER);
+        vm.warp(block.timestamp + pay.TIMELOCK() + 1);
+        vm.prank(NEW_OWNER);
+        pay.executeOwnerRevoke(OWNER, r);
         assertFalse(pay.hasRole(role, OWNER));
         _fund(10e6);
         vm.prank(OWNER);

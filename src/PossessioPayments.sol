@@ -12,6 +12,14 @@
 //   per-asset rolling exit limits (C-2, P-H1 cap, P-M4 leaky bucket), the 7-day
 //   emergency path, the treasury gauge, the oracle validation, the optional
 //   Chainlink Automation hooks, the factory-shaped constructor and the K-3 pin.
+// v3.0.3 (2026-10-21) — the owner role is timelocked. A council cold seat read the
+//   redeploy candidate and found, and a probe test measured, that a holder of
+//   the owner key could grant OWNER_ROLE to a fresh address and revoke the
+//   merchant in the same block: the payee allowlist, which assumes the merchant
+//   can still act, then protected nothing. Now a grant or a revoke of OWNER_ROLE
+//   is queued behind TIMELOCK (48 h), any current owner can cancel it, the last
+//   owner can never be removed, and AccessControl's direct grantRole, revokeRole
+//   and renounceRole revert for OWNER_ROLE.
 // v3.0.2 (2026-10-18) — C-1, from the second cold seat (it ran the suites itself,
 //   offline): a kick cap below the minimum batch let a permissionless kick move
 //   dust into Morpho, open no lot and spend the kick delay. The constructor and
@@ -253,6 +261,11 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     mapping(bytes32 => uint256) public timelockQueue;
     uint256 private queueNonce;
 
+    // v3.0.3: the owner role moves only through a cancellable 48 h queue.
+    mapping(address => bytes32) public pendingOwnerGrant;    // who => timelock id (0 = none)
+    mapping(address => bytes32) public pendingOwnerRevoke;   // who => timelock id (0 = none)
+    uint256 public ownerCount;                               // holders of OWNER_ROLE; never falls below 1
+
     // Emergency withdrawal queue — per-token, per-amount
     struct EmergencyWithdraw {
         uint256 amount;
@@ -279,6 +292,12 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     event AuctionsPaused(address indexed by, uint256 timestamp);
     event AuctionsResumed(address indexed by, uint256 timestamp);
     event AuctionsResumeQueued(bytes32 indexed id, uint256 executeAfter);
+    event OwnerGrantQueued(address indexed who, bytes32 indexed id, uint256 executeAfter);
+    event OwnerGrantCancelled(address indexed who, bytes32 indexed id);
+    event OwnerGranted(address indexed who, address indexed by);
+    event OwnerRevokeQueued(address indexed who, bytes32 indexed id, uint256 executeAfter);
+    event OwnerRevokeCancelled(address indexed who, bytes32 indexed id);
+    event OwnerRevoked(address indexed who, address indexed by);
     event PayeeProposed(address indexed payee, uint256 activeAt);
     event PayeeRemoved(address indexed payee);
     event USDCSent(address indexed by, uint256 amount, address indexed to, uint256 timestamp);
@@ -319,6 +338,11 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     error TimelockNotPassed();
     error NotQueued();
     error NothingQueued();
+    error OwnerRoleIsTimelocked();   // v3.0.3: use queueOwnerGrant / queueOwnerRevoke
+    error AlreadyOwner();
+    error NotAnOwner();
+    error LastOwner();
+    error AlreadyQueued();
     error NothingToWithdraw();
     error ZeroAmount();
     error DailyLimitExceeded();
@@ -714,6 +738,109 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     function resumeAuctions(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
         auctionsPaused = false;
         emit AuctionsResumed(msg.sender, block.timestamp);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //              OWNER ROLE: TIMELOCKED HANDOVER (v3.0.3)
+    // ═══════════════════════════════════════════════════════════════════════
+    // OWNER_ROLE administers itself. Before v3.0.3, AccessControl's grantRole
+    // and revokeRole applied at once, so a holder of the owner key could grant
+    // the role to a fresh address and revoke the merchant in the same block;
+    // the payee allowlist below, which assumes the merchant can still act,
+    // then protected nothing. Now a grant or a revoke of OWNER_ROLE is queued
+    // behind TIMELOCK (48 h), any current owner can cancel it, and the last
+    // owner can never be removed. The console shows the queue events, so a
+    // handover the merchant did not start is visible in time to cancel it. A
+    // stolen owner key can no longer take the role away, seat its own payee or
+    // raise a limit without a window the merchant can close; what it can still
+    // do is what the merchant can: send to the merchant's own active payees.
+
+    /// @notice Queue a grant of OWNER_ROLE to `who`; executable after TIMELOCK.
+    function queueOwnerGrant(address who) external onlyRole(OWNER_ROLE) returns (bytes32 id) {
+        if (who == address(0)) revert InvalidAddress();
+        if (hasRole(OWNER_ROLE, who)) revert AlreadyOwner();
+        if (pendingOwnerGrant[who] != 0) revert AlreadyQueued();
+        queueNonce++;
+        id = keccak256(abi.encodePacked("ownerGrant", who, queueNonce, block.timestamp));
+        timelockQueue[id] = block.timestamp + TIMELOCK;
+        pendingOwnerGrant[who] = id;
+        emit OwnerGrantQueued(who, id, timelockQueue[id]);
+    }
+
+    /// @notice Cancel a queued grant. Any current owner, any time before execution.
+    function cancelOwnerGrant(address who) external onlyRole(OWNER_ROLE) {
+        bytes32 id = pendingOwnerGrant[who];
+        if (id == 0) revert NotQueued();
+        delete timelockQueue[id];
+        delete pendingOwnerGrant[who];
+        emit OwnerGrantCancelled(who, id);
+    }
+
+    /// @notice Execute a queued grant once TIMELOCK has passed.
+    function executeOwnerGrant(address who, bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
+        if (pendingOwnerGrant[who] != id) revert NotQueued();
+        delete pendingOwnerGrant[who];
+        _grantRole(OWNER_ROLE, who);
+        emit OwnerGranted(who, msg.sender);
+    }
+
+    /// @notice Queue a revoke of OWNER_ROLE from `who`; executable after TIMELOCK.
+    ///         Refused while `who` is the only owner.
+    function queueOwnerRevoke(address who) external onlyRole(OWNER_ROLE) returns (bytes32 id) {
+        if (!hasRole(OWNER_ROLE, who)) revert NotAnOwner();
+        if (ownerCount < 2) revert LastOwner();
+        if (pendingOwnerRevoke[who] != 0) revert AlreadyQueued();
+        queueNonce++;
+        id = keccak256(abi.encodePacked("ownerRevoke", who, queueNonce, block.timestamp));
+        timelockQueue[id] = block.timestamp + TIMELOCK;
+        pendingOwnerRevoke[who] = id;
+        emit OwnerRevokeQueued(who, id, timelockQueue[id]);
+    }
+
+    /// @notice Cancel a queued revoke. Any current owner, any time before execution.
+    function cancelOwnerRevoke(address who) external onlyRole(OWNER_ROLE) {
+        bytes32 id = pendingOwnerRevoke[who];
+        if (id == 0) revert NotQueued();
+        delete timelockQueue[id];
+        delete pendingOwnerRevoke[who];
+        emit OwnerRevokeCancelled(who, id);
+    }
+
+    /// @notice Execute a queued revoke once TIMELOCK has passed. The last-owner
+    ///         rule is checked again here: owners may have changed since the queue.
+    function executeOwnerRevoke(address who, bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
+        if (pendingOwnerRevoke[who] != id) revert NotQueued();
+        delete pendingOwnerRevoke[who];
+        if (ownerCount < 2) revert LastOwner();
+        _revokeRole(OWNER_ROLE, who);
+        emit OwnerRevoked(who, msg.sender);
+    }
+
+    /// @dev OWNER_ROLE moves only through the queues above; the direct paths revert.
+    function grantRole(bytes32 role, address account) public override {
+        if (role == OWNER_ROLE) revert OwnerRoleIsTimelocked();
+        super.grantRole(role, account);
+    }
+
+    function revokeRole(bytes32 role, address account) public override {
+        if (role == OWNER_ROLE) revert OwnerRoleIsTimelocked();
+        super.revokeRole(role, account);
+    }
+
+    function renounceRole(bytes32 role, address callerConfirmation) public override {
+        if (role == OWNER_ROLE) revert OwnerRoleIsTimelocked();
+        super.renounceRole(role, callerConfirmation);
+    }
+
+    /// @dev Keeps ownerCount exact: it moves only when a grant or revoke really changes membership.
+    function _grantRole(bytes32 role, address account) internal override returns (bool granted) {
+        granted = super._grantRole(role, account);
+        if (granted && role == OWNER_ROLE) ownerCount++;
+    }
+
+    function _revokeRole(bytes32 role, address account) internal override returns (bool revoked) {
+        revoked = super._revokeRole(role, account);
+        if (revoked && role == OWNER_ROLE) ownerCount--;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
