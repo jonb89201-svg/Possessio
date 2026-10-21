@@ -125,18 +125,36 @@ contract DeployFactoryCreate3PreflightTest is Test {
     function test_preflight_refusesAStubPartnerDestinationUnlessAllowed() public {
         PreflightPool pool = new PreflightPool(1);
         address stub = h.PARTNER_DEST_STUB();
+        address safe = address(new PreflightNoDoor());       // any contract stands in for the partner's Safe
+        pool.setDestinations(safe, safe);
 
         h.partnerDestinationReal(address(pool), false);      // real destinations: fine
 
-        pool.setDestinations(stub, address(0xB0B));          // the stub as operator: refused
+        pool.setDestinations(stub, safe);                    // the stub as operator: refused
         vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.StubPartnerDestination.selector, address(pool), stub));
         h.partnerDestinationReal(address(pool), false);
 
-        pool.setDestinations(address(0xA11CE), stub);        // the stub as treasury: refused
+        pool.setDestinations(safe, stub);                    // the stub as treasury: refused
         vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.StubPartnerDestination.selector, address(pool), stub));
         h.partnerDestinationReal(address(pool), false);
 
         h.partnerDestinationReal(address(pool), true);       // stated: a staging run may proceed
+    }
+
+    /// A destination without code is not a Safe: an EOA or a mistyped address.
+    /// Refused on either side, whatever the stub flag says.
+    function test_preflight_refusesAPartnerDestinationWithoutCode() public {
+        PreflightPool pool = new PreflightPool(1);
+        address safe = address(new PreflightNoDoor());
+        address eoa  = makeAddr("typed-wrong");
+
+        pool.setDestinations(eoa, safe);
+        vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.PartnerDestinationHasNoCode.selector, address(pool), eoa));
+        h.partnerDestinationReal(address(pool), false);
+
+        pool.setDestinations(safe, eoa);
+        vm.expectRevert(abi.encodeWithSelector(DeployFactoryCreate3.PartnerDestinationHasNoCode.selector, address(pool), eoa));
+        h.partnerDestinationReal(address(pool), true);       // the stub flag does not excuse a typo
     }
 
     function test_preflight_cutMustClearTheFloorUnit() public {

@@ -89,6 +89,7 @@ contract DeployFactoryCreate3 is Script {
     error PoolRefusesFactory(address pool, address factory);
     error CutBelowFloorUnit(address pool, uint256 cut, uint256 floorPerUnit);
     error StubPartnerDestination(address pool, address destination);
+    error PartnerDestinationHasNoCode(address pool, address destination);
 
     /// The partner pool's placeholder destination while the partner has not
     /// supplied its Safe (DeployPartnerPoolCreate3.s.sol). A factory pinned to a
@@ -225,15 +226,19 @@ contract DeployFactoryCreate3 is Script {
 
     /// The partner pool's two destinations must be the partner's real Safe. The
     /// stub (staging placeholder) is refused unless ALLOW_STUB_PARTNER=true is
-    /// stated (`allowStub`, read once in run()); then it is logged loudly. The pin
-    /// is immutable, so a factory that went out with a stub-destination partner
-    /// pool could never pay the partner.
+    /// stated (`allowStub`, read once in run()); then it is logged loudly. Any
+    /// other destination must have code (a Safe is a contract; an EOA or a typo
+    /// is not). The pin is immutable, so a factory that went out with a wrong
+    /// partner pool could never pay the partner.
     function _requirePartnerDestinationReal(address pool, bool allowStub) internal view {
         address op = IPoolProbe(pool).operatorDestination();
         address tr = IPoolProbe(pool).treasuryDestination();
         if (op == PARTNER_DEST_STUB || tr == PARTNER_DEST_STUB) {
             if (!allowStub) revert StubPartnerDestination(pool, op == PARTNER_DEST_STUB ? op : tr);
             console2.log("  !! PARTNER POOL DESTINATION IS THE STUB (ALLOW_STUB_PARTNER=true): staging only");
+            return;
         }
+        if (op.code.length == 0) revert PartnerDestinationHasNoCode(pool, op);
+        if (tr.code.length == 0) revert PartnerDestinationHasNoCode(pool, tr);
     }
 }
