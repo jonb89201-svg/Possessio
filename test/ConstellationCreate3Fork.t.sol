@@ -121,7 +121,7 @@ contract ConstellationCreate3ForkTest is Test {
         // 3. FACTORY — feeSink = LIVE pool (brick-guard passes), saltPool = predicted.
         factory = _deploy(FACTORY_SALT, abi.encodePacked(
             type(PossessioFactory).creationCode,
-            abi.encode(uint256(1e6), keccak256("TEMPLATE"), SALTPOOL_ADDR, USDC, pool)
+            abi.encode(uint256(1e6), keccak256("TEMPLATE"), SALTPOOL_ADDR, USDC, pool, address(0), uint256(0))
         ));
         assertEq(factory, FACTORY_ADDR, "factory != anchor");
 

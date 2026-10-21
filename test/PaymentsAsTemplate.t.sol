@@ -23,8 +23,7 @@ import {PossessioFactory} from "../src/PossessioFactory.sol";
 import {PossessioSaltPool} from "../src/PossessioSaltPool.sol";
 import {PossessioPayments} from "../src/PossessioPayments.sol";
 import {MockUSDC as FactoryUSDC, MockPool} from "./PossessioFactory.t.sol";
-import {MockDAI, MockCbETH, MockWETH, MockV3Router, MockAerodromeRouter,
-        MockMorphoVault, MockChainlink, MockLSTRates} from "./PossessioPayments_t.sol";
+import {MockCbETH_V3, MockFeed_V3, MockLST_V3, MockVault_V3} from "./v3/PaymentsV3Mocks.sol";
 
 contract PaymentsAsTemplateTest is Test {
     address constant CREATEX_ADDR = 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed;
@@ -34,10 +33,9 @@ contract PaymentsAsTemplateTest is Test {
     uint256 constant FEE = 50_000000;   // $50 — DEPLOY_CALIBRATION §22
 
     FactoryUSDC usdc;
-    MockDAI dai; MockCbETH cbeth; MockWETH weth;
-    MockV3Router router; MockAerodromeRouter aero; MockMorphoVault morpho;
-    MockChainlink clEth; MockChainlink clDai; MockChainlink clUsdcUsd; MockChainlink clEthUsd;
-    MockLSTRates lst;
+    MockCbETH_V3 cbeth; MockVault_V3 morpho;
+    MockFeed_V3 clEth; MockFeed_V3 clUsdcUsd; MockFeed_V3 clEthUsd; MockFeed_V3 clSeq;
+    MockLST_V3 lst;
 
     PossessioFactory factory;
     PossessioSaltPool saltPool;
@@ -56,15 +54,14 @@ contract PaymentsAsTemplateTest is Test {
         assertEq(CREATEX_ADDR.codehash, CANONICAL_RUNTIME_CODEHASH, "etched CreateX not canonical");
 
         usdc = new FactoryUSDC();
-        dai = new MockDAI(); cbeth = new MockCbETH(); weth = new MockWETH();
-        router = new MockV3Router(address(usdc), address(dai), address(weth));
-        aero   = new MockAerodromeRouter(address(weth), address(cbeth));
-        morpho = new MockMorphoVault(address(usdc));
-        clEth     = new MockChainlink(int256(980_000_000_000_000_000), 18);
-        clDai     = new MockChainlink(int256(500_000_000_000), 8);
-        clUsdcUsd = new MockChainlink(int256(100_000_000), 8);
-        clEthUsd  = new MockChainlink(int256(300_000_000_000), 8);
-        lst = new MockLSTRates();
+        cbeth = new MockCbETH_V3();
+        morpho = new MockVault_V3(address(usdc));    // v3.0: the vault stand-in takes the factory's USDC mock
+        clEth     = new MockFeed_V3(int256(980_000_000_000_000_000), 18);
+        clUsdcUsd = new MockFeed_V3(int256(100_000_000), 8);
+        clEthUsd  = new MockFeed_V3(int256(300_000_000_000), 8);
+        clSeq     = new MockFeed_V3(0, 0);                 // the sequencer uptime feed, up (G-1)
+        clSeq.setStartedAt(block.timestamp - 1 days);
+        lst = new MockLST_V3();
 
         sink = address(new MockPool(usdc));
         templateCodehash = keccak256(type(PossessioPayments).creationCode);
@@ -72,7 +69,7 @@ contract PaymentsAsTemplateTest is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predictedFactory = vm.computeCreateAddress(address(this), nonce + 1);
         saltPool = new PossessioSaltPool(predictedFactory, keeper, OPERATOR, TREASURY, FEESRC);
-        factory  = new PossessioFactory(FEE, templateCodehash, address(saltPool), address(usdc), sink);
+        factory  = new PossessioFactory(FEE, templateCodehash, address(saltPool), address(usdc), sink, address(0), 0);
         require(address(factory) == predictedFactory, "factory prediction failed");
     }
 
@@ -83,23 +80,25 @@ contract PaymentsAsTemplateTest is Test {
         saltPool.refillSalts(b);
     }
 
-    /// @dev The one field the launch rail actually asks a person for is the
-    ///      stable reserve ceiling. Everything else is "Set for you, locked".
-    function _initArgs(address encodedOwner, uint256 reserveCeiling)
+    /// @dev The fields the launch rail asks a person for: the USDC float they
+    ///      keep liquid, and their payees. Everything else is "Set for you, locked".
+    function _initArgs(address encodedOwner, uint256 usdcFloat)
         internal view returns (bytes memory)
     {
+        address[] memory payees = new address[](1);
+        payees[0] = encodedOwner;
         return abi.encode(PossessioPayments.DeployParams({
             owner: encodedOwner,
-            usdc: address(usdc), cbeth: address(cbeth), dai: address(dai), weth: address(weth),
-            router: address(router), aeroRouter: address(aero), morphoVault: address(morpho),
-            chainlink: address(clEth), chainlinkDai: address(clDai),
-            chainlinkUsdcUsd: address(clUsdcUsd), chainlinkEthUsd: address(clEthUsd),
+            usdc: address(usdc), cbeth: address(cbeth), morphoVault: address(morpho),
+            chainlink: address(clEth), chainlinkUsdcUsd: address(clUsdcUsd), chainlinkEthUsd: address(clEthUsd),
+            sequencerUptime: address(clSeq),
             lstRates: address(lst),
             minSwapBatch: 100_000000,
-            daiCeiling: reserveCeiling,
-            dailyLimit: 50_000e18,
+            usdcFloat: usdcFloat,
+            maxKickUsdc: 0,
             usdcDailyLimit: 50_000e6,
-            cbEthDailyLimit: 20e18
+            cbEthDailyLimit: 20e18,
+            payees: payees
         }));
     }
 
@@ -115,7 +114,7 @@ contract PaymentsAsTemplateTest is Test {
         vm.prank(customer);
         address deployed = factory.deployTemplate(
             customer,                                   // owner, written by the factory
-            _initArgs(customer, 2_280e18),              // "Reserve $2,280"
+            _initArgs(customer, 2_280e6),               // "Keep $2,280 liquid"
             type(PossessioPayments).creationCode,
             _auth()
         );
@@ -127,15 +126,16 @@ contract PaymentsAsTemplateTest is Test {
         assertEq(usdc.balanceOf(customer), 0, "paid exactly $50, no more");
         assertEq(usdc.balanceOf(sink) - sinkBefore, FEE, "the whole fee reached the Heart");
 
-        // the one number they chose landed
-        assertEq(acct.daiCeiling(), 2_280e18, "their reserve ceiling");
+        // the numbers they chose landed
+        assertEq(acct.usdcFloat(), 2_280e6, "their float");
+        assertTrue(acct.isPayee(customer), "their payee, active on arrival");
         // and everything "Set for you, locked" landed too
         assertEq(acct.minSwapBatch(),    100_000000, "minSwapBatch preset");
-        assertEq(acct.dailyLimit(),      50_000e18,  "dailyLimit preset");
         assertEq(acct.usdcDailyLimit(),  50_000e6,   "usdcDailyLimit preset");
         assertEq(acct.cbEthDailyLimit(), 20e18,      "cbEthDailyLimit preset");
         assertEq(acct.cbEthBps(),        5000,       "slider ships at 50/50");
-        assertFalse(acct.withdrawalsFrozen(),        "exits live on arrival");
+        assertEq(acct.auctionLength(),   30 minutes, "auction length preset");
+        assertEq(acct.kickDelay(),       24 hours,   "kick delay preset");
     }
 
     // ── T2. The factory writes the owner — a spoofed one cannot win ──────
@@ -149,7 +149,7 @@ contract PaymentsAsTemplateTest is Test {
         vm.prank(customer);
         address deployed = factory.deployTemplate(
             customer,
-            _initArgs(attacker, 1_000e18),              // initArgs says the ATTACKER owns it
+            _initArgs(attacker, 1_000e6),               // initArgs says the ATTACKER owns it
             type(PossessioPayments).creationCode,
             _auth()
         );
@@ -166,7 +166,7 @@ contract PaymentsAsTemplateTest is Test {
 
         vm.prank(customer);
         vm.expectRevert();
-        factory.deployTemplate(customer, _initArgs(customer, 1e18), hex"6080604052", _auth());
+        factory.deployTemplate(customer, _initArgs(customer, 1e6), hex"6080604052", _auth());
 
         assertEq(usdc.balanceOf(customer), FEE, "a refused launch charges nothing");
     }
@@ -177,21 +177,23 @@ contract PaymentsAsTemplateTest is Test {
         _refillSalt(4);
         usdc.mint(customer, FEE);
         vm.prank(customer);
-        address a = factory.deployTemplate(customer, _initArgs(customer, 500e18),
+        address a = factory.deployTemplate(customer, _initArgs(customer, 500e6),
                                            type(PossessioPayments).creationCode, _auth());
 
         _refillSalt(5);
         usdc.mint(second, FEE);
         vm.prank(second);
-        address b = factory.deployTemplate(second, _initArgs(second, 9_000e18),
+        address b = factory.deployTemplate(second, _initArgs(second, 9_000e6),
                                            type(PossessioPayments).creationCode, _auth());
 
         assertTrue(a != b, "distinct addresses");
         PossessioPayments A = PossessioPayments(payable(a));
         PossessioPayments B = PossessioPayments(payable(b));
 
-        assertEq(A.daiCeiling(), 500e18,   "each keeps their own choice");
-        assertEq(B.daiCeiling(), 9_000e18, "each keeps their own choice");
+        assertEq(A.usdcFloat(), 500e6,   "each keeps their own choice");
+        assertEq(B.usdcFloat(), 9_000e6, "each keeps their own choice");
+        assertFalse(A.isPayee(second),   "second is no payee of the first");
+        assertFalse(B.isPayee(customer), "first is no payee of the second");
         assertFalse(A.hasRole(A.OWNER_ROLE(), second),  "second cannot own the first");
         assertFalse(B.hasRole(B.OWNER_ROLE(), customer), "first cannot own the second");
     }
@@ -203,7 +205,7 @@ contract PaymentsAsTemplateTest is Test {
         _refillSalt(6);
         usdc.mint(customer, FEE);
         vm.prank(customer);
-        address deployed = factory.deployTemplate(customer, _initArgs(customer, 1_000e18),
+        address deployed = factory.deployTemplate(customer, _initArgs(customer, 1_000e6),
                                                   type(PossessioPayments).creationCode, _auth());
         PossessioPayments acct = PossessioPayments(payable(deployed));
 

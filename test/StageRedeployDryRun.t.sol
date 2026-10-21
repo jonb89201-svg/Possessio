@@ -131,7 +131,7 @@ contract StageRedeployDryRun is Test {
             SALT_FACTORY,
             abi.encodePacked(
                 type(PossessioFactory).creationCode,
-                abi.encode(DEPLOY_FEE, templateCodehash, pSalt, USDC, pool)
+                abi.encode(DEPLOY_FEE, templateCodehash, pSalt, USDC, pool, address(0), uint256(0))
             )
         );
         assertEq(factory, pFac, "factory != predicted");

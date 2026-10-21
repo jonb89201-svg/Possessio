@@ -133,7 +133,7 @@ contract PossessioFactoryTest is Test {
         uint256 nonce = vm.getNonce(address(this));
         address predictedFactory = vm.computeCreateAddress(address(this), nonce + 1);
         p = new PossessioSaltPool(predictedFactory, keeper, OPERATOR, TREASURY, FEESRC);
-        f = new PossessioFactory(FEE, codehash, address(p), address(usdc), sink);
+        f = new PossessioFactory(FEE, codehash, address(p), address(usdc), sink, address(0), 0);
         require(address(f) == predictedFactory, "factory address prediction failed");
     }
 

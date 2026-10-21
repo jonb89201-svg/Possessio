@@ -1215,12 +1215,15 @@ contract MockV3Router_A {
 contract MockChainlink_A {
     int256  public answer;
     uint256 public updatedAt;
+    uint256 public startedAt = 1;   // the sequencer uptime feed reads it: long ago = up for long (G-1)
     uint8   public decimals;
 
     constructor(uint8 decimals_) {
         updatedAt = block.timestamp;
         decimals = decimals_;
-        if (decimals_ == 18) {
+        if (decimals_ == 0) {
+            answer = 0;                                // the sequencer uptime feed: 0 = up
+        } else if (decimals_ == 18) {
             answer = int256(980_000_000_000_000_000);  // 0.98e18 cbETH/ETH
         } else {
             answer = int256(100_000_000);              // $1.00 in 8-dec (USD feed default)
@@ -1229,10 +1232,11 @@ contract MockChainlink_A {
     function latestRoundData() external view returns (
         uint80, int256, uint256, uint256, uint80
     ) {
-        return (1, answer, block.timestamp, updatedAt, 1);
+        return (1, answer, startedAt, updatedAt, 1);
     }
     function setAnswer(int256 a) external { answer = a; }
     function setUpdatedAt(uint256 t) external { updatedAt = t; }
+    function setStartedAt(uint256 t) external { startedAt = t; }
 }
 
 contract MockLSTRates_A {
@@ -1299,97 +1303,74 @@ contract MockMorphoVault_A {
 
 contract PaymentsAutomationInvariants is Test {
     PossessioPayments public payments;
-
     MockUSDC_A              usdc;
-    MockDAI_A               dai;
     MockCbETH_A             cbeth;
-    MockWETH_A              weth;          // V3
-    MockV3Router_A          router;
-    MockAerodromeRouter_A   aeroRouter;    // V3
-    MockMorphoVault_A       morphoVault;   // V3
-    MockChainlink_A         ethOracle;
-    MockChainlink_A         daiOracle;
-    MockChainlink_A         usdcUsdOracle;   // v2.4.2 — USDC/USD 8-dec
-    MockChainlink_A         ethUsdOracle;    // v2.4.2 — ETH/USD 8-dec
+    MockMorphoVault_A       morphoVault;
+    MockChainlink_A         ethOracle;       // cbETH/ETH 18-dec
+    MockChainlink_A         usdcUsdOracle;   // USDC/USD 8-dec
+    MockChainlink_A         ethUsdOracle;    // ETH/USD 8-dec
+    MockChainlink_A         seqOracle;       // L2 sequencer uptime, 0-dec (G-1)
     MockLSTRates_A          lstRates;
 
     address constant FORWARDER = address(0xF1);
     address constant OWNER     = address(0x01);
-    address constant OPERATOR  = address(0x02);
+    address constant KEEPER    = address(0x02);
     address constant ATTACKER  = address(0xBAD);
 
     uint256 constant MIN_SWAP_BATCH = 1_000 * 1e6;  // 1000 USDC
-    uint256 constant DAI_CEILING    = 5_000 * 1e18; // 5000 DAI
-    uint256 constant DAILY_LIMIT    = 1_000 * 1e18; // 1000 DAI/day default
-    // C-2 — per-asset exit caps (sane values; this suite exercises automation)
     uint256 constant USDC_DAILY_LIMIT  = 1_000 * 1e6;
     uint256 constant CBETH_DAILY_LIMIT = 1 ether;
 
     function setUp() public virtual {
         vm.warp(1_000_000);
-
         usdc        = new MockUSDC_A();
-        dai         = new MockDAI_A();
         cbeth       = new MockCbETH_A();
-        weth        = new MockWETH_A();
-        router      = new MockV3Router_A();
-        aeroRouter  = new MockAerodromeRouter_A();
         morphoVault = new MockMorphoVault_A(address(usdc));
-        ethOracle    = new MockChainlink_A(18);  // v2.4.2 — cbETH/ETH 18-dec
-        daiOracle    = new MockChainlink_A(8);    // v2.4.2 — DAI/ETH 8-dec
-        usdcUsdOracle = new MockChainlink_A(8);   // v2.4.2 — USDC/USD 8-dec
-        ethUsdOracle  = new MockChainlink_A(8);   // v2.4.2 — ETH/USD 8-dec
+        ethOracle     = new MockChainlink_A(18);
+        usdcUsdOracle = new MockChainlink_A(8);
+        ethUsdOracle  = new MockChainlink_A(8);
+        seqOracle     = new MockChainlink_A(0);
         lstRates    = new MockLSTRates_A();
 
-        // v2.4.2 — Constructor takes single DeployParams struct
+        address[] memory payees = new address[](1);
+        payees[0] = OWNER;
+        // v3.0 — the auction sweep: no routers, no DAI, no operator.
         payments = deployPayments(PossessioPayments.DeployParams({
             owner:            OWNER,
             usdc:             address(usdc),
             cbeth:            address(cbeth),
-            dai:              address(dai),
-            weth:             address(weth),
-            router:           address(router),
-            aeroRouter:       address(aeroRouter),
             morphoVault:      address(morphoVault),
             chainlink:        address(ethOracle),
-            chainlinkDai:     address(daiOracle),
             chainlinkUsdcUsd: address(usdcUsdOracle),
             chainlinkEthUsd:  address(ethUsdOracle),
+            sequencerUptime:  address(seqOracle),
             lstRates:         address(lstRates),
             minSwapBatch:     MIN_SWAP_BATCH,
-            daiCeiling:       DAI_CEILING,
-            dailyLimit:       DAILY_LIMIT,
-            usdcDailyLimit:   USDC_DAILY_LIMIT,   // C-2
-            cbEthDailyLimit:  CBETH_DAILY_LIMIT   // C-2
+            usdcFloat:        0,
+            maxKickUsdc:      0,
+            usdcDailyLimit:   USDC_DAILY_LIMIT,
+            cbEthDailyLimit:  CBETH_DAILY_LIMIT,
+            payees:           payees
         }));
-
-        // Register forwarder + grant OPERATOR_ROLE to the contract itself, so
-        // performUpkeep's internal dispatchSweep passes the role check.
-        vm.startPrank(OWNER);
+        vm.prank(OWNER);
         payments.setForwarder(FORWARDER);
-        payments.grantRole(payments.OPERATOR_ROLE(), OPERATOR);
-        payments.grantRole(payments.OPERATOR_ROLE(), address(payments));
-        vm.stopPrank();
+    }
+
+    function _freshOracles() internal {
+        ethOracle.setUpdatedAt(vm.getBlockTimestamp());
+        usdcUsdOracle.setUpdatedAt(vm.getBlockTimestamp());
+        ethUsdOracle.setUpdatedAt(vm.getBlockTimestamp());
     }
 
     /*-----------------------------------------------------------------------
       AUTO-INV-1 (Payments) -- checkUpkeep => executable
     -----------------------------------------------------------------------*/
     function test_PaymentsCheckImpliesExecutable() public {
-        // Stuff USDC balance above the min batch + SWEEP_DELAY elapsed so
-        // checkUpkeep would report true; then confirm performUpkeep succeeds.
         usdc.mint(address(payments), MIN_SWAP_BATCH * 2);
-        vm.warp(block.timestamp + payments.SWEEP_DELAY() + 1);
-
-        // Refresh oracle updatedAt after time warp -- otherwise _validateOracle
-        // sees `updatedAt` from construction as stale and reverts before SCH
-        // even runs. Same recipe used in the hook tests at line 307-308.
-        ethOracle.setUpdatedAt(block.timestamp);
-        daiOracle.setUpdatedAt(block.timestamp);
-
+        vm.warp(vm.getBlockTimestamp() + payments.kickDelay() + 1);
+        _freshOracles();
         (bool needed, bytes memory performData) = payments.checkUpkeep("");
-        if (!needed) return; // nothing to test
-
+        assertTrue(needed, "Payments AUTO-INV-1: checkUpkeep false while a kick is executable");
         vm.prank(FORWARDER);
         try payments.performUpkeep(performData) {
             // Pass
@@ -1405,7 +1386,7 @@ contract PaymentsAutomationInvariants is Test {
     function test_PaymentsForwarderExclusivity() public {
         vm.prank(ATTACKER);
         vm.expectRevert(PossessioPayments.NotForwarder.selector);
-        payments.performUpkeep(abi.encode(uint256(0), uint256(0), uint256(0)));
+        payments.performUpkeep("");
     }
 
     /*-----------------------------------------------------------------------
@@ -1414,27 +1395,21 @@ contract PaymentsAutomationInvariants is Test {
     function test_PaymentsUpkeepPause() public {
         vm.prank(OWNER);
         payments.pauseUpkeep();
-
         (bool needed,) = payments.checkUpkeep("");
         assertFalse(needed, "Payments AUTO-INV-4: checkUpkeep true while upkeepPaused");
     }
 
     /*-----------------------------------------------------------------------
-      AUTO-INV-7 (Payments) -- manual fallback works without Automation
+      AUTO-INV-7 (Payments) -- the manual path works without Automation:
+      anyone may kick once the batch is there and the delay has passed.
     -----------------------------------------------------------------------*/
-    function test_PaymentsManualSweepWorksWithoutAutomation() public {
-        // An OPERATOR_ROLE holder can still call sweep() directly once USDC
-        // is above the min batch and SWEEP_DELAY has elapsed.
+    function test_PaymentsManualKickWorksWithoutAutomation() public {
         usdc.mint(address(payments), MIN_SWAP_BATCH * 2);
-        vm.warp(block.timestamp + payments.SWEEP_DELAY() + 1);
-
-        // Refresh oracle updatedAt after time warp -- _validateOracle would
-        // otherwise reject the construction-time `updatedAt` as stale.
-        ethOracle.setUpdatedAt(block.timestamp);
-        daiOracle.setUpdatedAt(block.timestamp);
-
-        vm.prank(OPERATOR);
-        payments.sweep(0, 0, 0); // should succeed via OPERATOR_ROLE
+        vm.warp(vm.getBlockTimestamp() + payments.kickDelay() + 1);
+        _freshOracles();
+        vm.prank(KEEPER);
+        payments.kick();
+        (uint128 lotUsdc,,) = payments.lot();
+        assertEq(uint256(lotUsdc), MIN_SWAP_BATCH, "half of the kick is the lot");
     }
-
 }
