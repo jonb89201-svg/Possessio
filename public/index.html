@@ -787,7 +787,7 @@ const CONTRACTS = [
       // Keeper (OWNER or OPERATOR)
       { kind:"write", name:"sweep", gated:["OWNER_ROLE | OPERATOR_ROLE","notPaused"],
         plain:{ label:"Split Execution", blurb:"Takes the payments that have come in and splits them where they belong \u2014 your reserve, your savings, and lending. Runs once a day." },
-        desc:"Execute periodic sweep. Refills DAI reserve to ceiling, then splits remaining USDC per cbEthBps between cbETH leg (USDC→WETH via Uniswap V3 0.05%, then WETH→cbETH via Aerodrome Slipstream tickSpacing=1) and Morpho USDC leg (direct ERC4626 deposit to Bitwise Morpho Blue vault). Subject to SWEEP_DELAY (24h) since lastSweepTime. Validates Chainlink cbETH/ETH 18-decimal exchange-rate oracle freshness (90,000s window for 24h-heartbeat feed). Reverts BatchTooSmall if balance < minSwapBatch.",
+        desc:"Execute periodic sweep. Refills DAI reserve to ceiling, then splits remaining USDC per cbEthBps between cbETH leg (USDC→WETH via Uniswap V3 0.05%, then WETH→cbETH via Aerodrome Slipstream tickSpacing=1) and Morpho USDC leg (direct ERC4626 deposit to the Steakhouse High Yield USDC vault on Morpho). Subject to SWEEP_DELAY (24h) since lastSweepTime. Validates Chainlink cbETH/ETH 18-decimal exchange-rate oracle freshness (90,000s window for 24h-heartbeat feed). Reverts BatchTooSmall if balance < minSwapBatch.",
         rationale:"Vary call timing within window to avoid MEV pattern-matching. v2.3 multi-hop architecture: USDC→WETH leg has its own slippage guard distinct from the WETH→cbETH leg.",
         inputs:[
           {name:"minDaiOut",type:"uint256",hint:"slippage guard on USDC→DAI hop; 0 if no DAI refill needed"},
@@ -948,7 +948,7 @@ const CONTRACTS = [
         inputs:[], outputs:[{type:"uint256"}] },
       { kind:"read", name:"cbEthBps", gated:["read"], desc:"Current cbETH allocation in basis points (out of 10000). Divide by 100 for percentage: 5000 = 50%, 8000 = 80%. Bounded [1000, 9000] enforced by setCbEthBps. The Morpho USDC leg receives the complement (10000 - cbEthBps).",
         inputs:[], outputs:[{type:"uint16"}] },
-      { kind:"read", name:"morphoDepositedPrincipal", gated:["read"], desc:"Cumulative USDC principal deposited to Bitwise Morpho Blue USDC vault. Tracks deposits, not current value (which fluctuates with vault yield). For current redemption value, call convertToAssets(shares) on the MORPHO_VAULT off-contract.",
+      { kind:"read", name:"morphoDepositedPrincipal", gated:["read"], desc:"Cumulative USDC principal deposited to the Steakhouse High Yield USDC vault on Morpho. Tracks deposits, not current value (which fluctuates with vault yield). For current redemption value, call convertToAssets(shares) on the MORPHO_VAULT off-contract.",
         inputs:[], outputs:[{type:"uint256"}] },
       { kind:"read", name:"lastSweepTime", gated:["read"], desc:"Timestamp of last successful sweep.",
         inputs:[], outputs:[{type:"uint256"}] },
