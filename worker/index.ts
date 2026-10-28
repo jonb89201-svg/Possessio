@@ -840,7 +840,7 @@ export default {
       return res;
     }
 
-    // Radar feed proxy — the AI Assisted Trading desk (public/index.html,
+    // Radar feed proxy — the AI Assisted Trading desk (public/console.html,
     // #desk-view) fetches its live coin list from here. The radar runs on a
     // separate worker with no CORS headers, so a browser fetch cross-origin
     // would be blocked; this same-origin proxy fetches it server-side. Read-

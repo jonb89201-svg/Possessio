@@ -5,7 +5,7 @@
 
 A deterministic, non-custodial DeFi protocol on Base mainnet with an L1 settlement extension on Ethereum mainnet. MIT licensed. Mobile-origin build. V3 generation: six contracts live on Base mainnet -- the four-organ constellation (Heart, x402Core, Factory, SaltPool), PossessioPayments, and LSTExchangeRate (the live PossessioPayments instance predates the 2026-08/09 audit fixes; the fixed version is pending redeploy, see [PossessioPayments](#possessiopayments)). The AI trading desk (FundingVault, Rail, AutoTarget) is deployed but **RETIRED, not operational**: the V1 desk bricked on its fee leg and is being relaunched as V2 (see [Trading desk status](#trading-desk-retired-relaunch-pending)); treasury-engine hook fork-proven and pending mainnet deploy. The operator console adds an on-chain AI trading desk (FundingVault → Rail → AutoTarget) and a signed council communication ledger reachable over MCP.
 
-**Live site:** [possessio.io](https://possessio.io) -- the operator console, LIVE, served by the Cloudflare Worker `possessio` (git-connected to `main`; custom domain attached as config-as-code via `wrangler.jsonc` routes).
+**Live site:** [possessio.io](https://possessio.io) -- the company landing page; the operator console, LIVE, is at [possessio.io/console](https://possessio.io/console). Both are served by the Cloudflare Worker `possessio` (git-connected to `main`; custom domain attached as config-as-code via `wrangler.jsonc` routes).
 **Canonical spec:** `POSSESSIO_Spec.md` -- source-cited reference for institutional reviewers, grant evaluators, and dev-language-fluent counterparties -- is maintained privately and not yet committed to this repo. For the current verified state of the system, see [`STATE_OF_PLAY.md`](STATE_OF_PLAY.md).
 
 ---

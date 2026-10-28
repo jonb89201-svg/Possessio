@@ -39,23 +39,23 @@ const NODE = [
   ["public/miniapp-solana.js", "the console hands the host raw text", '  const res = await provider.signMessage(toWireMessage(text));\n  const signature = sigToBase58(res?.signature ?? res);\n  const r = await fetch("/api/desk/trending"', '  const res = await provider.signMessage(text);\n  const signature = sigToBase58(res?.signature ?? res);\n  const r = await fetch("/api/desk/trending"'],
   ["worker/index.ts", "the trending route skips the allowlist", "verifyEd25519, deskArmingAllowed });", "verifyEd25519, deskArmingAllowed: () => true });"],
   ["worker/index.ts", "the worker's allowlist lets everyone in", '  if (raw === "*") return true;\n  const set = new Set([DESK_OWNER_DEFAULT]);', "  return true;\n  const set = new Set([DESK_OWNER_DEFAULT]);"],
-  ["public/index.html", "the console's admin gate is open", "function canCurate(){ var M=window.PossessioMiniApp; return !!(M&&M.ready&&M.address&&M.trendingAction&&deskArmingOpen(M.address)); }", "function canCurate(){ return true; }"],
+  ["public/console.html", "the console's admin gate is open", "function canCurate(){ var M=window.PossessioMiniApp; return !!(M&&M.ready&&M.address&&M.trendingAction&&deskArmingOpen(M.address)); }", "function canCurate(){ return true; }"],
 ];
 
 // [file, name, from, to, scenarios]
 const E2E = [
-  ["public/index.html", "admin buttons for everyone", "function canCurate(){ var M=window.PossessioMiniApp; return !!(M&&M.ready&&M.address&&M.trendingAction&&deskArmingOpen(M.address)); }", "function canCurate(){ return true; }", "lists,outsider"],
-  ["public/index.html", "the verified feed leads trending", "var head=take(S.pinned,3).concat(take(S.trendRows,50)).concat(take(S.verifiedRows,20));", "var head=take(S.pinned,3).concat(take(S.verifiedRows,20)).concat(take(S.trendRows,50));", "lists"],
-  ["public/index.html", "the Base screen is back", "var BASE_SCREEN=false;", "var BASE_SCREEN=true;", "lists"],
-  ["public/index.html", "a paused radar's side lists leak", "S.solRows=[]; S.listRows=[]; S.fastRows=[]; S.notableRows=[]; S.graduateRows=[]; S.inWindow=0;", "S.solRows=[]; S.inWindow=0;", "stale"],
-  ["public/index.html", "an unpriced coin is buyable", "(c.priced===false?'<button class=\"tbtn t10\" disabled", "(false?'<button class=\"tbtn t10\" disabled", "lists"],
-  ["public/index.html", "delete adds instead", 'untrend:function(a){ return trendAct("remove",a); }', 'untrend:function(a){ return trendAct("add",a); }', "admin"],
-  ["public/index.html", "the list is not re-read after an edit", "      await pollTrending();\n", "", "admin"],
-  ["public/index.html", "＋ Trending on every Solana card", "    if(c.pinned) return '<button class=\"cabtn trend\" onclick=\"Desk.trend(", "    if(true) return '<button class=\"cabtn trend\" onclick=\"Desk.trend(", "admin"],
-  ["public/index.html", "＋ Trending on a Base find", 'if(c.ch!=="sol"||!c.addr||!canCurate())return "";', 'if(!c.addr||!canCurate())return "";', "admin"],
-  ["public/index.html", "a wallet that connects late gets no buttons", 'window.addEventListener("possessio-miniapp", function(){ var v=$("#desk-view"); if(v&&!v.hidden) renderList(); });', "", "admin"],
-  ["public/index.html", "a recovered feed keeps the demo flag", 'if(out.length){ S.source="live"; S.live=out.slice(0,cap); renderList(); return; }', "if(out.length){ S.live=out.slice(0,cap); renderList(); return; }", "recover"],
-  ["public/index.html", "the demo shows while a feed is reachable", 'if(S.radar==="down"&&S.verified==="down"&&S.trending==="down"){', 'if(S.radar==="down"){', "empty"],
+  ["public/console.html", "admin buttons for everyone", "function canCurate(){ var M=window.PossessioMiniApp; return !!(M&&M.ready&&M.address&&M.trendingAction&&deskArmingOpen(M.address)); }", "function canCurate(){ return true; }", "lists,outsider"],
+  ["public/console.html", "the verified feed leads trending", "var head=take(S.pinned,3).concat(take(S.trendRows,50)).concat(take(S.verifiedRows,20));", "var head=take(S.pinned,3).concat(take(S.verifiedRows,20)).concat(take(S.trendRows,50));", "lists"],
+  ["public/console.html", "the Base screen is back", "var BASE_SCREEN=false;", "var BASE_SCREEN=true;", "lists"],
+  ["public/console.html", "a paused radar's side lists leak", "S.solRows=[]; S.listRows=[]; S.fastRows=[]; S.notableRows=[]; S.graduateRows=[]; S.inWindow=0;", "S.solRows=[]; S.inWindow=0;", "stale"],
+  ["public/console.html", "an unpriced coin is buyable", "(c.priced===false?'<button class=\"tbtn t10\" disabled", "(false?'<button class=\"tbtn t10\" disabled", "lists"],
+  ["public/console.html", "delete adds instead", 'untrend:function(a){ return trendAct("remove",a); }', 'untrend:function(a){ return trendAct("add",a); }', "admin"],
+  ["public/console.html", "the list is not re-read after an edit", "      await pollTrending();\n", "", "admin"],
+  ["public/console.html", "＋ Trending on every Solana card", "    if(c.pinned) return '<button class=\"cabtn trend\" onclick=\"Desk.trend(", "    if(true) return '<button class=\"cabtn trend\" onclick=\"Desk.trend(", "admin"],
+  ["public/console.html", "＋ Trending on a Base find", 'if(c.ch!=="sol"||!c.addr||!canCurate())return "";', 'if(!c.addr||!canCurate())return "";', "admin"],
+  ["public/console.html", "a wallet that connects late gets no buttons", 'window.addEventListener("possessio-miniapp", function(){ var v=$("#desk-view"); if(v&&!v.hidden) renderList(); });', "", "admin"],
+  ["public/console.html", "a recovered feed keeps the demo flag", 'if(out.length){ S.source="live"; S.live=out.slice(0,cap); renderList(); return; }', "if(out.length){ S.live=out.slice(0,cap); renderList(); return; }", "recover"],
+  ["public/console.html", "the demo shows while a feed is reachable", 'if(S.radar==="down"&&S.verified==="down"&&S.trending==="down"){', 'if(S.radar==="down"){', "empty"],
 ];
 
 function copyTree(dir) {

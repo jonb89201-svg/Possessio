@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+const html = fs.readFileSync(path.join(root, "public/console.html"), "utf8");
 
 // Factories whose templateCodehash pins a template the audits have since fixed.
 // 0x0DD0…49Bd: templateCodehash 0x14357940…e39d (MEASURED 2026-10-14), no P-H1/P-H2.

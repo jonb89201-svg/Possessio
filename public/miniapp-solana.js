@@ -64,7 +64,7 @@ export function solanaAddress() { return pubkey ? pubkey.toBase58() : null; }
 export async function initMiniApp(rpcUrl) {
   let provErr = null;
   try {
-    // UNPINNED, to match the import in index.html. This file pinned 0.1.x while
+    // UNPINNED, to match the import in console.html. This file pinned 0.1.x while
     // the page loaded latest, so the console ran TWO Farcaster SDK versions at
     // once (measured 2026-08-05: 0.1.10 here, 0.3.0 there). Both expose
     // getSolanaProvider, so the pin was not the Solana failure — but two
@@ -72,7 +72,7 @@ export async function initMiniApp(rpcUrl) {
     // Pinned (W-1): exact version, not floating `latest`. Keeps every esm.sh
     // import of this SDK on ONE build (the 2026-08-05 two-versions-in-one-page
     // defect above) and closes the silent-supply-chain-bump vector. Bump
-    // deliberately, in lockstep across public/index.html + radar/feed.ts.
+    // deliberately, in lockstep across public/console.html + radar/feed.ts.
     const mod = await import("https://esm.sh/@farcaster/miniapp-sdk@0.3.0");
     sdk = mod.sdk;
     const inHost = await sdk.isInMiniApp?.().catch(() => false);

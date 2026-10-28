@@ -355,7 +355,7 @@ t("the desk cannot offer a target the worker will reject", () => {
   // The slider is the ONLY thing that authors a target now, so its range is
   // the desk's whole vocabulary. Read it from the markup rather than restating
   // it here — a test that hardcodes the number it is checking proves nothing.
-  const desk = R("public/index.html");
+  const desk = R("public/console.html");
   const sl = /id="dk-gt"[^>]*?min="(\d+)"[^>]*?max="(\d+)"/.exec(desk);
   assert.ok(sl, "the gain-target slider was not found in the desk markup");
   const [sMinBps, sMaxBps] = [Number(sl[1]) * 100, Number(sl[2]) * 100];
