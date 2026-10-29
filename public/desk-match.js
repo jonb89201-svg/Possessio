@@ -10,7 +10,7 @@
 // Fallback is the exact card id, and only when one side carries no mint
 // (preview/demo rows). The symbol is not consulted on any path.
 //
-// Loaded by public/index.html as a plain script (window.DeskMatch) and by
+// Loaded by public/console.html as a plain script (window.DeskMatch) and by
 // keeper/test/desk-match.test.js under node (module.exports) so the test
 // exercises this exact code, not a copy of it.
 (function (root, factory) {

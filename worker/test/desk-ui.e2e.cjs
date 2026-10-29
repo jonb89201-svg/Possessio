@@ -66,7 +66,7 @@ const SCENARIOS = {
   empty:    { radar: "down", verified: "empty", trending: "none" },
 };
 
-const srv = http.createServer((q, r) => { const u = new URL(q.url, "http://x"); let p = path.join(ROOT, u.pathname === "/" ? "index.html" : u.pathname);
+const srv = http.createServer((q, r) => { const u = new URL(q.url, "http://x"); let p = path.join(ROOT, u.pathname === "/" ? "console.html" : u.pathname);
   if (!fs.existsSync(p) || fs.statSync(p).isDirectory()) { r.writeHead(404); return r.end(); }
   r.writeHead(200, { "content-type": p.endsWith(".html") ? "text/html" : p.endsWith(".js") ? "text/javascript" : "application/octet-stream" }); fs.createReadStream(p).pipe(r); });
 srv.listen(0, "127.0.0.1", async () => {
@@ -119,7 +119,7 @@ srv.listen(0, "127.0.0.1", async () => {
         Object.defineProperty(window, "PossessioMiniApp", { get: () => fake, set: () => {}, configurable: false });
       }, [sc.wallet, !!sc.lateReady]);
     }
-    await page.goto(base + "/index.html", { waitUntil: "domcontentloaded" });
+    await page.goto(base + "/console.html", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(800);
     await page.click("#markets-link");
     ok(await page.isVisible("#mkts-desk"), `[${mode}] Markets sheet shows "AI Assisted Trading"`);

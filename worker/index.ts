@@ -27,6 +27,8 @@ interface Env {
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000";
+// Where possessio.io's pages go (see the end of fetch).
+const TAPROOT_HOME = "https://taproot.possessio.io/";
 
 const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -790,7 +792,7 @@ export default {
     if (env.BROWSER && env.COUNCIL_DB) ctx.waitUntil(cobrowseSweep(env.BROWSER, env.COUNCIL_DB, Date.now()));
   },
   async fetch(request: Request, env: Env): Promise<Response> {
-    const { pathname } = new URL(request.url);
+    const { pathname, search } = new URL(request.url);
 
     // Read-only council message board as a claude.ai custom connector (no key).
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return handleMcp(request, env);
@@ -840,7 +842,7 @@ export default {
       return res;
     }
 
-    // Radar feed proxy — the AI Assisted Trading desk (public/index.html,
+    // Radar feed proxy — the AI Assisted Trading desk (public/console.html,
     // #desk-view) fetches its live coin list from here. The radar runs on a
     // separate worker with no CORS headers, so a browser fetch cross-origin
     // would be blocked; this same-origin proxy fetches it server-side. Read-
@@ -1283,6 +1285,16 @@ export default {
       return handleDrip(request, env);
     }
 
+    // possessio.io forwards to Taproot (the Architect, 2026-10-29). taproot.possessio.io is the app on Google Play, and
+    // Farcaster moves possessio.io's mini app there (canonicalDomain in public/.well-known/farcaster.json). The old
+    // console is retired: its files stay in public/ for their tests, but public/.assetsignore keeps them out of the
+    // upload, so a request for one misses the assets and arrives here, as does "/" (no index.html is served). Every
+    // page goes to Taproot's home page with its query string. Machine paths (/api/, /.well-known/) and every method but
+    // GET and HEAD keep the asset layer's answer. The approval pages, the manifest, the images and the routes above are
+    // untouched: assets and routes answer before this line.
+    if ((request.method === "GET" || request.method === "HEAD") && !pathname.startsWith("/api/") && !pathname.startsWith("/.well-known/")) {
+      return new Response(null, { status: 301, headers: { location: TAPROOT_HOME + search, "cache-control": "public, max-age=3600" } });
+    }
     return env.ASSETS.fetch(request);
   },
 };

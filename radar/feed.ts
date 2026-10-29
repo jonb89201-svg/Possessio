@@ -13,7 +13,7 @@ export const FEED_HTML = `<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
-  /* Matched to the POSSESSIO console design system (public/index.html): white
+  /* Matched to the POSSESSIO console design system (public/console.html): white
      surfaces, soft-slate lines, oxide-blue accent, Inter + IBM Plex Mono. */
   :root{
     --bg:#ffffff;--surface:#ffffff;--surface-2:#f8fafc;--surface-3:#f1f5f9;

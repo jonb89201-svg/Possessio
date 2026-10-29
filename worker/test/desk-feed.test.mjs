@@ -27,7 +27,7 @@ import { filterVerified, handleVerified, handleTrending, trendingPreimage, EXCLU
 const bs58 = bs58pkg.default || bs58pkg;
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const R = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
-const WORKER = R("worker/index.ts"), MINIAPP = R("public/miniapp-solana.js"), HTML = R("public/index.html");
+const WORKER = R("worker/index.ts"), MINIAPP = R("public/miniapp-solana.js"), HTML = R("public/console.html");
 const MIGRATION = R("radar/migrations/0035_desk_trending.sql");
 
 let pass = 0, fail = 0;
@@ -485,7 +485,7 @@ t("the console gives the desk trendingAction, and its admin buttons use the armi
   assert.match(HTML, /if\(!canCurate\(\)\)\{/, "trendAct must re-check the gate before asking for a signature");
 });
 
-t("every inline script in index.html parses", () => {
+t("every inline script in console.html parses", () => {
   const re = /<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi;
   let m, n = 0;
   while ((m = re.exec(HTML))) {

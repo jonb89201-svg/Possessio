@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Regenerate + verify the ERC-8021 Builder Code data suffix wired into
-// public/index.html (const BUILDER.SUFFIX).  Run:
+// public/console.html (const BUILDER.SUFFIX).  Run:
 //     node script/builder-code/gen-suffix.mjs
 //
 // Canonical source is ox/erc8021 (the library the Base docs point to) when it is
@@ -34,18 +34,18 @@ try {
 
 // Extract the constant actually wired into the frontend and confirm they agree.
 const here = dirname(fileURLToPath(import.meta.url));
-const html = readFileSync(resolve(here, "../../public/index.html"), "utf8");
+const html = readFileSync(resolve(here, "../../public/console.html"), "utf8");
 const m = html.match(/SUFFIX:\s*"(0x[0-9a-fA-F]+)"/);
 const wired = m ? m[1].toLowerCase() : null;
 
 console.log("code   :", CODE);
 console.log("pure   :", pure);
 if (ox) console.log("ox     :", ox);
-console.log("wired  :", wired, "(public/index.html BUILDER.SUFFIX)");
+console.log("wired  :", wired, "(public/console.html BUILDER.SUFFIX)");
 
 let ok = true;
 if (ox && ox !== pure) { console.error("MISMATCH: ox/erc8021 != pure encoder"); ok = false; }
-if (wired !== pure)    { console.error("MISMATCH: public/index.html BUILDER.SUFFIX != computed suffix"); ok = false; }
+if (wired !== pure)    { console.error("MISMATCH: public/console.html BUILDER.SUFFIX != computed suffix"); ok = false; }
 console.log(ok
   ? "\nOK — suffix verified" + (ox ? " against ox/erc8021" : " (pure encoder; run `npm i ox` to also cross-check the reference lib)")
   : "\nFAILED");
