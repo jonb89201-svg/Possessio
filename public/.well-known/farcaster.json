@@ -1,14 +1,18 @@
 {
-  "frame": {
+  "miniapp": {
     "version": "1",
-    "name": "Possessio",
-    "iconUrl": "https://possessio.io/icon-1024.png",
-    "homeUrl": "https://possessio.io/console",
-    "splashImageUrl": "https://possessio.io/splash-200.png",
-    "splashBackgroundColor": "#0B1220",
-    "subtitle": "Now deploying on a phone near you.",
-    "description": "Deploy sovereign, immutable and deterministic smart contracts for a small fee. Now deploying on a phone near you.",
+    "name": "Taproot",
+    "homeUrl": "https://possessio.io",
+    "iconUrl": "https://taproot.possessio.io/assets_base/icon_1024.png",
+    "splashImageUrl": "https://taproot.possessio.io/assets_base/splash_200.png",
+    "splashBackgroundColor": "#092114",
+    "subtitle": "Non-custodial USDC payments",
+    "description": "Accept USDC on Base straight to your own wallet. No processor, no chargebacks, no deplatforming. Seal documents with your wallet, free.",
     "primaryCategory": "finance",
-    "tags": ["smart-contracts", "base", "solana", "self-custody", "defi"]
+    "tags": ["payments", "usdc", "base", "merchants", "seal"],
+    "noindex": true,
+    "requiredChains": ["eip155:8453"],
+    "requiredCapabilities": ["wallet.getEthereumProvider"],
+    "canonicalDomain": "taproot.possessio.io"
   }
 }

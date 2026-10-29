@@ -1,0 +1,7 @@
+# Files in public/ that are NOT uploaded to Cloudflare (gitignore syntax).
+#
+# The old operator console, retired on 2026-10-29: possessio.io forwards to Taproot (the end of worker/index.ts).
+# The files stay in the repo because worker/test and keeper/test read them, but they are no longer served.
+console.html
+desk-match.js
+miniapp-solana.js
