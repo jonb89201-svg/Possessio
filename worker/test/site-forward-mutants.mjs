@@ -1,4 +1,4 @@
-// Planted breaks for possessio.io's forward to Taproot.
+// Planted breaks for possessio.io showing Taproot in place (fromTaproot).
 //   node worker/test/site-forward-mutants.mjs [name-filter]
 // Each mutant bends ONE rule; worker/test/site-forward.test.mjs must fail a named check (a crash is not a kill).
 // Every mutant runs in a throwaway copy, never in the working tree, so a mutated file can never be committed. A
@@ -10,23 +10,35 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const FWD = '      return new Response(null, { status: 301, headers: { location: TAPROOT_HOME + search, "cache-control": "public, max-age=3600" } });';
+const CALL = "      return fromTaproot(request, pathname + search);";
+const FETCH = '    res = await fetch(TAPROOT_ORIGIN + path, { method: request.method, headers, redirect: "manual", signal: AbortSignal.timeout(10_000) });';
 
 // [file, name, from, to]
 const M = [
-  ["worker/index.ts", "pages are not forwarded", FWD, "      return env.ASSETS.fetch(request);"],
-  ["worker/index.ts", "the move is temporary", "{ status: 301, headers: { location: TAPROOT_HOME", "{ status: 302, headers: { location: TAPROOT_HOME"],
-  ["worker/index.ts", "the query string is dropped", "location: TAPROOT_HOME + search,", "location: TAPROOT_HOME,"],
-  ["worker/index.ts", "browsers keep the redirect forever", '"cache-control": "public, max-age=3600" } });', '"cache-control": "public, max-age=31536000, immutable" } });'],
-  ["worker/index.ts", "the API is forwarded", ' && !pathname.startsWith("/api/") && !pathname.startsWith("/.well-known/")) {', ' && !pathname.startsWith("/.well-known/")) {'],
-  ["worker/index.ts", "the manifest's folder is forwarded", ' && !pathname.startsWith("/.well-known/")) {\n      return new Response(null', ") {\n      return new Response(null"],
-  ["worker/index.ts", "a POST is forwarded", '    if ((request.method === "GET" || request.method === "HEAD") && !pathname', "    if (!pathname"],
-  ["worker/index.ts", "the council connector falls to the forward", '    if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return handleMcp(request, env);\n', ""],
-  ["worker/index.ts", "act approvals fall to the forward", '    if (pathname.startsWith("/api/act/")) return handleAct(request, env, pathname.slice("/api/act/".length));\n', ""],
-  ["worker/index.ts", "Taproot's address is wrong", 'const TAPROOT_HOME = "https://taproot.possessio.io/";', 'const TAPROOT_HOME = "https://possessio.io/console";'],
+  ["worker/index.ts", "pages are not served from Taproot", CALL, "      return env.ASSETS.fetch(request);"],
+  ["worker/index.ts", "possessio.io redirects instead (the PR #198 blank mini app)", CALL, '      return new Response(null, { status: 301, headers: { location: TAPROOT_ORIGIN + "/" } });'],
+  ["worker/index.ts", "the query string is dropped", CALL, "      return fromTaproot(request, pathname);"],
+  ["worker/index.ts", "every call goes to Taproot's home page", CALL, '      return fromTaproot(request, "/");'],
+  ["worker/index.ts", "HEAD goes upstream as GET", FETCH, FETCH.replace("method: request.method", 'method: "GET"')],
+  ["worker/index.ts", "redirects are followed upstream", FETCH, FETCH.replace('redirect: "manual"', 'redirect: "follow"')],
+  ["worker/index.ts", "the upstream fetch has no timeout", FETCH, FETCH.replace(", signal: AbortSignal.timeout(10_000)", "")],
+  ["worker/index.ts", "a cookie goes upstream", 'const TAPROOT_HEADERS = ["accept",', 'const TAPROOT_HEADERS = ["cookie", "accept",'],
+  ["worker/index.ts", "an authorization goes upstream", 'const TAPROOT_HEADERS = ["accept",', 'const TAPROOT_HEADERS = ["authorization", "accept",'],
+  ["worker/index.ts", "every request header goes upstream", "  for (const h of TAPROOT_HEADERS) { const v = request.headers.get(h); if (v) headers.set(h, v); }", "  for (const [k, v] of request.headers) headers.set(k, v);"],
+  ["worker/index.ts", "Taproot's redirect leaves possessio.io", '  if (loc && (loc === TAPROOT_ORIGIN || loc.startsWith(TAPROOT_ORIGIN + "/"))) out.headers.set("location", loc.slice(TAPROOT_ORIGIN.length) || "/");\n', ""],
+  ["worker/index.ts", "an unreachable Taproot throws", "  } catch {\n    return new Response(\"Taproot did not answer.", "  } catch (e) {\n    throw e;\n    return new Response(\"Taproot did not answer."],
+  ["worker/index.ts", "Taproot's service worker is served here", '      if (pathname === "/sw.js") return new Response("Not found\\n", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });\n', ""],
+  ["worker/index.ts", "the API goes to Taproot", ' && !pathname.startsWith("/api/") && !pathname.startsWith("/.well-known/")) {', ' && !pathname.startsWith("/.well-known/")) {'],
+  ["worker/index.ts", "the manifest's folder goes to Taproot", ' && !pathname.startsWith("/.well-known/")) {\n      if (pathname === "/sw.js")', ') {\n      if (pathname === "/sw.js")'],
+  ["worker/index.ts", "a POST goes to Taproot", '    if ((request.method === "GET" || request.method === "HEAD") && !pathname.startsWith("/api/")', '    if (!pathname.startsWith("/api/")'],
+  ["worker/index.ts", "the council connector falls to Taproot", '    if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return handleMcp(request, env);\n', ""],
+  ["worker/index.ts", "act approvals fall to Taproot", '    if (pathname.startsWith("/api/act/")) return handleAct(request, env, pathname.slice("/api/act/".length));\n', ""],
+  ["worker/index.ts", "Taproot's address is wrong", 'const TAPROOT_ORIGIN = "https://taproot.possessio.io";', 'const TAPROOT_ORIGIN = "https://possessio.io";'],
   ["public/.assetsignore", "the old console is served again", "\nconsole.html\n", "\n"],
+  ["public/.assetsignore", "possessio.io's old launch-rail artifact answers first", "\nartifacts/payments.json\n", "\n"],
   ["public/.assetsignore", "the approval page is left out of the upload", "\nminiapp-solana.js\n", "\nminiapp-solana.js\napprove.html\n"],
   ["public/index.html", "a page answers / before the Worker", null, "<!doctype html><title>old</title>\n"],
+  ["public/seal.html", "a possessio.io file shadows a Taproot page", null, "<!doctype html><title>old seal</title>\n"],
   ["wrangler.jsonc", "the Worker runs before the assets", '"assets": { "directory": "./public", "binding": "ASSETS" }', '"assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true }'],
   ["public/.well-known/farcaster.json", "the manifest does not name the new domain", ',\n    "canonicalDomain": "taproot.possessio.io"', ""],
   ["public/.well-known/farcaster.json", "the old domain stays in search", '"noindex": true', '"noindex": false'],
@@ -68,7 +80,7 @@ function runOne([file, name, from, to]) {
 }
 
 // The unbroken copy must pass first, or no kill means anything.
-const control = await runOne(["worker/index.ts", "control", FWD, FWD]);
+const control = await runOne(["worker/index.ts", "control", CALL, CALL]);
 if (control.code !== 0) { console.log(`HARNESS BROKEN  the unbroken copy fails: ${control.note}`); process.exit(2); }
 console.log("control  the unbroken copy passes worker/test/site-forward.test.mjs");
 
