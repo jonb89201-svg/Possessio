@@ -964,9 +964,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (q.executeAfter == 0)              revert NoIncreaseQueued();
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
+        // Re-audit 2026-11-07 R-3: settle the bucket at the old rate first, so the
+        // time since the last spend is not drained at the new, higher rate.
         if (asset == DailyLimitAsset.USDC) {
+            usdcDailyWithdrawn = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);
+            usdcWindowStart = block.timestamp;
             usdcDailyLimit = q.newLimit;
         } else {
+            cbEthDailyWithdrawn = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);
+            cbEthWindowStart = block.timestamp;
             cbEthDailyLimit = q.newLimit;
         }
         if (q.newLimit > assetLimitRef[uint8(asset)]) assetLimitRef[uint8(asset)] = q.newLimit;
