@@ -260,6 +260,10 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // Timelock queues
     mapping(bytes32 => uint256) public timelockQueue;
     uint256 private queueNonce;
+    // Re-audit 2026-11-07 R-2: tlPassed checks only that an id has matured, so
+    // each action keeps the one id it accepts. A new queue replaces the old id.
+    bytes32 public pendingResumeId;      // the id resumeAuctions accepts (0 = none)
+    bytes32 public pendingForwarderId;   // the id executeForwarderUpdate accepts (0 = none)
 
     // v3.0.3: the owner role moves only through a cancellable 48 h queue.
     mapping(address => bytes32) public pendingOwnerGrant;    // who => timelock id (0 = none)
@@ -729,13 +733,17 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
 
     /// @notice Queue a timelocked resume (TIMELOCK, 48 h).
     function queueResumeAuctions() external onlyRole(OWNER_ROLE) returns (bytes32 id) {
+        delete timelockQueue[pendingResumeId];
         queueNonce++;
         id = keccak256(abi.encodePacked("resume", msg.sender, queueNonce, block.timestamp));
         timelockQueue[id] = block.timestamp + TIMELOCK;
+        pendingResumeId = id;
         emit AuctionsResumeQueued(id, timelockQueue[id]);
     }
 
     function resumeAuctions(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
+        if (id != pendingResumeId) revert NotQueued();
+        delete pendingResumeId;
         auctionsPaused = false;
         emit AuctionsResumed(msg.sender, block.timestamp);
     }
@@ -956,9 +964,15 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
         if (q.executeAfter == 0)              revert NoIncreaseQueued();
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < q.executeAfter) revert TimelockNotPassed();
+        // Re-audit 2026-11-07 R-3: settle the bucket at the old rate first, so the
+        // time since the last spend is not drained at the new, higher rate.
         if (asset == DailyLimitAsset.USDC) {
+            usdcDailyWithdrawn = _drained(usdcDailyWithdrawn, usdcWindowStart, usdcDailyLimit);
+            usdcWindowStart = block.timestamp;
             usdcDailyLimit = q.newLimit;
         } else {
+            cbEthDailyWithdrawn = _drained(cbEthDailyWithdrawn, cbEthWindowStart, cbEthDailyLimit);
+            cbEthWindowStart = block.timestamp;
             cbEthDailyLimit = q.newLimit;
         }
         if (q.newLimit > assetLimitRef[uint8(asset)]) assetLimitRef[uint8(asset)] = q.newLimit;
@@ -1312,12 +1326,17 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     function queueForwarderUpdate(address newForwarder) external onlyRole(OWNER_ROLE) returns (bytes32 id) {
         if (newForwarder == address(0)) revert InvalidAddress();
         _pendingForwarder = newForwarder;
-        id = keccak256(abi.encodePacked("forwarderUpdate", block.timestamp, newForwarder));
+        delete timelockQueue[pendingForwarderId];
+        queueNonce++;
+        id = keccak256(abi.encodePacked("forwarderUpdate", newForwarder, queueNonce, block.timestamp));
         timelockQueue[id] = block.timestamp + TIMELOCK;
+        pendingForwarderId = id;
         emit ForwarderUpdateQueued(id, newForwarder, timelockQueue[id]);
     }
 
     function executeForwarderUpdate(bytes32 id) external onlyRole(OWNER_ROLE) tlPassed(id) {
+        if (id != pendingForwarderId) revert NotQueued();
+        delete pendingForwarderId;
         address newForwarder = _pendingForwarder;
         if (newForwarder == address(0)) revert InvalidAddress();
         address old = automationForwarder;
