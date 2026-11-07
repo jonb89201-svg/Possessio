@@ -45,7 +45,7 @@ pragma solidity ^0.8.24;
  *           - Receives USDC inflows (e.g. card-network split settlement).
  *           - Keeps `usdcFloat` liquid for the merchant's operations.
  *           - Anyone may kick(): the Morpho share of the USDC above the float
- *             is deposited into the Bitwise Morpho Blue USDC vault at once, and
+ *             is deposited into the Steakhouse High Yield USDC vault on Morpho at once, and
  *             the cbETH share is put up as a lot in a Dutch auction.
  *           - Anyone may take(): deliver the cbETH the curve asks for now, and
  *             receive the lot. The curve starts far above the oracle, falls
@@ -113,7 +113,7 @@ interface IChainlinkFeed {
     function decimals() external view returns (uint8);
 }
 
-/// @notice Morpho Blue ERC4626 vault interface (Bitwise-curated USDC vault).
+/// @notice Morpho Blue ERC4626 vault interface (Steakhouse High Yield USDC on Base).
 ///         Mirrors L1Anchor.sol's IMorphoVault exactly.
 interface IMorphoVault {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares);
@@ -190,7 +190,7 @@ contract PossessioPayments is AccessControl, ReentrancyGuard, AutomationCompatib
     // ── Immutables ──────────────────────────────────────────────────────────
     IERC20           public immutable USDC;
     IERC20           public immutable CBETH;
-    IMorphoVault     public immutable MORPHO_VAULT;        // Bitwise Morpho Blue USDC vault
+    IMorphoVault     public immutable MORPHO_VAULT;        // Steakhouse High Yield USDC (Morpho) vault
     IChainlinkFeed   public immutable CHAINLINK;           // cbETH/ETH — 18-decimal exchange-rate feed
     IChainlinkFeed   public immutable CHAINLINK_USDC_USD;  // USDC/USD — 8-decimal price feed
     IChainlinkFeed   public immutable CHAINLINK_ETH_USD;   // ETH/USD — 8-decimal price feed
